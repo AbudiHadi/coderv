@@ -8,24 +8,36 @@ Ten slash commands that make Claude Code a disciplined programming partner. Work
 
 ## Install
 
+**One command:**
+
 ```bash
-git clone https://github.com/<you>/claude-docs-toolkit
-cd claude-docs-toolkit
+curl -fsSL https://coderv.dev/install.sh | bash
+```
+
+That's it. Skills land in `~/.claude/skills/` and become available in every project you open with Claude Code.
+
+**Prefer the manual path?**
+
+```bash
+git clone https://github.com/AbudiHadi/coderv
+cd coderv
 ./install.sh
 ```
 
-That's it. Skills land in `~/.claude/skills/` and are available in every project you open with Claude Code.
+**Install into one project only** (skills live under `./.claude/skills/`):
 
-To update:
 ```bash
-cd claude-docs-toolkit
-git pull
-./install.sh --force
+curl -fsSL https://coderv.dev/install.sh | bash -s -- --project
 ```
 
-To uninstall:
+**Update:**
 ```bash
-./install.sh --uninstall
+curl -fsSL https://coderv.dev/install.sh | bash -s -- --force
+```
+
+**Uninstall:**
+```bash
+cd coderv && ./install.sh --uninstall
 ```
 
 ---
