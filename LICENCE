@@ -1,0 +1,137 @@
+CoderLap Source-Available Licence
+Version 1.0 — Effective 2026-04-23
+Copyright © 2026 Abdullah Hadi. All rights reserved.
+
+PREAMBLE
+
+This licence gives readers the freedom to study the source and to evaluate the
+software personally, while reserving every commercial, derivative, and
+distributive right to the author. It is not an open-source licence in the sense
+of the OSI Open Source Definition. It is source-available and permission-gated.
+
+1. DEFINITIONS
+
+"Software" — the CoderLap Docs Toolkit, including its source code, documentation,
+templates, and all accompanying files in the https://github.com/AbudiHadi/coderv
+repository, in any version.
+
+"Author" — Abdullah Hadi, reachable at GGAbdulalah@gmail.com.
+
+"You" — any individual or legal entity exercising the rights granted by this
+licence.
+
+"Personal Evaluation" — use by a single individual on machines they own or
+control, for the purpose of understanding or assessing the Software, with no
+direct or indirect commercial benefit. Use in the course of paid employment is
+not Personal Evaluation.
+
+"Derivative Work" — any modification, translation, adaptation, extension, or
+work based on the Software.
+
+2. GRANT OF RIGHTS (Permitted Uses)
+
+Subject to Section 3, the Author grants You a worldwide, royalty-free,
+non-exclusive, non-transferable licence to:
+
+  (a) View, read, and study the Software in source form.
+  (b) Install and run the Software for Personal Evaluation on machines You own
+      or control.
+  (c) Make local modifications to the Software solely for Personal Evaluation,
+      provided such modifications are not distributed, published, or shared
+      with any third party.
+
+3. RESERVED RIGHTS (Prohibited Without Permission)
+
+All rights not expressly granted in Section 2 are reserved. Without prior
+written permission from the Author, You may not:
+
+  (a) Commercial use — use the Software, in whole or in part, in connection
+      with any activity that generates revenue or cost savings for You or any
+      third party, including internal business use.
+  (b) Redistribution — distribute, publish, host, mirror, or make the Software
+      available to any third party, in whole or in part, in source or compiled
+      form.
+  (c) Derivative Works — create, distribute, or publish a Derivative Work.
+  (d) Hosted services — offer the Software as a service, whether paid or free,
+      to any third party.
+  (e) Incorporation — embed, bundle, or integrate the Software into another
+      product, codebase, package, plugin, framework, or distribution.
+  (f) Competing offerings — use the Software to build or assist in building any
+      product or service that offers substantially similar functionality.
+  (g) Trademark use — use the name "CoderLap", "Coderv", or the Author's name,
+      likeness, or logos to endorse or promote any product or service.
+  (h) Sub-licensing — grant any of the above rights to any third party.
+
+4. REQUESTING PERMISSION
+
+To request permission for any use reserved under Section 3, contact the Author
+at GGAbdulalah@gmail.com with:
+
+  (1) Your full legal name or company name.
+  (2) A description of the intended use.
+  (3) Whether the use is commercial, and if so, the commercial model.
+  (4) The scope (single project, multiple projects, public distribution, etc.).
+  (5) Contact information for follow-up.
+
+The Author may grant, deny, or condition permission at their sole discretion.
+Permission, if granted, will be delivered in writing (including email) and will
+state the scope, duration, and any conditions. Verbal or implied permission is
+not valid.
+
+5. ATTRIBUTION
+
+Any permitted use must preserve:
+
+  (a) This licence text, unmodified, in any copy of the Software.
+  (b) A visible credit: "CoderLap by Abdullah Hadi — https://coderv.dev".
+  (c) All copyright notices present in the Software.
+
+6. CONTRIBUTIONS
+
+Contributions to the Software (via pull request or otherwise) are welcomed. By
+submitting a contribution, You grant the Author a perpetual, irrevocable,
+worldwide, royalty-free licence to use, modify, sub-license, and distribute the
+contribution under this or any future licence. You represent that You have the
+legal right to make such grant.
+
+7. TERMINATION
+
+This licence terminates automatically and immediately if You breach any of its
+terms. Upon termination, You must cease all use of the Software and destroy all
+copies in Your possession. Sections 1, 3, 5, 8, 9, and 10 survive termination.
+
+8. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. THE AUTHOR MAKES NO
+REPRESENTATION ABOUT THE SUITABILITY OF THE SOFTWARE FOR ANY PURPOSE.
+
+9. LIMITATION OF LIABILITY
+
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE, INCLUDING BUT NOT LIMITED TO DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL, OR PUNITIVE DAMAGES — EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES.
+
+10. GOVERNING LAW
+
+This licence is governed by the laws of the Kingdom of Saudi Arabia, without
+regard to its conflict-of-law principles. Any dispute arising under this
+licence shall be resolved in the competent courts of the Kingdom of Saudi
+Arabia. If any provision of this licence is held unenforceable, the remaining
+provisions continue in full force.
+
+11. ENTIRE AGREEMENT
+
+This licence constitutes the entire agreement between You and the Author
+concerning the Software. It supersedes all prior agreements or understandings,
+written or oral. It may be modified only by the Author, by publishing a new
+version at https://coderv.dev/licence. Your continued use of the Software after
+such publication constitutes acceptance of the new licence.
+
+---
+
+Contact: GGAbdulalah@gmail.com
