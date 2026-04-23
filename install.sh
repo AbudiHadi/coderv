@@ -104,10 +104,11 @@ echo -e "${GREEN}Installed:${NC} $installed  ${BLUE}Updated:${NC} $updated  ${YE
 echo
 echo -e "${BLUE}Skills are now available in every project you open with Claude Code.${NC}"
 echo
-echo "Four commands, one loop:"
-echo "  /before <task>   — Claude reads the docs + plans, waits for your OK"
-echo "  /decision <title> — Write down why you chose X over Y (30 seconds)"
-echo "  /ship            — Pre-commit checklist that catches forgotten doc updates"
-echo "  /session         — End-of-session handoff, so Monday-you knows what Friday-you was doing"
+echo "Five commands:"
+echo "  /docify          — Once per project: generate CLAUDE.md + docs from your code"
+echo "  /before <task>   — Before coding: Claude reads docs + plans, waits for OK"
+echo "  /decision <title> — Log why you chose X over Y (30 seconds)"
+echo "  /ship            — Before commit: auto-updates docs + validates citations"
+echo "  /session         — End-of-session handoff for next time"
 echo
 echo "Docs: https://coderv.dev"

@@ -1,13 +1,13 @@
 ---
 name: ship
-description: Pre-commit checklist that looks at what you changed and asks which docs need updating before you commit. Drafts a why-focused commit message. Use before every commit that touches multiple files — catches the "I'll update docs later" lie while changes are fresh.
+description: Pre-commit checklist. Reads the diff, offers to update docs itself (not just ask you), validates citations in docs haven't gone stale, drafts a why-focused commit message. Runs before every commit that touches multiple files.
 user-invocable: true
 argument-hint: "(no args — reads git diff and staged files)"
 ---
 
-# Ship Checklist
+# Ship — Smart Pre-commit
 
-Before the commit. Goal: nothing rots, nothing orphans, nothing regresses.
+Goal: docs stay fresh + honest, with minimum friction.
 
 ## Step 1 — Look at the diff
 
@@ -17,107 +17,186 @@ git diff --stat
 git diff --stat --cached
 ```
 
-Report what changed in 3–5 bullets. Categorise the changes:
-- Code files (src, lib, components, app)
-- Schema / migration files
-- Config files (package.json, tsconfig, next.config, etc.)
-- Doc files (docs/**, CLAUDE.md, README.md)
-- Test files
-- Locale / i18n files
+Categorise changes:
+- Routes (`app/api/**`, `routes/**`, `controllers/**`)
+- Components (`components/**`, `src/components/**`)
+- Schema (`*.prisma`, `migrations/**`, `db/**`, `schema.*`)
+- Services (`lib/services/**`, `services/**`)
+- Env / config (`.env.example`, `next.config.*`, `package.json` deps)
+- Docs (`docs/**`, `CLAUDE.md`, `README.md`)
+- Tests
+- Locale / i18n
 
-## Step 2 — Adaptive checklist (only ask what applies)
+Report in 3–5 bullets.
 
-Skip any item that doesn't apply to this diff. No bloat.
+## Step 2 — Smart doc update (NEW — the core upgrade)
+
+Based on the categories, **offer to update docs yourself** (not just ask the user):
+
+### If routes changed
+
+```bash
+# Find added/changed route files
+git diff --name-only --diff-filter=ACM | grep -E 'app/api/.*route\.(ts|js)$|routes/.*\.(py|rb|go)$'
+```
+
+For each added/changed route:
+1. Read the file.
+2. Read `docs/api.md` if it exists.
+3. Generate the section that should be in `docs/api.md` (method, path, auth, request, response, citation).
+4. Show user a preview:
+
+```
+Route added: POST /api/partner/[id]/invite
+
+docs/api.md doesn't mention this route. I can add this section:
+
+  ### POST /api/partner/[id]/invite
+  Auth: partner role, session.user.partnerId === id
+  Request: { phoneNumber: string, role?: string }
+  Response: { success: true, invitation: { ... } }
+  <!-- src: app/api/partner/[id]/invite/route.ts:12-58 -->
+
+Add it? (y/n/edit)
+```
+
+On `y` — append to the relevant section in `docs/api.md`. On `edit` — let the user refine first.
+
+If route **changed** (not added): find its existing section by citation, show a diff of what would change.
+
+If route **deleted**: offer to remove its section from `docs/api.md` (but keep a historical note: `<!-- removed YYYY-MM-DD: POST /api/old-endpoint -->`).
+
+### If components changed
+
+Similar flow: detect new components, check `docs/components.md`, offer to add a short entry (name, path, one-line purpose, props summary, citation).
+
+### If schema changed
+
+```bash
+git diff prisma/schema.prisma 2>/dev/null
+git diff --name-only | grep -E 'migrations/|schema\.'
+```
+
+Detect added/removed/changed models. Offer to update `docs/database.md` sections. Flag backfill concerns for NOT NULL columns.
+
+### If new external dependency added
+
+```bash
+git diff package.json | grep -E '^\+' | grep -E 'stripe|twilio|openai|@100mslive|firebase|aws-sdk|...'
+```
+
+Offer to add a section to `docs/integrations.md` (what it's used for, env vars, provider docs link).
+
+### Always
+
+Never auto-write without approval. Always show a preview. Default to asking.
+
+## Step 3 — Citation validator (NEW)
+
+Walk every `docs/**.md` file. For each `<!-- src: path:start-end -->` marker found:
+
+```bash
+# For each citation "src: lib/auth.ts:42-58"
+test -f "lib/auth.ts" || echo "BROKEN: file gone"
+wc -l < "lib/auth.ts" # line count must be >= end
+```
+
+If the cited file is gone or the line range is out of bounds → flag:
+
+```
+Stale citations found:
+
+  docs/api.md:87 cites lib/auth.ts:42-58 but the file is gone.
+  docs/architecture.md:15 cites lib/services/video.ts:100-120 but file has 85 lines.
+
+These docs may be lying. Want me to:
+  1. Mark the affected sections with <!-- stale: verify -->
+  2. Regenerate with /docify --refresh <file>
+  3. Skip for now
+```
+
+Don't block commit on stale citations — warn, let user decide.
+
+## Step 4 — Adaptive checklist (ask only what applies)
+
+Skip items that don't apply. No bloat.
 
 ### Always
 
 - [ ] Anything in the diff you didn't mean to include? (debug logs, commented code, unrelated files)
-- [ ] Any added helpers / refactors / extras the user didn't ask for? If yes, revert them or justify.
-- [ ] Does this commit do one thing? If it's bundled, suggest splitting.
+- [ ] Any helpers / refactors / extras the user didn't ask for? If yes, revert or justify.
+- [ ] Does this commit do one thing? If bundled, suggest splitting.
 
 ### If code changed
 
-- [ ] Run the test suite (check `package.json` or equivalent for the command).
-- [ ] Run the type checker / linter if the project has one.
-- [ ] Read the changed lines one more time — anything obviously wrong?
+- [ ] Run test suite (check `package.json` or equivalent).
+- [ ] Run type checker / linter if configured.
 
-### If an API route / endpoint / public interface changed
+### If API / public interface changed
 
-- [ ] Update `docs/api.md` (or the equivalent) to match.
-- [ ] Is this a breaking change? Say so in the commit message.
+- [ ] `docs/api.md` — covered by Step 2. Did the auto-update run?
+- [ ] Breaking change? Say so in commit message.
 
-### If a component or UI element changed
+### If design choice was made
 
-- [ ] Update `docs/components.md` if it's a reusable pattern.
-- [ ] Checked for RTL, dark mode, and responsive behavior where relevant.
-- [ ] i18n keys added to **all** locale files (not just one).
+- [ ] Worth logging with `/decision`? (Ask if it's a trade-off future-you would second-guess.)
 
-### If the database schema changed
+### If non-obvious bug was fixed (>15 min to root-cause, or subtle cause)
 
-- [ ] Migration created and tested.
-- [ ] Updated `docs/database.md`.
-- [ ] All services that read the changed fields reviewed.
-- [ ] Backfill plan written down if the column is NOT NULL.
+- [ ] Add to `docs/KNOWN-ISSUES.md` with:
+  - Symptom
+  - Root cause (1–3 sentences, the actual mechanism)
+  - Fix (file paths + line ranges)
+  - **Prevention rule** — the test/type/lint/checklist item that would catch it next time
 
-### If an external service / third-party was added or changed
+Offer to draft the entry yourself from the diff.
 
-- [ ] Updated `docs/integrations.md`.
-- [ ] Env vars documented in `.env.example` or equivalent.
-- [ ] Error handling for provider outage.
+### If a tracked gap (`docs/*-GAPS.md`) was shipped
 
-### If a real design choice was made
+- [ ] Mark the relevant section: `Status: shipped YYYY-MM-DD (commit: <hash>)`
+- **Never delete** the section. Preserve history.
 
-- [ ] Logged an ADR via `/decision`.
+### If a milestone hit
 
-### If a non-obvious bug was fixed
+- [ ] Update `CLAUDE.md` status section if the project tracks phases there.
 
-- [ ] Added an entry to `docs/KNOWN-ISSUES.md` with: symptom, root cause, fix, and a **prevention rule** (a test, type, lint, or checklist item that would catch the same bug next time).
+## Step 5 — Draft the commit message
 
-### If a tracked gap was shipped
-
-- [ ] Opened the matching `docs/*-GAPS.md` and changed `Status:` to `shipped YYYY-MM-DD (commit: <hash>)`. Did NOT delete the section.
-
-### If a milestone was hit
-
-- [ ] Updated project status in `CLAUDE.md` or wherever the phase log lives.
-
-## Step 3 — Draft the commit message
-
-Read the last 5 commit messages to match project style:
+Read last 5 commits to match style:
 
 ```bash
 git log -5 --pretty=format:"%s%n%b%n---"
 ```
 
-A good commit message explains **why**, not just **what**. Draft one:
+Draft:
 
 ```
 <type>: short summary in imperative mood
 
-Why: <the business or technical reason — 1-2 sentences>
-What: <terse list if multi-file, skip if single obvious change>
+Why: <1-2 sentences — the business or technical reason>
+What: <terse list if multi-file>
 
-Closes: <issue/gap ref if any>
+Closes: <issue ref if any>
 ```
 
-**Don't add AI attribution / "generated by" / "co-authored-by" unless the project already uses them.**
+Explain **why**, not just what. No AI attribution unless the project already uses it.
 
-## Step 4 — Final sanity
+## Step 6 — Final sanity
 
-- [ ] `git diff --cached` one last time — everything staged is what you want.
-- [ ] No secrets / API keys / `.env` files leaking into the commit.
-- [ ] No large binaries or generated files staged by accident.
+- [ ] `git diff --cached` one last time
+- [ ] No secrets / API keys / `.env` leaking
+- [ ] No large binaries or generated files staged
 
-## Step 5 — Output
-
-Produce the commit command for the user to copy. **Do not run it yourself** unless they explicitly ask — committing is a user-confirmed action.
+## Step 7 — Output
 
 ```
 ## Ship checklist — ready
 
-Checked: N of M items
+Checked: N of M
+Doc updates offered: <count> (applied: <count>)
+Stale citations flagged: <count>
 Still open:
-- <anything the user should do before committing>
+- <anything blocking>
 
 Suggested commit:
 <type>: <summary>
@@ -128,6 +207,13 @@ git add <files>
 git commit -m "…"
 ```
 
-## Step 6 — Remind about /session
+**Do not run the commit.** User copies and runs themselves.
 
-After they commit, remind them (once, briefly): *"If this is the end of your session, run `/session` to leave a handoff note."*
+## Step 8 — Suggest follow-ups
+
+Before exiting, suggest (one line each, only if applicable):
+
+- Non-obvious design choice made? → *"Worth logging with `/decision`?"*
+- Session winding down? → *"Run `/session` to leave a handoff."*
+- Bug prevention rule added? → *"Consider adding a test that enforces this."*
+- Stale citations flagged? → *"Run `/docify --refresh <file>` when you have 5 minutes."*

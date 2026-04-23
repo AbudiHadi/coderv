@@ -1,34 +1,37 @@
 # CoderLap Docs Toolkit
 
-Four slash commands that help devs keep extremely clear docs — without getting tired or trying to remember.
+Five slash commands that help devs keep extremely clear docs — without getting tired or trying to remember.
 
-> **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero.
+> **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero. Docs rot within a week.
 >
-> **The answer:** four commands, each removing one kind of mental burden. Markdown only. No framework. No dependency.
+> **The answer:** five commands. One generates real docs from your code. Four keep them fresh. Markdown only. No framework. No dependency.
 
 ---
 
-## The four commands
+## The five commands
 
 | Command | The tired moment it fixes |
 |---|---|
+| **`/docify`** | *"I need real docs but I don't want to write them."* — Scans your code, generates `CLAUDE.md` + 6 professional docs (architecture, api, components, database, integrations, overview) with source citations. Run once per project. |
 | **`/before <task>`** | *"What should I even read first?"* — Claude reads the relevant docs, greps prior art, checks past decisions, states a plan, waits for your OK. Auto-skips tiny tasks. |
 | **`/decision <title>`** | *"Write down why, so I never have to explain it again."* — Logs an ADR in 30 seconds while the choice is fresh. |
-| **`/ship`** | *"Did I forget to update any docs before committing?"* — Reads the diff, asks only about docs your changes actually touched, drafts a why-focused commit message. |
+| **`/ship`** | *"Did I forget to update any docs before committing?"* — Reads the diff, **auto-updates api.md / components.md / database.md** from the code change, validates every citation in the docs is still accurate, drafts a why-focused commit message. |
 | **`/session [last]`** | *"Pick up where I left off."* — End of session → leaves a handoff. Start of next → `/session last` reads it. |
 
 ## The loop
 
 ```
-/session last          # read what was happening
+/docify                # once per project (generates CLAUDE.md + 6 docs)
+                       # ↓ every task after that:
+/session last          # what was I doing?
 /before <task>         # Claude plans, waits for OK
 <you approve, code>
-/ship                  # pre-commit checklist
+/ship                  # auto-updates docs, validates citations, drafts commit
 <commit>
 /session               # handoff for next time
 ```
 
-Four commands. One loop. Docs stay clean as a side effect of doing your work.
+`/docify` once. Four commands daily. Docs stay clean + honest as a side effect of doing your work.
 
 ---
 

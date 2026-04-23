@@ -110,8 +110,17 @@ Do **not** start coding until the user confirms the plan (or corrects it). This 
 
 If the user corrects the plan, update it and re-state it. Don't code until aligned.
 
-## Step 7 — Suggest the follow-ups
+## Step 7 — Watch for follow-ups (during the task, not just after)
 
-After you finish the task, remind the user (once, briefly):
-- If you made a design choice with trade-offs → run `/decision`.
-- Before committing → run `/ship`.
+As you code, suggest the right next command **at the right moment**. Don't wait for the end.
+
+- **Design choice made with trade-offs?** Say once, inline: *"This is a real trade-off between X and Y — worth logging with `/decision`?"*
+- **Non-obvious bug found and fixed?** (>15 min to root-cause, or subtle cause) Say: *"Worth adding to `KNOWN-ISSUES` via `/ship`? The prevention rule would be: <draft rule>."*
+- **Closes a gap** listed in `docs/*-GAPS.md`? Say: *"This closes gap #N — `/ship` will offer to mark it shipped."*
+- **Session running long** (you've coded for 1+ hours without a commit or the user is pausing)? Say: *"Want me to write a `/session` handoff, or `/ship` the current state?"*
+
+**Never auto-run skills.** Always suggest. User approves or ignores.
+
+## Step 8 — Remind before commit
+
+When the task is done: *"Ready to commit? Run `/ship` — it'll walk doc updates and draft a commit message."*
