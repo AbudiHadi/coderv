@@ -1,138 +1,133 @@
 ---
 name: ship
-description: Pre-commit checklist that enforces doc updates, test runs, gap closures, ADR logging, and known-issue entries before the user commits. Catches the discipline gaps that rot a codebase. Use before every commit, especially after sessions that changed multiple files. The checklist is adaptive — it asks only about what the diff actually changed.
+description: Pre-commit checklist that looks at what you changed and asks which docs need updating before you commit. Drafts a why-focused commit message. Use before every commit that touches multiple files — catches the "I'll update docs later" lie while changes are fresh.
 user-invocable: true
 argument-hint: "(no args — reads git diff and staged files)"
 ---
 
-# Pre-commit Ship Checklist
+# Ship Checklist
 
-Run this before committing. Goal: nothing rots, nothing orphans, nothing regresses.
+Before the commit. Goal: nothing rots, nothing orphans, nothing regresses.
 
-## Step 1 — Inspect the diff
+## Step 1 — Look at the diff
 
 ```bash
 git status
 git diff --stat
-git diff --stat --cached     # staged
+git diff --stat --cached
 ```
 
-Report what changed in 3–5 bullets. Categorise:
-- Code files (src, lib, components, app, pages)
-- Schema/migration files (prisma, drizzle, sql)
-- Config files (next.config, tsconfig, package.json)
+Report what changed in 3–5 bullets. Categorise the changes:
+- Code files (src, lib, components, app)
+- Schema / migration files
+- Config files (package.json, tsconfig, next.config, etc.)
 - Doc files (docs/**, CLAUDE.md, README.md)
 - Test files
-- Locale/i18n files
-- Style/theme files
+- Locale / i18n files
 
-## Step 2 — Adaptive checklist
+## Step 2 — Adaptive checklist (only ask what applies)
 
-Based on what changed, ask the user to confirm each applicable item. **Skip items that don't apply.**
+Skip any item that doesn't apply to this diff. No bloat.
 
 ### Always
 
-- [ ] Does `git diff` contain anything the user didn't intend? (leftover debug logs, commented code, TODOs, unrelated file changes)
-- [ ] Any added features / helpers / refactors not explicitly asked for? If yes, justify or revert.
-- [ ] Does the commit do one thing? If it bundles unrelated changes, suggest splitting.
+- [ ] Anything in the diff you didn't mean to include? (debug logs, commented code, unrelated files)
+- [ ] Any added helpers / refactors / extras the user didn't ask for? If yes, revert them or justify.
+- [ ] Does this commit do one thing? If it's bundled, suggest splitting.
 
-### If code files changed
+### If code changed
 
-- [ ] Did you read the relevant docs before coding? (Should have used `/before` or `/docs`)
-- [ ] Run `/ship` against the project's test command if tests exist (check `package.json` scripts or equivalent)
-- [ ] Run the type checker (`tsc --noEmit`, `mypy`, etc.) if the project has one
-- [ ] Run the linter if set up
+- [ ] Run the test suite (check `package.json` or equivalent for the command).
+- [ ] Run the type checker / linter if the project has one.
+- [ ] Read the changed lines one more time — anything obviously wrong?
 
-### If an API route / endpoint changed
+### If an API route / endpoint / public interface changed
 
-- [ ] Updated `docs/api.md` (or equivalent)?
-- [ ] New auth requirements or response shape? Mentioned in the doc?
-- [ ] Breaking change? Flagged in commit message?
+- [ ] Update `docs/api.md` (or the equivalent) to match.
+- [ ] Is this a breaking change? Say so in the commit message.
 
-### If a component changed
+### If a component or UI element changed
 
-- [ ] Updated `docs/components.md` if it's a reusable pattern?
-- [ ] RTL / dark mode / responsive checked if user-facing?
-- [ ] i18n keys added to **all** locale files?
+- [ ] Update `docs/components.md` if it's a reusable pattern.
+- [ ] Checked for RTL, dark mode, and responsive behavior where relevant.
+- [ ] i18n keys added to **all** locale files (not just one).
 
-### If the DB schema changed
+### If the database schema changed
 
-- [ ] Migration created + tested?
-- [ ] Updated `docs/database.md`?
-- [ ] All services reading the changed fields reviewed?
-- [ ] Backfill plan if the column is NOT NULL?
+- [ ] Migration created and tested.
+- [ ] Updated `docs/database.md`.
+- [ ] All services that read the changed fields reviewed.
+- [ ] Backfill plan written down if the column is NOT NULL.
 
-### If an external service was added/touched
+### If an external service / third-party was added or changed
 
-- [ ] Updated `docs/integrations.md` (or equivalent)?
-- [ ] Env vars documented?
-- [ ] Error handling for provider outage?
-- [ ] Added to project's Integrations Registry in CLAUDE.md?
+- [ ] Updated `docs/integrations.md`.
+- [ ] Env vars documented in `.env.example` or equivalent.
+- [ ] Error handling for provider outage.
 
-### If a design choice was made
+### If a real design choice was made
 
-- [ ] Logged an ADR via `/decision`?
+- [ ] Logged an ADR via `/decision`.
 
 ### If a non-obvious bug was fixed
 
-- [ ] Added to `docs/KNOWN-ISSUES.md` via direct edit (symptom, root cause, fix, prevention)?
+- [ ] Added an entry to `docs/KNOWN-ISSUES.md` with: symptom, root cause, fix, and a **prevention rule** (a test, type, lint, or checklist item that would catch the same bug next time).
 
-### If a gap was shipped
+### If a tracked gap was shipped
 
-- [ ] Marked the gap `shipped YYYY-MM-DD (commit: <hash>)` in `docs/*-GAPS.md` via `/gap close`?
+- [ ] Opened the matching `docs/*-GAPS.md` and changed `Status:` to `shipped YYYY-MM-DD (commit: <hash>)`. Did NOT delete the section.
 
-### If a milestone/phase completed
+### If a milestone was hit
 
-- [ ] Updated project status in CLAUDE.md or phase doc?
+- [ ] Updated project status in `CLAUDE.md` or wherever the phase log lives.
 
-## Step 3 — Commit message quality
+## Step 3 — Draft the commit message
 
-Read the last 5 commit messages to match the project's style:
+Read the last 5 commit messages to match project style:
 
 ```bash
 git log -5 --pretty=format:"%s%n%b%n---"
 ```
 
-A good commit message explains **why**, not just **what**. Draft one following the project's conventions:
+A good commit message explains **why**, not just **what**. Draft one:
 
 ```
 <type>: short summary in imperative mood
 
-Why this change: <business or technical reason>
-What changed: <terse list if multi-file>
+Why: <the business or technical reason — 1-2 sentences>
+What: <terse list if multi-file, skip if single obvious change>
 
 Closes: <issue/gap ref if any>
 ```
 
-**Don't add AI attribution / "generated by" footers unless the project already uses them.**
+**Don't add AI attribution / "generated by" / "co-authored-by" unless the project already uses them.**
 
 ## Step 4 — Final sanity
 
-- [ ] `git diff --cached` one last time — is everything staged the right thing?
-- [ ] No secrets / API keys / .env leaking into the commit?
-- [ ] No large binary or generated files staged by accident?
+- [ ] `git diff --cached` one last time — everything staged is what you want.
+- [ ] No secrets / API keys / `.env` files leaking into the commit.
+- [ ] No large binaries or generated files staged by accident.
 
 ## Step 5 — Output
 
-Produce the commit command for the user to copy. Do **not** run it yourself unless the user explicitly asks. (Committing is a user-confirmed action.)
+Produce the commit command for the user to copy. **Do not run it yourself** unless they explicitly ask — committing is a user-confirmed action.
 
 ```
 ## Ship checklist — ready
 
-**Applicable items checked:** N of M
-**Still open:**
+Checked: N of M items
+Still open:
 - <anything the user should do before committing>
 
-**Suggested commit:**
-```
+Suggested commit:
 <type>: <summary>
-
 <body>
-```
 
-**To commit:**
-```bash
+To commit:
 git add <files>
 git commit -m "…"
 ```
-```
+
+## Step 6 — Remind about /session
+
+After they commit, remind them (once, briefly): *"If this is the end of your session, run `/session` to leave a handoff note."*

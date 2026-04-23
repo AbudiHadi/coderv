@@ -1,122 +1,117 @@
 ---
 name: before
-description: Enforced pre-code checklist. Runs BEFORE editing any code — reads CLAUDE.md, maps the task via MASTER-INDEX, reads related docs, greps the repo for existing patterns, and checks KNOWN-ISSUES + DECISIONS for relevant context. Use whenever starting a task more complex than a one-line fix. Catches the "dive-in-and-regret" pattern.
+description: Pre-code checklist that reads the relevant docs, greps prior art, checks past decisions, states a plan, and waits for approval. Runs automatically before any non-trivial code change so the dev never has to remember what to read. Skips itself for tiny / exploratory edits. This is the core discipline skill — it prevents Claude from diving in without context.
 user-invocable: true
-argument-hint: "<task description, e.g. 'add rate limiting to /api/invite', 'fix the dark mode glitch on status banner'>"
+argument-hint: "<task description, e.g. 'add rate limiting to /api/invite'>"
 ---
 
-# Before You Code — Read First
+# Before You Code
 
-Stop the "skim and code" reflex. Do this checklist before touching any file.
+You've been asked to plan a task before writing any code. **Stop, read, plan, wait for approval.** Never skip to writing code.
 
-## Step 1 — Sanity check
+## Step 1 — Decide if this skill should run at all
 
-```bash
-ls CLAUDE.md docs/MASTER-INDEX.md 2>/dev/null
-```
+**Skip this skill (go straight to the task) when:**
+- The task is a one-line change, typo fix, or documentation-only edit.
+- The user said "quick fix", "small change", "just", or "simple".
+- The task is undoing or tweaking code from earlier in THIS session (you already have the context).
+- The task is an interactive debugging pivot and a plan would go stale fast.
 
-If missing: run `/doc-init` first. Stop.
+**Always run this skill when:**
+- First time touching a module / directory this session.
+- Task description contains "add", "refactor", "rename", "rewrite", "integrate", "migrate".
+- The change will touch 3+ files or rename something used widely.
+- User said "take your time", "think about this", or "be careful".
+- After a long gap — first task of the day, or first time in this repo this week.
 
-If no argument: ask the user "what's the task?" and stop until they answer.
+If you skip, tell the user: `skipping /before — task is <reason>`. Then do the task directly.
 
-## Step 2 — Read core docs
+## Step 2 — First run in this project?
 
-```
-Read CLAUDE.md
-Read docs/MASTER-INDEX.md
-```
-
-From CLAUDE.md, note: Code Principles, Never rules, Always rules, Integrations Registry.
-
-## Step 3 — Map the task
-
-Find the task type in MASTER-INDEX §"Task → Doc Map". Read the docs it lists **in order**.
-
-If the task doesn't clearly match a row, use best judgment and say so explicitly in output.
-
-## Step 4 — Look for prior art
-
-Grep the repo for similar existing patterns:
+Check if the doc system is set up:
 
 ```bash
-# Find similar implementations
-grep -rn "<key term from task>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.js" | head -20
+ls CLAUDE.md docs/DECISIONS.md docs/KNOWN-ISSUES.md docs/SESSIONS.md 2>/dev/null
+```
 
-# Find related files
+If **any of the 4 are missing** (and this is the first time `/before` runs in this project), offer to create them:
+
+> "This looks like a fresh project. Want me to scaffold the 4 doc files + `CLAUDE.md`? (y/n)"
+
+If yes: create the missing files using these minimal templates:
+
+- `CLAUDE.md` — standard template (see https://coderv.dev/docs for content).
+- `docs/DECISIONS.md` — single header line + "newest at top" note.
+- `docs/KNOWN-ISSUES.md` — header + format template.
+- `docs/SESSIONS.md` — header + newest-at-top note.
+
+Never overwrite existing files.
+
+If the user says no, continue with the task using just what you can learn from the code.
+
+## Step 3 — Read the docs you need
+
+Read in this order:
+
+1. `CLAUDE.md` — rules, patterns, principles.
+2. `docs/MASTER-INDEX.md` if it exists — find the rows in "Task → Doc Map" that match.
+3. Any docs named in that map, in order.
+4. If `docs/DECISIONS.md` exists — grep it for terms related to the task. If any ADR applies, read it.
+5. If `docs/KNOWN-ISSUES.md` exists — grep it. If there's a prior bug in this area, note the prevention rule.
+6. If `docs/SESSIONS.md` exists — read the last entry. It may have "next session should probably…" hints or in-flight context.
+
+## Step 4 — Find prior art in the code
+
+Grep the repo for terms from the task:
+
+```bash
+grep -rn "<key term>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.js" | head -20
 find . -path ./node_modules -prune -o -type f -name "*<keyword>*" -print 2>/dev/null | head -10
 ```
 
-If similar code exists, **read it** before writing new code. Match the existing style.
+If similar code exists — **read it** before writing new code. Match the existing style. Don't reinvent what already exists.
 
-## Step 5 — Check for relevant ADRs
+## Step 5 — State the plan
 
-```bash
-grep -n "^## ADR" docs/DECISIONS.md 2>/dev/null
-```
-
-If any ADR relates to the task area, read it. Respect existing decisions unless you're consciously overturning one (which requires a new ADR via `/decision`).
-
-## Step 6 — Check known issues
-
-```bash
-grep -i "<task keyword>" docs/KNOWN-ISSUES.md 2>/dev/null
-```
-
-If the task touches an area with past recurring bugs, note their Prevention rules. Don't re-introduce them.
-
-## Step 7 — Check related gaps
-
-```bash
-ls docs/*-GAPS.md 2>/dev/null
-```
-
-If a gap doc covers this area, check whether the task closes a gap. If so, the user should run `/gap close <N>` after shipping.
-
-## Step 8 — Check last session note
-
-Read the last entry in `docs/SESSIONS.md`. It may contain "next session should probably…" hints or in-flight context.
-
-## Step 9 — State the plan
-
-Before writing code, output a plan:
+Before writing any code, output a plan in this exact shape. Keep it tight.
 
 ```
-## Pre-code orientation — <task>
+## Plan — <task>
 
-**Read:**
-- CLAUDE.md — <1 key rule that applies>
-- <doc1> — <takeaway>
-- <doc2> — <takeaway>
+Read:
+- CLAUDE.md: <one key rule that applies>
+- <doc>: <takeaway>
 
-**Prior art:**
+Prior art:
 - <file:line> — <how existing code handles this>
 
-**ADRs that apply:**
-- ADR-NNN <title>
+Decisions that apply:
+- ADR-NNN <title>     (or "none found")
 
-**Known issues in this area:**
-- KI-NNN <title> — <prevention rule>
+Known issues in this area:
+- KI-NNN <title> — prevention: <rule>    (or "none")
 
-**Related gaps:**
-- `<file>` §N — closes this? (<yes/no>)
-
-**Plan:**
+Plan:
 1. <step>
 2. <step>
 3. <step>
 
-**Files I expect to touch:**
+Files I expect to touch:
 - <path>
 - <path>
 
-**Risks:**
-- <anything surprising>
-
-**After shipping, I'll run:** /ship
+Risks / things I'm unsure about:
+- <anything surprising, or "none")
 ```
 
-## Step 10 — Wait for confirmation
+## Step 6 — Wait for approval
 
-Do **not** start coding until the user confirms the plan (or corrects it). This is the whole point of `/before` — catching misalignment early.
+Do **not** start coding until the user confirms the plan (or corrects it). This is the whole point — catch misalignment before, not after.
 
-If the plan was misaligned, iterate. Don't code until aligned.
+If the user corrects the plan, update it and re-state it. Don't code until aligned.
+
+## Step 7 — Suggest the follow-ups
+
+After you finish the task, remind the user (once, briefly):
+- If you made a design choice with trade-offs → run `/decision`.
+- Before committing → run `/ship`.

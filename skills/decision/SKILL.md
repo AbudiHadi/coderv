@@ -1,61 +1,72 @@
 ---
 name: decision
-description: Log an architectural decision (ADR) in docs/DECISIONS.md. Use when the user makes a non-trivial choice — a library pick, a pattern, a trade-off, a scope cut — that future sessions or teammates will second-guess. Also use to retrieve why past decisions were made (`/decision list` or `/decision <topic>`). Prevents "why did we do it this way?" re-litigation.
+description: Log an architectural decision (ADR) so the reasoning survives across sessions. Use right after you pick a library, a pattern, or a trade-off. Takes 30 seconds while it's fresh. Prevents "why did we do it this way?" re-debates months later. Also retrieves past decisions with `/decision list` or `/decision <topic>`.
 user-invocable: true
-argument-hint: "[title to log new ADR | 'list' | topic to search past ADRs]"
+argument-hint: "[title to log new ADR | 'list' | topic to search]"
 ---
 
-# Log or Query a Decision (ADR)
+# Log or Retrieve a Decision
 
-Architectural Decision Records preserve *why* a choice was made. Future sessions without this context will drift.
+ADRs preserve *why* you chose X over Y. Without them, the next session (or the next person) re-debates it from scratch.
 
-## Step 1 — Sanity check
+## Step 1 — Check the file exists
 
 ```bash
 ls docs/DECISIONS.md 2>/dev/null
 ```
 
-If missing: tell user to run `/doc-init` first. Stop.
+If missing: create it with this template:
 
-## Step 2 — Interpret the argument
+```markdown
+# Decision Log (ADRs)
 
-### Argument = `list` → show the ADR index
+> Every architectural / library / pattern / scope decision that will be second-guessed later.
+> Newest at top. Never delete — if a decision is reversed, add a new ADR that supersedes the old one.
 
-Read `docs/DECISIONS.md`, extract the title line of every `## ADR-NNN:` section. Output:
+---
+```
+
+## Step 2 — Read the argument
+
+### Argument = `list`
+
+Read `docs/DECISIONS.md`. Extract every `## ADR-NNN:` heading. Output:
 
 ```
-## ADR log (N total)
+ADR log (N total)
 
-**Accepted:**
+Accepted:
 - ADR-001: <title> — YYYY-MM-DD
 - ADR-003: <title> — YYYY-MM-DD
 
-**Superseded:**
+Superseded:
 - ADR-002: <title> — superseded by ADR-005
-
-**Deprecated:**
-- (none)
 ```
 
-### Argument = a topic (e.g. "auth", "database", "video") → search
+### Argument = a topic (e.g. "auth", "database")
 
-Grep `docs/DECISIONS.md` for the term. Return matching ADRs with their Decision + Consequences sections summarised.
+Grep `docs/DECISIONS.md` for the term. Return matching ADRs with their Decision + Consequences summarised.
 
-### Argument = a title → log a new ADR
+### Argument = a title (log a new one)
 
-1. Read `docs/DECISIONS.md` and find the highest existing ADR number (e.g. if ADR-007 is the last, the new one is ADR-008).
-2. Ask the user to answer these (one by one or as a block):
-   - **Context:** What's the problem / forces at play?
-   - **Decision:** What are we choosing?
-   - **Alternatives considered:** What else did we look at? Why did we reject them? (at least 2 alternatives)
-   - **Consequences:** What's the trade-off? What might we revisit later?
-   - **Decider(s):** Who made the call?
-3. Write the new ADR at the top of the file (newest at top), using the template in DECISIONS.md:
+1. Find the highest existing ADR number. New one is `ADR-(N+1)`.
+2. Ask the user (compact — one message, not 5):
+
+```
+Logging a new ADR. Tell me:
+- Context: what's the problem?
+- Decision: what are we choosing?
+- Alternatives considered (at least 2, each with why rejected):
+- Consequences (trade-off, what to revisit if):
+- Decider(s):
+```
+
+3. Write the ADR at the **top** of `docs/DECISIONS.md` (newest first):
 
 ```markdown
 ## ADR-NNN: <Title>
 
-**Date:** YYYY-MM-DD (today)
+**Date:** YYYY-MM-DD
 **Status:** accepted
 **Decider(s):** <name(s)>
 
@@ -67,37 +78,25 @@ Grep `docs/DECISIONS.md` for the term. Return matching ADRs with their Decision 
 
 ### Alternatives considered
 - **<Option A>** (chosen) — <reason>
-- **<Option B>** — <reason rejected>
-- **<Option C>** — <reason rejected>
+- **<Option B>** — <why rejected>
+- **<Option C>** — <why rejected>
 
 ### Consequences
 - Positive: <…>
-- Negative / trade-off: <…>
+- Trade-off: <…>
 - Revisit if: <condition that would make us reconsider>
 ```
 
-4. Do **not** delete or modify existing ADRs. If this decision supersedes an older one:
+4. If this decision supersedes an older one:
    - Add "Supersedes ADR-MMM" to the new ADR.
-   - In the old ADR, change `**Status:** accepted` to `**Status:** superseded by ADR-NNN (YYYY-MM-DD)`.
+   - Edit the old ADR: change `Status: accepted` → `Status: superseded by ADR-NNN (YYYY-MM-DD)`.
+   - **Never delete** the old ADR.
 
-## Step 3 — Prompt for follow-ups
+## Output
 
-After logging, ask:
-- Does this decision create a gap (something not yet built)? → `/gap new <area>` or add to existing.
-- Does this decision invalidate a doc? → update it or mark archived via `/doc-new`.
-- Does this decision need communicating? → write a `/session` note.
-
-## Output format
-
-For logging:
 ```
-## Logged: ADR-NNN <title>
-
-**Status:** accepted
-**Location:** docs/DECISIONS.md
-
-**Follow-ups suggested:**
-- <list any>
+Logged ADR-NNN: <title>
+Location: docs/DECISIONS.md (line N)
 ```
 
-For list/search: the ADR index or matching sections.
+One line. Done.

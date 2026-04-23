@@ -1,37 +1,39 @@
 ---
 name: session
-description: Write an end-of-session handoff note in docs/SESSIONS.md so the next session (or teammate) picks up cleanly without re-discovering state. Use at the end of any session that left work in flight, made non-trivial changes, or uncovered info the next session needs. Also use `/session last` to read the most recent handoff.
+description: Write a session handoff note so the next session (you or a teammate) picks up cleanly — no more "what was I doing again?" on Monday morning. Use at end of session. Use `/session last` at the start of a session to read the previous handoff.
 user-invocable: true
-argument-hint: "[short title for the session | 'last' to read most recent]"
+argument-hint: "[short title | 'last' to read most recent]"
 ---
 
 # Session Handoff
 
 Capture what happened so the next session doesn't start from zero.
 
-## Step 1 — Sanity check
+## Step 1 — Check the file exists
 
 ```bash
 ls docs/SESSIONS.md 2>/dev/null
 ```
 
-If missing: tell user to run `/doc-init`. Stop.
+If missing, create it with this header:
 
-## Step 2 — If argument is `last`
+```markdown
+# Session Handoffs
 
-Read `docs/SESSIONS.md` and return the most recent entry (the topmost `## YYYY-MM-DD — ...` section). Include the full content so the user sees exactly what the prior session left.
+> End-of-session notes so the next session picks up cleanly. Newest at top.
 
-## Step 3 — Otherwise: write a new handoff
+---
+```
 
-Gather info. Ask the user if they don't proactively say:
+## Step 2 — Read the argument
 
-1. **Title** (from argument, or ask)
-2. **What shipped** — changes merged/committed this session, with file paths or commit hashes
-3. **In flight** — work-in-progress, not yet committed or not yet working
-4. **Gotchas** — anything surprising the next session should know (e.g. "prod DB schema differs from staging", "feature flag is off by default", "100ms webhook takes 30s in staging")
-5. **Next session should probably** — 1–3 suggested next steps
+### Argument = `last`
 
-Also pull context programmatically to jog memory:
+Read the file, return the topmost `## YYYY-MM-DD — ...` section verbatim. That's the last handoff.
+
+### Otherwise (new handoff)
+
+Gather context before asking the user:
 
 ```bash
 git log --since="6 hours ago" --oneline
@@ -39,9 +41,18 @@ git status
 git diff --stat
 ```
 
-## Step 4 — Write to SESSIONS.md
+Then ask the user (one compact prompt):
 
-Prepend to the file (newest at top) — do not append to the bottom:
+```
+End-of-session handoff. Fill in:
+- Title (or leave blank, I'll use the branch/commit hint):
+- What shipped (from git log, confirm/edit):
+- In flight (not yet shipped):
+- Gotchas the next session should know:
+- Next session should probably:
+```
+
+Prepend a new entry to the **top** of `docs/SESSIONS.md`:
 
 ```markdown
 ## YYYY-MM-DD — <Title>
@@ -61,24 +72,20 @@ Prepend to the file (newest at top) — do not append to the bottom:
 ---
 ```
 
-Use today's date. If there are multiple sessions in a day, include a time suffix: `YYYY-MM-DD 14:30 — Title`.
+Use today's date. If multiple sessions in one day, add a time suffix: `YYYY-MM-DD 14:30 — Title`.
 
-## Step 5 — Prompt for related updates
+## Step 3 — Prompt for related follow-ups (briefly, one line each)
 
 If the session:
-- Made a design choice → suggest `/decision`
-- Fixed a non-obvious bug → suggest adding to `docs/KNOWN-ISSUES.md`
-- Shipped a gap → suggest `/gap close <N>`
-- Hit a milestone → suggest updating CLAUDE.md status
+- Made a non-obvious design choice → "Consider logging an ADR with `/decision`."
+- Fixed a non-obvious bug → "Add an entry to `docs/KNOWN-ISSUES.md` while it's fresh."
+- Hit a milestone → "Update project status in `CLAUDE.md`."
 
-## Step 6 — Output
+## Output
 
 ```
-## Session logged: <title>
+Session logged: <title>
+Location: docs/SESSIONS.md
 
-**Written to:** docs/SESSIONS.md
-**In flight:** N items
-**Suggested follow-ups:** <list any>
-
-Next session: start with `/session last` + `/docs`.
+Next session: start with /session last
 ```
