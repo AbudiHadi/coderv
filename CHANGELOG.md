@@ -5,6 +5,15 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.3.4] — 2026-04-24
+
+### Changed
+- Contact email updated from `GGAbdulalah@gmail.com` to **`support@coderv.com`** across:
+  - `LICENCE` (both repos) — §1 Definitions, §4 Requesting Permission, footer contact
+  - Website footer, `/licence` page, hero email CTA, meta tags
+  - `README.md` (both repos)
+  - `src/config/site.ts` — single source of truth propagates to every page
+
 ## [0.3.3] — 2026-04-24
 
 ### Changed

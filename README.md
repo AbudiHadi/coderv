@@ -117,6 +117,6 @@ Discipline needs to survive "tired". Hooks fail silently, prompts don't. These r
 
 CoderLap Source-Available Licence v1.0 — see [LICENCE](./LICENCE).
 
-Free to read. Free for personal evaluation. **All other use — commercial, redistribution, hosting, incorporation, modification-then-sharing — requires written permission from Abdullah Hadi (GGAbdulalah@gmail.com).**
+Free to read. Free for personal evaluation. **All other use — commercial, redistribution, hosting, incorporation, modification-then-sharing — requires written permission from Abdullah Hadi (support@coderv.com).**
 
 Full licence: https://coderv.dev/licence
