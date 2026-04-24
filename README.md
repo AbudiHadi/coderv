@@ -14,10 +14,9 @@
 
 ## Used in production by
 
-- **[CareShifa](https://staging.careshifa.com)** — telemedicine platform (Next.js + Prisma)
-- **Yokisa ecosystem** — 10+ SaaS apps (Yokisa Hub, Billing, TV, Anime, Achievements…)
+- **[CareShifa](https://careshifa.com)** — telemedicine platform (Next.js + Prisma)
+- **Yokisa ecosystem** — SaaS suite including Yokisa Streak, Yokisa Anime, Yokisa TV, Yokisa Hub, Yokisa Billing, Yokisa Achievements
 - **Library System** — internal operations
-- **Thamara, DoodyExamBot** — specialised tools
 
 > *Running CoderLap in production? Email [support@coderv.com](mailto:support@coderv.com) — we'll add you to this list.*
 

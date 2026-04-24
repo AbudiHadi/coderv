@@ -5,11 +5,16 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.3.6] — 2026-04-24
+
+### Changed
+- "Used in production by" list updated: CareShifa link now points at the production site (`careshifa.com`). Yokisa entries expanded to name the individual products (Streak, Anime, TV, Hub, Billing, Achievements). Removed private internal tools from the public list.
+
 ## [0.3.5] — 2026-04-24
 
 ### Added
 - **README badges** on both repos: latest release, GitHub stars, GitHub forks, licence, "built for Claude Code". Strangers visiting the repo immediately see it's alive, released, and has traction.
-- **"Used in production by" section** in toolkit README listing real deployments (CareShifa, Yokisa ecosystem, Library System, Thamara, DoodyExamBot). Trust signal beats raw download numbers.
+- **"Used in production by" section** in toolkit README listing real deployments. Trust signal beats raw download numbers.
 - **"Star on GitHub" CTA** on the homepage replaces the plain "View on GitHub" button — yellow star icon, call-to-action framing, hover scales the icon.
 
 ### Changed
