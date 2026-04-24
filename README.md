@@ -1,5 +1,30 @@
 # CoderLap Docs Toolkit
 
+[![Latest release](https://img.shields.io/github/v/release/AbudiHadi/coderv?color=8b5cf6&label=release)](https://github.com/AbudiHadi/coderv/releases)
+[![GitHub stars](https://img.shields.io/github/stars/AbudiHadi/coderv?style=social)](https://github.com/AbudiHadi/coderv/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/AbudiHadi/coderv?style=social)](https://github.com/AbudiHadi/coderv/network/members)
+[![License](https://img.shields.io/badge/license-CoderLap%20SA-8b5cf6)](./LICENCE)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-8b5cf6)](https://coderv.dev)
+
+**A context-aware toolkit for Claude Code.** It watches how you naturally talk and suggests the right tool at the right moment — turning your real workflow into clean, honest docs.
+
+🌐 **[coderv.dev](https://coderv.dev)** · ⭐ [Star on GitHub](https://github.com/AbudiHadi/coderv) · ✉️ [support@coderv.com](mailto:support@coderv.com)
+
+---
+
+## Used in production by
+
+- **[CareShifa](https://staging.careshifa.com)** — telemedicine platform (Next.js + Prisma)
+- **Yokisa ecosystem** — 10+ SaaS apps (Yokisa Hub, Billing, TV, Anime, Achievements…)
+- **Library System** — internal operations
+- **Thamara, DoodyExamBot** — specialised tools
+
+> *Running CoderLap in production? Email [support@coderv.com](mailto:support@coderv.com) — we'll add you to this list.*
+
+---
+
+## What it does
+
 Five slash commands that help devs keep extremely clear docs — without getting tired or trying to remember.
 
 > **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero. Docs rot within a week.
