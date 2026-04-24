@@ -3,9 +3,11 @@ name: docify
 description: |
   Generate a professional docs/ folder from an existing codebase. Scans the project, detects the stack, and writes CLAUDE.md + architecture.md + api.md + components.md + database.md + integrations.md + overview.md — all grounded in file+line citations so docs never lie. Preserves custom CLAUDE.md rules when it already exists.
 
-  TRIGGER — suggest this skill (even without /docify prefix) when the user says anything like: "write docs", "write documentation", "create docs", "generate docs", "no docs exist", "this project has no README", "document this project", "explain the codebase", "document what we have", "make docs for X", "I need docs", "our docs are outdated", "fresh docs", "bootstrap docs".
+  TRIGGER — suggest this skill (even without /docify prefix) when the user says the words "docs", "doc", "documentation", "readme", "README" — OR any of these phrases: "write docs", "write documentation", "create docs", "generate docs", "make docs", "make a doc", "make a full docs", "need docs", "no docs exist", "this project has no README", "document this project", "explain the codebase", "document what we have", "make docs for X", "I need docs", "our docs are outdated", "fresh docs", "bootstrap docs", "docs are missing", "docs outdated".
 
-  SKIP — when the user wants to edit ONE specific existing doc file by hand (that's just a file edit, not a docs generation task).
+  SKIP — when the user wants to edit ONE specific existing doc file by hand ("fix a typo in api.md", "add a line to architecture.md"), OR when "docs" means something clearly unrelated like "the docs page on our website" or a doctor / document of another kind.
+
+  On ambiguous single-word mentions ("docs?", "about docs"), briefly clarify intent before running — "do you mean generate a full docs folder (/docify), or edit an existing doc file?"
 user-invocable: true
 argument-hint: "[--refresh <file>] — omit for first-time generation"
 ---
