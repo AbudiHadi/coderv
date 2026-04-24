@@ -1,6 +1,13 @@
 ---
 name: session
-description: Write a session handoff note so the next session (you or a teammate) picks up cleanly — no more "what was I doing again?" on Monday morning. Use at end of session. Use `/session last` at the start of a session to read the previous handoff.
+description: |
+  Write a session handoff note so the next session (you or a teammate) picks up cleanly — no more "what was I doing again?" on Monday morning. Use at end of session. Use `/session last` at the start of a session to read the previous handoff.
+
+  TRIGGER (end-of-session) — suggest this skill (even without /session prefix) when the user says: "I'm done for today", "done for the day", "wrap up", "wrapping up", "see you tomorrow", "see you next week", "stopping here", "pausing here", "leaving it here", "continue later", "tomorrow-me", "taking a break", "lunch break", "end of day", "EOD".
+
+  TRIGGER (start-of-session) — suggest `/session last` when the user says: "where did I leave off?", "what was I doing?", "pick up where I left off", "what's next?", "status?", "what was last?", "continue from yesterday", "remind me what we were doing".
+
+  SKIP — in the middle of active work with no break in sight.
 user-invocable: true
 argument-hint: "[short title | 'last' to read most recent]"
 ---

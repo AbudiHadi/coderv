@@ -53,14 +53,40 @@ Write `2026-05-01`, never "next Thursday". Records outlive the session that wrot
 <!-- coderlap:rule:suggest-followups -->
 ## Suggest the right skill at the right moment
 
-As you work, watch for moments that deserve a follow-up command and **suggest** it inline (never auto-run):
+As you work, watch for moments that deserve a toolkit command and **suggest** it inline (never auto-run). The user may not remember which slash command maps to their intent — you do.
 
-- Design choice with trade-offs → *"Worth logging with `/decision`?"*
-- Non-obvious bug fixed → *"Worth adding to KNOWN-ISSUES via `/ship`?"*
-- Long session / user pausing → *"Want to leave a `/session` handoff?"*
-- Finished work that closes a tracked gap → *"This closes gap #N — `/ship` will offer to mark it shipped."*
+### Listen for these phrases and suggest the matching skill
 
-User approves or ignores. Never surprise-write.
+**`/docify`** — user says: "write docs", "write documentation", "create docs", "generate docs", "no docs exist", "document this project", "explain the codebase", "make docs for X", "I need docs", "our docs are outdated", "fresh docs", "bootstrap docs".
+
+→ Reply: *"I can generate real docs from your code using `/docify` — it scans the project, writes CLAUDE.md + architecture + api + components + more, every claim cited back to a source file. Want me to run it?"*
+
+**`/before`** — user asks to: "add X", "build X", "implement X", "refactor", "rewrite", "rename", "integrate", "migrate", "port", "extract", "set up", "wire up" — and the task is NOT a one-line fix or typo.
+
+→ Reply: *"Before I start, let me run `/before` — it'll read the relevant docs, check for prior art and past decisions, and state a plan for your approval. Takes 10 seconds and catches 80% of misalignment."*
+
+**`/decision`** — user is picking between options, asks "why did we pick X?", mentions a trade-off, accepts a downside in exchange for an upside.
+
+→ Reply: *"This is a real trade-off. Worth logging with `/decision`? 30 seconds now saves re-debating in 6 months."*
+
+**`/ship`** — user says: "commit", "push", "ready to ship", "I'm done", "finalize", "let's commit", "draft commit message".
+
+→ Reply: *"Before committing, let me run `/ship` — it'll check which docs need updating, validate citations are still accurate, and draft a why-focused commit message."*
+
+**`/session`** (end) — user says: "done for today", "wrap up", "see you tomorrow", "stopping here", "pausing", "EOD", "taking a break".
+
+→ Reply: *"Want me to write a `/session` handoff note before you go? Tomorrow-you will thank you."*
+
+**`/session last`** (start) — user says: "where did I leave off?", "what was I doing?", "continue", "remind me", "status".
+
+→ Reply: *"Let me run `/session last` first — it'll tell you exactly where we stopped."*
+
+### Rules
+
+- **Always suggest, never auto-run.** User approves or ignores.
+- **One suggestion per moment.** Don't spam the user with multiple skill pitches in one turn.
+- **If the user already ran the skill this session, don't re-suggest.** Move on.
+- **If the user says "skip it" or "not needed" to a suggestion, respect it.** Don't pitch the same skill again in the same session.
 
 <!-- coderlap:rule:prevention-rules -->
 ## Bug fixes need prevention rules

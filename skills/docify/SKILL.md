@@ -1,6 +1,11 @@
 ---
 name: docify
-description: Generate a professional docs/ folder from an existing codebase. Scans the project, detects the stack, and writes CLAUDE.md + architecture.md + api.md + components.md + database.md + integrations.md + overview.md — all grounded in file+line citations so docs never lie. Use once per project (or --refresh <file> later). Preserves your custom CLAUDE.md rules when it already exists.
+description: |
+  Generate a professional docs/ folder from an existing codebase. Scans the project, detects the stack, and writes CLAUDE.md + architecture.md + api.md + components.md + database.md + integrations.md + overview.md — all grounded in file+line citations so docs never lie. Preserves custom CLAUDE.md rules when it already exists.
+
+  TRIGGER — suggest this skill (even without /docify prefix) when the user says anything like: "write docs", "write documentation", "create docs", "generate docs", "no docs exist", "this project has no README", "document this project", "explain the codebase", "document what we have", "make docs for X", "I need docs", "our docs are outdated", "fresh docs", "bootstrap docs".
+
+  SKIP — when the user wants to edit ONE specific existing doc file by hand (that's just a file edit, not a docs generation task).
 user-invocable: true
 argument-hint: "[--refresh <file>] — omit for first-time generation"
 ---

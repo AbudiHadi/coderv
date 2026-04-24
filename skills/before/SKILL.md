@@ -1,6 +1,11 @@
 ---
 name: before
-description: Pre-code checklist that reads the relevant docs, greps prior art, checks past decisions, states a plan, and waits for approval. Runs automatically before any non-trivial code change so the dev never has to remember what to read. Skips itself for tiny / exploratory edits. This is the core discipline skill — it prevents Claude from diving in without context.
+description: |
+  Pre-code checklist that reads the relevant docs, greps prior art, checks past decisions, states a plan, and waits for approval. Runs automatically before any non-trivial code change so the dev never has to remember what to read. Skips itself for tiny / exploratory edits. This is the core discipline skill — it prevents Claude from diving in without context.
+
+  TRIGGER — suggest this skill (even without /before prefix) when the user asks to: "add <feature>", "build <feature>", "implement <X>", "refactor <X>", "rewrite <X>", "rename <X>", "integrate <service>", "migrate <X>", "port <X>", "extract <X>", "set up <X>", "wire up <X>". Also when they say "take your time", "think about this", or touch a module for the first time this session.
+
+  SKIP — when the user says "quick fix", "just", "small change", "tiny edit", "typo", when they're undoing something from earlier in this same session, or when the task is documentation-only.
 user-invocable: true
 argument-hint: "<task description, e.g. 'add rate limiting to /api/invite'>"
 ---

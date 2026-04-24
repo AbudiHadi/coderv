@@ -1,6 +1,11 @@
 ---
 name: ship
-description: Pre-commit checklist. Reads the diff, offers to update docs itself (not just ask you), validates citations in docs haven't gone stale, drafts a why-focused commit message. Runs before every commit that touches multiple files.
+description: |
+  Pre-commit checklist. Reads the diff, offers to update docs itself (not just ask you), validates citations in docs haven't gone stale, drafts a why-focused commit message. Runs before every commit that touches multiple files.
+
+  TRIGGER — suggest this skill (even without /ship prefix) when the user says: "commit", "git commit", "commit this", "push it", "push this", "push up", "create a commit", "make a commit", "ready to ship", "I'm done", "all done", "wrap up this change", "finalize", "let's commit", "commit and push", "ready to merge", "draft commit message", "write commit message".
+
+  SKIP — when the user is only asking about git status without intent to commit (e.g. "what changed?", "show me the diff").
 user-invocable: true
 argument-hint: "(no args — reads git diff and staged files)"
 ---
