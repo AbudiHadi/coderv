@@ -15,7 +15,8 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}Claude Docs Toolkit — installer${NC}"
+VERSION_STR=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "?")
+echo -e "${BLUE}CoderLap Docs Toolkit v${VERSION_STR} — installer${NC}"
 echo
 
 # Sanity check: source dir exists
