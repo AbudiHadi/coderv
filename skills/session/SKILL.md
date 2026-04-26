@@ -48,23 +48,17 @@ git status
 git diff --stat
 ```
 
-Then ask the user — friendly, one prompt:
+Then ask the user — terse, one prompt:
 
 ```markdown
-**Wrapping up — let's leave a note for next time 👋**
+👋 Wrapping up. Git shows: <N commits this session> · <M files in flight> · branch `<name>`.
 
-Here's what I see from git (confirm or edit):
-
-| Area | What I found |
-|---|---|
-| ✅ Shipped (committed) | <list of commits, or ✅ nothing committed this session> |
-| 🚧 In flight (not yet committed) | <list of staged/modified files, or ✅ nothing pending> |
-| 🌿 Branch | <current branch> |
-
-**Fill in (just the bits that apply):**
-- **Title** (or leave blank, I'll use the commit hint):
-- **Gotchas next-you should know:** (anything weird, anything that surprised you)
+**Fill in (just what applies):**
+- **Title:** (or leave blank — I'll use a commit hint)
+- **Gotchas for next-you:** (anything weird?)
 - **Next session should probably:** (one suggestion)
+
+*Want to see the full git log + diff stats first? Say "show git".*
 ```
 
 Prepend a new entry to the **top** of `docs/SESSIONS.md`:
@@ -99,14 +93,9 @@ If the session:
 ## Output
 
 ```markdown
-**Handoff saved 📝**
+📝 Handoff saved: **<title>** → top of `docs/SESSIONS.md`.
 
-| What | Where |
-|---|---|
-| 📌 Session title | <title> |
-| 📂 File | docs/SESSIONS.md (top of file) |
-
-👉 **Next session: start with `/session last`** to read this back.
+👉 Next session: start with `/session last`.
 ```
 
-If you also offered follow-ups (ADR, KNOWN-ISSUES entry, CLAUDE.md status update), list them as one-liners under the table — never as a "Should you do X?" menu. Recommend the one most worth doing.
+If a follow-up is genuinely worth recommending (ADR worth logging, bug worth adding to KNOWN-ISSUES, CLAUDE.md status worth updating), add **one** suggestion line — the single most worthwhile one. Don't list all three. The user can ask "anything else?" if they want more.

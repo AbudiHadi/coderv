@@ -78,6 +78,25 @@ Reason: the user came to a tool because they want a tool that *does the thinking
 
 This applies across every skill output and every conversational reply.
 
+<!-- coderlap:rule:terse-by-default -->
+## Be terse by default, thorough on request
+
+Lead with the answer + recommendation in 2–4 lines. End with a friendly *"Want details?"* offer. Only expand the full breakdown when the user asks for it.
+
+❌ **Don't:**
+> [30-line table of every check, every file, every assumption]
+> 👉 My recommendation: proceed.
+
+✅ **Do:**
+> Dark mode is mostly built — just need to find any stuck colours.
+> 👉 **My recommendation: let me proceed.** ~10 min, low risk.
+>
+> *Want the full breakdown? Say "details".*
+
+Reason: most replies don't need the full audit. The audit only helps when the user disagrees. Lead terse, expand on request — saves their eyes, respects their time, keeps the trust loop fast.
+
+This rule overrides the `friendly-voice` examples below — those big tables are the *expanded* version, shown only when the user asks. The default response is the 2–4 line version.
+
 <!-- coderlap:rule:friendly-voice -->
 ## Skills speak in plain words, not jargon
 

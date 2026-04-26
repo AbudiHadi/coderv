@@ -192,45 +192,48 @@ Explain **why**, not just what. No AI attribution unless the project already use
 - [ ] No secrets / API keys / `.env` leaking
 - [ ] No large binaries or generated files staged
 
-## Step 7 — Output (friendly, scannable)
+## Step 7 — Output (terse by default)
 
-Use plain words. Tables for status. End with a recommendation.
+**Default response — short, ~6 lines:**
 
 ```markdown
-**Ready to ship 🚢**
+🚢 Ready to ship — <N> files, <one-line summary of the change>.
 
-Here's what's about to be committed and what I checked:
+✅ Doc references valid · ✅ no secrets staged · <✅ docs updated | ⚠ N stale doc refs>
+
+**Suggested commit message:**
+```
+<type>: <short summary>
+
+<2-3 sentences on WHY>
+```
+
+**To commit:** `git add <files> && git commit -m "<message>"`
+
+👉 **My recommendation: <ship as-is | fix warnings first | split>.** <one-sentence reason>.
+
+*Want the full pre-commit checklist? Say "details".*
+```
+
+**On request ("details" / "show checklist"), expand:**
+
+```markdown
+**Full pre-commit checklist 🚢**
 
 | Area | Status |
 |---|---|
-| 📦 Files staged | <N files — one-line summary of what type> |
-| 📚 Doc updates I offered | <N offered, M applied, K skipped — or ✅ no doc changes needed> |
-| 🔗 Doc references checked | <✅ all good | ⚠ N references no longer match the code> |
-| 🐛 Bug-prevention notes | <✅ logged in KNOWN-ISSUES | ✅ not needed for this change> |
-| 🔐 Secrets / large files | <✅ none staged | ⚠ found: <list>> |
+| 📦 Files staged | <N files: one-line summary> |
+| 📚 Doc updates offered | <N offered, M applied, K skipped> |
+| 🔗 Doc references checked | <✅ all good | ⚠ N stale> |
+| 🐛 Bug-prevention notes | <✅ logged | ✅ not needed> |
+| 🔐 Secrets / large files | <✅ clean | ⚠ <list>> |
+| 🧪 Tests / typecheck | <✅ passed | ⚠ skipped | ⚠ failed> |
 
-**Anything still open:**
-- <blocker, or ✅ nothing>
-
-**Suggested commit message** (plain text — no AI attribution, no robot emoji):
-
-```
-<type>: <short summary in plain words>
-
-<2-3 sentences explaining WHY this change was needed>
+**Open issues:**
+- <blocker, or ✅ none>
 ```
 
-**To commit, run:**
-
-```bash
-git add <files>
-git commit -m "<the message above>"
-```
-
-👉 **My recommendation: <ship as-is | hold and fix the warnings first | split into smaller commits>.** Reason: <one sentence>.
-```
-
-**Never run `git commit` yourself.** Show the command. The user runs it. (They might want to tweak the message.)
+**Never run `git commit` yourself.** Show the command. The user runs it.
 
 ## Step 8 — Suggest follow-ups
 

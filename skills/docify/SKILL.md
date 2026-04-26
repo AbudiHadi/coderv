@@ -64,49 +64,52 @@ Detect:
 - **Existing docs** in `docs/` (never clobber)
 - **Existing `CLAUDE.md`** and its contents
 
-## Step 2 — Build the plan (friendly + scannable)
+## Step 2 — Build the plan (terse default)
 
-Show the user what you found and what you'd write — in plain words:
+**Default response — short:**
 
 ```markdown
-**Here's what I found in your project 🔍**
+🔍 Detected: <Stack name> · <N routes> · <M models> · <K components> · <X external services>.
 
-| What I detected | Found |
+Will write **N drafts** in `docs/` + merge **<M> missing rules** into your CLAUDE.md (your custom rules stay untouched). All claims cite source files. Drafts only — nothing real until you `/docify approve <name>`.
+
+Takes ~5 min.
+
+👉 **My recommendation: approve and let me run it.**
+
+Reply `go` to start, or say "details" to see the full file list and what each will contain.
+```
+
+**On request ("details"), expand to the full breakdown:**
+
+```markdown
+**What I found:**
+
+| Detected | Found |
 |---|---|
-| 🏗️ Stack | Next.js 16 + Prisma + PostgreSQL |
-| 📦 Package manager | npm |
-| 🛣️ API routes | 47 found in `app/api/**` |
-| 🗄️ Database models | 18 found in `prisma/schema.prisma` |
-| 🧩 Components | 23 found in `components/**` |
-| 🔌 External services | Stripe, Twilio, 100ms (from `.env.example`) |
+| 🏗️ Stack | <stack> |
+| 📦 Package manager | <npm/yarn/pip/etc.> |
+| 🛣️ API routes | <N> in `<path>` |
+| 🗄️ Database models | <M> in `<path>` |
+| 🧩 Components | <K> in `<path>` |
+| 🔌 External services | <list> |
 
-**What I'd write (all as drafts you approve before they go live):**
+**What I'd write (all drafts, you approve before promotion):**
 
 | File | What it'll contain |
 |---|---|
-| 📜 `CLAUDE.md` | Merging 3 missing rules. Your 12 existing rules stay untouched. |
+| 📜 `CLAUDE.md` | <X> missing rules merged · <Y> custom rules untouched |
 | 📘 `docs/overview.draft.md` | What the project is + how to run it |
 | 🏛️ `docs/architecture.draft.md` | Request flow, layers, services |
-| 🛣️ `docs/api.draft.md` | All 47 routes documented |
-| 🧩 `docs/components.draft.md` | 23 components with props |
-| 🗄️ `docs/database.draft.md` | 18 models + relationships |
-| 🔌 `docs/integrations.draft.md` | Stripe, Twilio, 100ms |
-| 📋 `docs/DECISIONS.md` | Empty file — ready for your first `/decision` |
-| 🐛 `docs/KNOWN-ISSUES.md` | Empty file — ready for `/ship` to add bug entries |
-| 📝 `docs/SESSIONS.md` | Empty file — ready for `/session` handoffs |
+| 🛣️ `docs/api.draft.md` | All <N> routes |
+| 🧩 `docs/components.draft.md` | <K> components with props |
+| 🗄️ `docs/database.draft.md` | <M> models + relationships |
+| 🔌 `docs/integrations.draft.md` | External services |
+| 📋📝🐛 Empty scaffolds | DECISIONS, SESSIONS, KNOWN-ISSUES |
 
-**What I will NOT touch:**
-- `docs/custom-business.md` (already exists, yours to keep)
-- Your 12 custom CLAUDE.md rules (no markers → not ours)
-
-**Heads-up:**
-- Every claim in every doc cites a source file with line numbers, so docs can't drift silently.
-- All generated docs land as `.draft.md`. Nothing is real until you run `/docify approve <name>`.
-- This takes about 5 minutes.
-
-👉 **My recommendation: approve and let me run it.** If you want me to skip a specific doc, say which.
-
-Reply `go` to start, or tell me what to change.
+**Won't touch:**
+- Existing files I didn't generate.
+- Your custom CLAUDE.md rules (no `coderlap:rule:*` marker → not ours).
 ```
 
 Wait for approval. Do not proceed on silence.
@@ -243,43 +246,43 @@ Line ranges allowed (`42-58`), not just single lines. Use the smallest range tha
 
 ## Step 6 — Report what was generated
 
+**Default response — short:**
+
 ```markdown
-**Docs generated (drafts) ✨**
+✨ Generated <N> drafts + merged <M> rules into CLAUDE.md (your custom rules untouched).
 
-| File | Size | Source references |
-|---|---|---|
-| 📘 docs/overview.draft.md | <N> lines | 58 source references |
-| 🏛️ docs/architecture.draft.md | <N> lines | 22 source references |
-| 🛣️ docs/api.draft.md | <N> lines | 47 routes, 141 source references |
-| 🧩 docs/components.draft.md | <N> lines | 23 components, 89 source references |
-| 🗄️ docs/database.draft.md | <N> lines | 18 models, 54 source references |
-| 🔌 docs/integrations.draft.md | <N> lines | 3 services, 18 source references |
-| 📋 docs/DECISIONS.md | empty | ready for `/decision` |
-| 🐛 docs/KNOWN-ISSUES.md | empty | ready for `/ship` entries |
-| 📝 docs/SESSIONS.md | empty | ready for `/session` |
+⚠ <K> spots I couldn't verify cleanly — marked `<!-- TODO: verify -->` in the drafts.
 
-**CLAUDE.md:**
-- ✅ Added 3 missing rules under "Rules (added by /docify 2026-04-23)"
-- ✅ Your 12 custom rules left untouched
+👉 **My recommendation: skim the drafts (especially the TODOs), then `/docify approve overview` first** — overview is the highest-stakes intro doc. Rest can follow in any order.
 
-**Heads-up — 4 spots I couldn't verify** (marked `<!-- TODO: verify -->` in the drafts):
-
-| File | Line | What's unclear |
-|---|---|---|
-| 📘 overview.draft.md | 3 | Project description (no README found) |
-| 🛣️ api.draft.md | 217 | `/api/webhook/stripe` auth path is unusual |
-| 🛣️ api.draft.md | 304 | `/api/legacy/export` response shape |
-| 🗄️ database.draft.md | 88 | `User.metadata` JSON structure |
-
-👉 **My recommendation: skim the drafts (especially the TODOs above), then approve them one at a time.** Run `/docify approve overview` first since it's the highest-stakes intro doc; the rest can follow in any order.
-
-**To promote a draft to real:**
-```bash
-/docify approve overview        # one at a time
-/docify approve overview architecture api    # or batch
+*Want the file-by-file breakdown + the list of TODO locations? Say "details".*
 ```
 
-**To commit when you're happy:**
+**On request ("details"), expand:**
+
+```markdown
+| File | Size | Source references |
+|---|---|---|
+| 📘 docs/overview.draft.md | <N> lines | <X> source refs |
+| 🏛️ docs/architecture.draft.md | <N> lines | <X> source refs |
+| 🛣️ docs/api.draft.md | <N> lines | <N> routes, <X> source refs |
+| 🧩 docs/components.draft.md | <N> lines | <N> components, <X> source refs |
+| 🗄️ docs/database.draft.md | <N> lines | <N> models, <X> source refs |
+| 🔌 docs/integrations.draft.md | <N> lines | <N> services, <X> source refs |
+| 📋📝🐛 DECISIONS / SESSIONS / KNOWN-ISSUES | empty | ready for use |
+
+**TODOs flagged** (worth a 30-second look before approve):
+| File | Line | What's unclear |
+|---|---|---|
+| <file> | <line> | <one-line description> |
+
+**To approve drafts:**
+```bash
+/docify approve overview                         # one at a time
+/docify approve overview architecture api        # or batch
+```
+
+**To commit when happy:**
 ```bash
 git add CLAUDE.md docs/ && git commit -m "docs: initial docify run"
 ```

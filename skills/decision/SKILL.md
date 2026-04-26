@@ -55,22 +55,19 @@ Grep `docs/DECISIONS.md` for the term. Return matching ADRs with their Decision 
 ### Argument = a title (log a new one)
 
 1. Find the highest existing ADR number. New one is `ADR-(N+1)`.
-2. Ask the user — one friendly prompt, not five:
+2. Ask the user — one terse prompt:
 
 ```markdown
-**Logging a new decision 📋**
-
-This will become **ADR-NNN: <your title>**, saved at the top of `docs/DECISIONS.md`. Future-you (or a teammate) reads this in 6 months to remember *why* — so the more honest the better.
+📋 Logging **ADR-NNN: <your title>** at the top of `docs/DECISIONS.md`.
 
 **Tell me, in your own words:**
+- 🎯 **Problem:** what forced this?
+- ✅ **What you picked:** one sentence.
+- 🤔 **What you considered:** 2+ alternatives + why they lost.
+- ⚖️ **Trade-off:** what does this cost? what would reverse it?
+- 🙋 **Decider(s):**
 
-| Field | What to fill in |
-|---|---|
-| 🎯 The problem | What forced this decision? What were the constraints? |
-| ✅ What you picked | The choice itself, in one sentence. |
-| 🤔 What else you considered | At least 2 other options + why they lost. |
-| ⚖️ The trade-off | What does this cost? What would make you reverse it? |
-| 🙋 Who decided | Names. |
+*Stuck on the format? Say "example" and I'll show one.*
 ```
 
 3. Write the ADR at the **top** of `docs/DECISIONS.md` (newest first):
@@ -107,13 +104,7 @@ This will become **ADR-NNN: <your title>**, saved at the top of `docs/DECISIONS.
 ## Output
 
 ```markdown
-**Decision logged 📋**
+📋 **ADR-NNN: <title>** logged at top of `docs/DECISIONS.md` (status: accepted).
 
-| What | Where |
-|---|---|
-| 📜 ADR-NNN | <title> |
-| 📂 File | docs/DECISIONS.md (top of file) |
-| ⏱️ Status | accepted |
-
-👉 **My recommendation: keep going with the work — the decision is captured.** If this decision touches code you haven't written yet, run `/before <task>` next so the plan reflects it.
+👉 **My recommendation:** <one line — usually "keep going" unless this decision blocks something>.
 ```

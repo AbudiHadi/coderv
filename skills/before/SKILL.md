@@ -76,39 +76,44 @@ find . -path ./node_modules -prune -o -type f -name "*<keyword>*" -print 2>/dev/
 
 If similar code exists — **read it** before writing new code. Match the existing style. Don't reinvent what already exists.
 
-## Step 5 — State the plan (in plain words)
+## Step 5 — State the plan (terse by default)
 
-Before writing any code, share what you found and what you want to do — in human language. Use this shape:
+**Default response — short, 3–5 lines max:**
 
 ```markdown
-**Before I touch anything, here's what I found 🔍**
+<One sentence: what this task is and what's already in place.>
 
-<One short paragraph in plain words: what's already there, what's missing, whether this is fresh ground or building on existing work.>
+👉 **My recommendation: <proceed | do X first | hold>.** ~<estimate>, <low/medium/high> risk.
+
+*Want the full breakdown of what I checked, files I'll touch, and risks? Say "details".*
+```
+
+That's it. No big tables in the default response. The user usually just wants to say `go`.
+
+**On request ("details" / "show me more" / "explain"), expand to the full breakdown:**
+
+```markdown
+**Full breakdown 🔍**
 
 | What I checked | What I found |
 |---|---|
-| 📜 The rules (CLAUDE.md) | <one-line takeaway, or ✅ nothing blocks this> |
-| 📚 Past decisions | <ADR-NNN title, or ✅ no past decision applies> |
-| 🐛 Known bugs in this area | <KI-NNN: prevention rule, or ✅ none> |
-| 🔎 What's already built | <file or pattern, in plain words — or ✅ fresh territory> |
+| 📜 Rules (CLAUDE.md) | <one-line takeaway, or ✅ nothing blocks this> |
+| 📚 Past decisions | <ADR-NNN title, or ✅ none apply> |
+| 🐛 Known bugs in this area | <KI-NNN, or ✅ none> |
+| 🔎 What's already built | <file/pattern in plain words, or ✅ fresh territory> |
 
-**What I want to do, in plain words:**
-1. <step in human language — no jargon>
+**What I want to do:**
+1. <step>
 2. <step>
 3. <step>
 
 **Files I expect to touch:**
 - `<path>` — <one-line why>
-- `<path>` — <one-line why>
 
-**Heads-up before I start:** <anything surprising, scope risks, or assumptions I'm making — or ✅ nothing surprising>
-
-👉 **My recommendation: <go ahead | do X first | wait, this is bigger than expected>.** Reason: <one sentence>.
-
-Reply with `go` to start, or tell me if you want a different approach.
+**Heads-up:** <anything surprising, or ✅ nothing>
 ```
 
-Always end with **a recommendation** — never just "approve to proceed?". The user asked you to think; do the thinking.
+Always end with **a recommendation**, in both default and detailed form. Never ask "approve to proceed?" with no opinion.
 
 ## Step 6 — Wait for approval
 
