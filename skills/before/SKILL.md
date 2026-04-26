@@ -76,42 +76,43 @@ find . -path ./node_modules -prune -o -type f -name "*<keyword>*" -print 2>/dev/
 
 If similar code exists — **read it** before writing new code. Match the existing style. Don't reinvent what already exists.
 
-## Step 5 — State the plan
+## Step 5 — State the plan (in plain words)
 
-Before writing any code, output a plan in this exact shape. Keep it tight.
+Before writing any code, share what you found and what you want to do — in human language. Use this shape:
 
-```
-## Plan — <task>
+```markdown
+**Before I touch anything, here's what I found 🔍**
 
-Read:
-- CLAUDE.md: <one key rule that applies>
-- <doc>: <takeaway>
+<One short paragraph in plain words: what's already there, what's missing, whether this is fresh ground or building on existing work.>
 
-Prior art:
-- <file:line> — <how existing code handles this>
+| What I checked | What I found |
+|---|---|
+| 📜 The rules (CLAUDE.md) | <one-line takeaway, or ✅ nothing blocks this> |
+| 📚 Past decisions | <ADR-NNN title, or ✅ no past decision applies> |
+| 🐛 Known bugs in this area | <KI-NNN: prevention rule, or ✅ none> |
+| 🔎 What's already built | <file or pattern, in plain words — or ✅ fresh territory> |
 
-Decisions that apply:
-- ADR-NNN <title>     (or "none found")
-
-Known issues in this area:
-- KI-NNN <title> — prevention: <rule>    (or "none")
-
-Plan:
-1. <step>
+**What I want to do, in plain words:**
+1. <step in human language — no jargon>
 2. <step>
 3. <step>
 
-Files I expect to touch:
-- <path>
-- <path>
+**Files I expect to touch:**
+- `<path>` — <one-line why>
+- `<path>` — <one-line why>
 
-Risks / things I'm unsure about:
-- <anything surprising, or "none")
+**Heads-up before I start:** <anything surprising, scope risks, or assumptions I'm making — or ✅ nothing surprising>
+
+👉 **My recommendation: <go ahead | do X first | wait, this is bigger than expected>.** Reason: <one sentence>.
+
+Reply with `go` to start, or tell me if you want a different approach.
 ```
+
+Always end with **a recommendation** — never just "approve to proceed?". The user asked you to think; do the thinking.
 
 ## Step 6 — Wait for approval
 
-Do **not** start coding until the user confirms the plan (or corrects it). This is the whole point — catch misalignment before, not after.
+Do **not** start coding until the user confirms (or corrects) your plan. This is the whole point — catch misalignment before, not after.
 
 If the user corrects the plan, update it and re-state it. Don't code until aligned.
 

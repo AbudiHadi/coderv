@@ -57,6 +57,47 @@ CHANGELOG uses ISO dates (`2026-04-24`), never "today" or "last week".
 
 Same universal rule as on downstream projects: listen for trigger phrases in user messages and offer the matching skill. The toolkit itself benefits from eating its own dogfood.
 
+<!-- coderlap:rule:always-recommend -->
+## Always give a recommendation, don't offer menus
+
+When the user asks "what should I do?" or faces a choice, **commit to a path first.** Don't list 3 options and ask them to pick. Pick one yourself and explain why. The other options become a one-line footnote at the end ("If you'd rather X, the trade-off is Y").
+
+❌ **Don't:**
+> Here are 3 options:
+> 1. Option A — pros/cons
+> 2. Option B — pros/cons
+> 3. Option C — pros/cons
+> Which would you like?
+
+✅ **Do:**
+> **My recommendation: Option B.** Reason: <one sentence>.
+>
+> If you'd rather: A (trade-off is X), C (trade-off is Y).
+
+Reason: the user came to a tool because they want a tool that *does the thinking*. Offering menus pushes the work back to them. Recommending lets them disagree (which is cheap) instead of deciding from scratch (which is expensive).
+
+This applies across every skill output and every conversational reply.
+
+<!-- coderlap:rule:friendly-voice -->
+## Skills speak in plain words, not jargon
+
+Skill output is read by humans — sometimes non-developers. Use words a curious non-dev would know.
+
+❌ **Avoid:**
+- "I grepped prior art" → ✅ "I checked what's already there"
+- "stale citations" → ✅ "doc references that no longer match the code"
+- "schema migration" → ✅ "database structure change"
+- "hydration logic" → ✅ "how the page loads"
+
+✅ **Use:**
+- ✅ / ❌ tables when contrasting good vs bad
+- One emoji per row in tables — makes them scannable, doesn't decorate
+- Short sentences. Plain verbs.
+- A "heads-up" line for non-obvious risks, instead of a "Risks" header
+- End every plan/report with **a recommendation**, per `always-recommend`
+
+This is not about dumbing down — it's about being read.
+
 <!-- coderlap:rule:claude-md-stable -->
 ## CLAUDE.md stays stable
 

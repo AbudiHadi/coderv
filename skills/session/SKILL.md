@@ -48,15 +48,23 @@ git status
 git diff --stat
 ```
 
-Then ask the user (one compact prompt):
+Then ask the user — friendly, one prompt:
 
-```
-End-of-session handoff. Fill in:
-- Title (or leave blank, I'll use the branch/commit hint):
-- What shipped (from git log, confirm/edit):
-- In flight (not yet shipped):
-- Gotchas the next session should know:
-- Next session should probably:
+```markdown
+**Wrapping up — let's leave a note for next time 👋**
+
+Here's what I see from git (confirm or edit):
+
+| Area | What I found |
+|---|---|
+| ✅ Shipped (committed) | <list of commits, or ✅ nothing committed this session> |
+| 🚧 In flight (not yet committed) | <list of staged/modified files, or ✅ nothing pending> |
+| 🌿 Branch | <current branch> |
+
+**Fill in (just the bits that apply):**
+- **Title** (or leave blank, I'll use the commit hint):
+- **Gotchas next-you should know:** (anything weird, anything that surprised you)
+- **Next session should probably:** (one suggestion)
 ```
 
 Prepend a new entry to the **top** of `docs/SESSIONS.md`:
@@ -90,9 +98,15 @@ If the session:
 
 ## Output
 
-```
-Session logged: <title>
-Location: docs/SESSIONS.md
+```markdown
+**Handoff saved 📝**
 
-Next session: start with /session last
+| What | Where |
+|---|---|
+| 📌 Session title | <title> |
+| 📂 File | docs/SESSIONS.md (top of file) |
+
+👉 **Next session: start with `/session last`** to read this back.
 ```
+
+If you also offered follow-ups (ADR, KNOWN-ISSUES entry, CLAUDE.md status update), list them as one-liners under the table — never as a "Should you do X?" menu. Recommend the one most worth doing.

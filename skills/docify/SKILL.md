@@ -64,39 +64,49 @@ Detect:
 - **Existing docs** in `docs/` (never clobber)
 - **Existing `CLAUDE.md`** and its contents
 
-## Step 2 — Build the plan
+## Step 2 — Build the plan (friendly + scannable)
 
-Output a concrete plan like this:
+Show the user what you found and what you'd write — in plain words:
 
-```
-## Docify plan
+```markdown
+**Here's what I found in your project 🔍**
 
-Detected:
-- Stack: Next.js 16 + Prisma + PostgreSQL
-- Package manager: npm
-- Routing: app/api/** (47 routes found)
-- Schema: prisma/schema.prisma (18 models)
-- Components: components/** (23 files)
-- External: Stripe, Twilio, 100ms (from .env.example)
+| What I detected | Found |
+|---|---|
+| 🏗️ Stack | Next.js 16 + Prisma + PostgreSQL |
+| 📦 Package manager | npm |
+| 🛣️ API routes | 47 found in `app/api/**` |
+| 🗄️ Database models | 18 found in `prisma/schema.prisma` |
+| 🧩 Components | 23 found in `components/**` |
+| 🔌 External services | Stripe, Twilio, 100ms (from `.env.example`) |
 
-Will generate:
-- CLAUDE.md              (merge: 3 missing rules to add, 12 existing rules untouched)
-- docs/overview.draft.md       [NEW]
-- docs/architecture.draft.md   [NEW]
-- docs/api.draft.md            [NEW — covers 47 routes]
-- docs/components.draft.md     [NEW — covers 23 components]
-- docs/database.draft.md       [NEW — covers 18 models]
-- docs/integrations.draft.md   [NEW — covers 3 external services]
-- docs/DECISIONS.md            [NEW — empty, ready for /decision]
-- docs/KNOWN-ISSUES.md         [NEW — empty, ready for /ship entries]
-- docs/SESSIONS.md             [NEW — empty, ready for /session]
+**What I'd write (all as drafts you approve before they go live):**
 
-Will NOT touch:
-- docs/custom-business.md (already exists)
+| File | What it'll contain |
+|---|---|
+| 📜 `CLAUDE.md` | Merging 3 missing rules. Your 12 existing rules stay untouched. |
+| 📘 `docs/overview.draft.md` | What the project is + how to run it |
+| 🏛️ `docs/architecture.draft.md` | Request flow, layers, services |
+| 🛣️ `docs/api.draft.md` | All 47 routes documented |
+| 🧩 `docs/components.draft.md` | 23 components with props |
+| 🗄️ `docs/database.draft.md` | 18 models + relationships |
+| 🔌 `docs/integrations.draft.md` | Stripe, Twilio, 100ms |
+| 📋 `docs/DECISIONS.md` | Empty file — ready for your first `/decision` |
+| 🐛 `docs/KNOWN-ISSUES.md` | Empty file — ready for `/ship` to add bug entries |
+| 📝 `docs/SESSIONS.md` | Empty file — ready for `/session` handoffs |
+
+**What I will NOT touch:**
+- `docs/custom-business.md` (already exists, yours to keep)
 - Your 12 custom CLAUDE.md rules (no markers → not ours)
 
-Estimated: ~5 minutes
-Approve? (y/n)
+**Heads-up:**
+- Every claim in every doc cites a source file with line numbers, so docs can't drift silently.
+- All generated docs land as `.draft.md`. Nothing is real until you run `/docify approve <name>`.
+- This takes about 5 minutes.
+
+👉 **My recommendation: approve and let me run it.** If you want me to skip a specific doc, say which.
+
+Reply `go` to start, or tell me what to change.
 ```
 
 Wait for approval. Do not proceed on silence.
@@ -233,34 +243,46 @@ Line ranges allowed (`42-58`), not just single lines. Use the smallest range tha
 
 ## Step 6 — Report what was generated
 
+```markdown
+**Docs generated (drafts) ✨**
+
+| File | Size | Source references |
+|---|---|---|
+| 📘 docs/overview.draft.md | <N> lines | 58 source references |
+| 🏛️ docs/architecture.draft.md | <N> lines | 22 source references |
+| 🛣️ docs/api.draft.md | <N> lines | 47 routes, 141 source references |
+| 🧩 docs/components.draft.md | <N> lines | 23 components, 89 source references |
+| 🗄️ docs/database.draft.md | <N> lines | 18 models, 54 source references |
+| 🔌 docs/integrations.draft.md | <N> lines | 3 services, 18 source references |
+| 📋 docs/DECISIONS.md | empty | ready for `/decision` |
+| 🐛 docs/KNOWN-ISSUES.md | empty | ready for `/ship` entries |
+| 📝 docs/SESSIONS.md | empty | ready for `/session` |
+
+**CLAUDE.md:**
+- ✅ Added 3 missing rules under "Rules (added by /docify 2026-04-23)"
+- ✅ Your 12 custom rules left untouched
+
+**Heads-up — 4 spots I couldn't verify** (marked `<!-- TODO: verify -->` in the drafts):
+
+| File | Line | What's unclear |
+|---|---|---|
+| 📘 overview.draft.md | 3 | Project description (no README found) |
+| 🛣️ api.draft.md | 217 | `/api/webhook/stripe` auth path is unusual |
+| 🛣️ api.draft.md | 304 | `/api/legacy/export` response shape |
+| 🗄️ database.draft.md | 88 | `User.metadata` JSON structure |
+
+👉 **My recommendation: skim the drafts (especially the TODOs above), then approve them one at a time.** Run `/docify approve overview` first since it's the highest-stakes intro doc; the rest can follow in any order.
+
+**To promote a draft to real:**
+```bash
+/docify approve overview        # one at a time
+/docify approve overview architecture api    # or batch
 ```
-## Docify complete (draft mode)
 
-Generated:
-  docs/overview.draft.md       (58 citations)
-  docs/architecture.draft.md   (22 citations)
-  docs/api.draft.md            (47 routes, 141 citations)
-  docs/components.draft.md     (23 components, 89 citations)
-  docs/database.draft.md       (18 models, 54 citations)
-  docs/integrations.draft.md   (3 services, 18 citations)
-  docs/DECISIONS.md            (empty — ready for /decision)
-  docs/KNOWN-ISSUES.md         (empty)
-  docs/SESSIONS.md             (empty)
-
-CLAUDE.md:
-  3 missing rules added under "Rules (added by /docify 2026-04-23)"
-  Your 12 custom rules untouched.
-
-TODOs flagged: 4
-  docs/overview.draft.md:3 — project description
-  docs/api.draft.md:217 — /api/webhook/stripe auth unclear
-  docs/api.draft.md:304 — /api/legacy/export response shape
-  docs/database.draft.md:88 — User.metadata JSON shape
-
-Next steps:
-  1. Review the drafts (grep for "TODO: verify" to find weak spots)
-  2. Promote each: /docify approve overview / architecture / api / ...
-  3. Commit: git add CLAUDE.md docs/ && git commit -m "docs: initial docify"
+**To commit when you're happy:**
+```bash
+git add CLAUDE.md docs/ && git commit -m "docs: initial docify run"
+```
 ```
 
 ## Step 7 — `/docify approve <file>` behavior

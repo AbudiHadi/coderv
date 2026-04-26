@@ -55,15 +55,22 @@ Grep `docs/DECISIONS.md` for the term. Return matching ADRs with their Decision 
 ### Argument = a title (log a new one)
 
 1. Find the highest existing ADR number. New one is `ADR-(N+1)`.
-2. Ask the user (compact — one message, not 5):
+2. Ask the user — one friendly prompt, not five:
 
-```
-Logging a new ADR. Tell me:
-- Context: what's the problem?
-- Decision: what are we choosing?
-- Alternatives considered (at least 2, each with why rejected):
-- Consequences (trade-off, what to revisit if):
-- Decider(s):
+```markdown
+**Logging a new decision 📋**
+
+This will become **ADR-NNN: <your title>**, saved at the top of `docs/DECISIONS.md`. Future-you (or a teammate) reads this in 6 months to remember *why* — so the more honest the better.
+
+**Tell me, in your own words:**
+
+| Field | What to fill in |
+|---|---|
+| 🎯 The problem | What forced this decision? What were the constraints? |
+| ✅ What you picked | The choice itself, in one sentence. |
+| 🤔 What else you considered | At least 2 other options + why they lost. |
+| ⚖️ The trade-off | What does this cost? What would make you reverse it? |
+| 🙋 Who decided | Names. |
 ```
 
 3. Write the ADR at the **top** of `docs/DECISIONS.md` (newest first):
@@ -99,9 +106,14 @@ Logging a new ADR. Tell me:
 
 ## Output
 
-```
-Logged ADR-NNN: <title>
-Location: docs/DECISIONS.md (line N)
-```
+```markdown
+**Decision logged 📋**
 
-One line. Done.
+| What | Where |
+|---|---|
+| 📜 ADR-NNN | <title> |
+| 📂 File | docs/DECISIONS.md (top of file) |
+| ⏱️ Status | accepted |
+
+👉 **My recommendation: keep going with the work — the decision is captured.** If this decision touches code you haven't written yet, run `/before <task>` next so the plan reflects it.
+```
