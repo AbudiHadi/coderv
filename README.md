@@ -61,13 +61,13 @@ Five slash commands that help devs keep extremely clear docs — without getting
 
 ## Install
 
-**One command:**
+**One command (Claude Code, default):**
 
 ```bash
 curl -fsSL https://coderv.dev/install.sh | bash
 ```
 
-Skills land in `~/.claude/skills/` and become available in every project you open with Claude Code.
+Skills land in `~/.claude/skills/` and the `coderv-router` hook is wired into `~/.claude/settings.json` — so Claude Code surfaces the right command at the right moment without you having to remember.
 
 **Manual path:**
 
@@ -77,11 +77,17 @@ cd coderv
 ./install.sh
 ```
 
-**Per-project install** (skills under `./.claude/skills/`):
+**Other CLIs (skills only — no hook):**
+
+The 5 skills also work in [Codex CLI](https://github.com/openai/codex) and [Gemini CLI](https://github.com/google-gemini/gemini-cli) — both adopted the same SKILL.md format.
 
 ```bash
-curl -fsSL https://coderv.dev/install.sh | bash -s -- --project
+./install.sh --codex            # ~/.codex/skills/
+./install.sh --gemini           # ~/.gemini/skills/
+./install.sh --all              # all three hosts
 ```
+
+The `coderv-router` hook is Claude-Code-specific (the others don't have an equivalent hook event). On Codex / Gemini, the toolkit relies on the in-skill TRIGGER blocks alone — auto-suggest works but is less aggressive than on Claude Code.
 
 **Update:**
 
@@ -92,8 +98,29 @@ curl -fsSL https://coderv.dev/install.sh | bash -s -- --force
 **Uninstall:**
 
 ```bash
-cd coderv && ./install.sh --uninstall
+cd coderv && ./install.sh --uninstall          # remove from Claude Code
+cd coderv && ./install.sh --uninstall --all    # remove from all three
 ```
+
+---
+
+## The coderv-router hook (Claude Code)
+
+The skill descriptions tell Claude *when* to use a command — but they're guidelines for the model and can be missed mid-task. The `coderv-router` hook is the safety net: a `UserPromptSubmit` hook that scans every message you send and injects a one-line reminder into Claude's context when it spots a match.
+
+| You type | Router fires | Claude offers |
+|---|---|---|
+| *"can we make it MCP?"* | HIGH /decision | `/decision` (it's a tech trade-off worth logging) |
+| *"add a login page"* | HIGH /before | `/before` (non-trivial change — plan first) |
+| *"ok lets commit this"* | HIGH /ship | `/ship` (run pre-commit checklist) |
+| *"done for today"* | HIGH /session | `/session` (write a handoff) |
+| *"what's next?"* | LOW /session | `/session last` (with a quick "did you mean…?" check) |
+
+Two confidence tiers:
+- **HIGH** — clear intent, Claude offers the skill firmly.
+- **LOW** — phrasing is ambiguous, Claude briefly checks intent before running.
+
+The router is installed automatically when you install for Claude Code. To skip it (skills only), install for Codex / Gemini.
 
 ---
 
@@ -133,7 +160,10 @@ No. Nothing overwrites. `/before` only creates the four files if they're missing
 Don't run `/decision`. Every command is optional. The toolkit is lighter than any framework — use what helps.
 
 **Why not just hooks / automation?**
-Discipline needs to survive "tired". Hooks fail silently, prompts don't. These run when you invoke them and do their job visibly. That's the point.
+The 5 commands are visible — you invoke them, they do their job visibly, no silent failure. That's the core. The `coderv-router` hook (Claude Code) is a thin layer on top of that: it doesn't *do* the work, it just makes sure Claude *offers* the right command when your phrasing matches. The work itself is still in the visible, markdown-only commands.
+
+**Does the toolkit work with Codex CLI and Gemini CLI?**
+Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. The `coderv-router` hook is Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive than on Claude Code.
 
 ---
 

@@ -5,6 +5,19 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-04-28
+
+### Added
+- **`coderv-router` hook** — a `UserPromptSubmit` hook for Claude Code that scans every prompt for intent patterns and injects a reminder into Claude's context when it matches one of the 5 skills. Lives at `hooks/coderv-router.sh` in the toolkit, installed to `~/.claude/hooks/coderv-router.sh` and wired into `~/.claude/settings.json` automatically. Two confidence tiers: HIGH (clear intent, offer firmly) and LOW (ambiguous, check intent first). Reason for adding: skill descriptions are guidelines the model can miss mid-task; the hook runs in the harness and can't be forgotten.
+- **Multi-host install targets** — `install.sh` now supports `--claude` (default), `--codex`, `--gemini`, and `--all`. The 5 SKILL.md files port verbatim to Codex CLI (`~/.codex/skills/`) and Gemini CLI (`~/.gemini/skills/`) since both hosts adopted the same skill format. The `coderv-router` hook is Claude-Code-specific and only installs when the Claude target is selected.
+- README section explaining the router with a phrase-to-skill mapping table, plus FAQ entries on Codex/Gemini support and why the router exists.
+
+### Changed
+- `install.sh` rewritten with per-host install/uninstall functions; idempotent settings.json merge that never duplicates the hook entry; `--uninstall` now scoped to whichever target(s) the user selected, with the same `<!-- claude-docs-toolkit -->` marker check that protected unrelated skills before — now applied to the hook script too.
+
+### Why bump 0.4.1 → 0.5.0
+Minor bump, not patch: this introduces a new install target (the hook + Codex/Gemini support), changes the public surface of `install.sh` (new flags), and adds a runtime component (the hook) that didn't exist before. Existing `./install.sh` with no flags behaves identically to v0.4.1 for skills, plus auto-installs the router — so the upgrade is non-breaking but the surface area grew.
+
 ## [0.4.1] — 2026-04-26
 
 ### Changed
