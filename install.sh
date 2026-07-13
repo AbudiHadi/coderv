@@ -122,7 +122,7 @@ install_skill_into() {
   fi
 }
 
-# Install all 5 skills into one host. Args: host_label, dst_root
+# Install all toolkit skills into one host. Args: host_label, dst_root
 install_skills_for_host() {
   local label="$1"
   local dst_root="$2"
@@ -133,7 +133,7 @@ install_skills_for_host() {
   done
 }
 
-# Uninstall all 5 skills from one host. Args: host_label, dst_root
+# Uninstall all toolkit skills from one host. Args: host_label, dst_root
 uninstall_skills_for_host() {
   local label="$1"
   local dst_root="$2"
@@ -409,11 +409,12 @@ fi
 echo
 echo -e "${GREEN}Done.${NC}"
 echo
-echo "Five commands:"
+echo "Six commands:"
 echo "  /docify           — Once per project: generate CLAUDE.md + docs from your code"
 echo "  /before <task>    — Before coding: Claude reads docs + plans, waits for OK"
 echo "  /decision <title> — Log why you chose X over Y (30 seconds)"
 echo "  /ship             — Before commit: auto-updates docs + validates citations"
 echo "  /session          — End-of-session handoff for next time"
+echo "  /lint             — Every ~5 sessions: audit docs for rot + contradictions"
 echo
 echo "Docs: https://coderv.dev"

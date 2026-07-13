@@ -5,6 +5,20 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-07-13
+
+### Added
+- **`/lint` — the 6th command** (ADR-005). The toolkit's missing third operation (ingest → query → **lint**): audits `CLAUDE.md` + `docs/` for contradictions (rules that flip-flopped with no current-status line), stale claims ("NOT committed" from last week, versions that drifted from package manifests), dead references (citations past EOF, links to deleted files, documented commands that no longer exist), and rot (STALE-bannered drafts, orphan docs). Findings are severity-ranked with `file:line` + the reality they conflict with; fixes are offered (mechanical in one approved batch, judgment calls one question at a time) and history is never deleted. Reason for adding: field use showed docs that lie are worse than no docs — and nothing owned catching the lies.
+- **`release.sh` — the release ritual as a machine gate.** Verifies semver VERSION, CHANGELOG top-entry match + ISO date, clean tree, tag availability, and TRIGGER/SKIP on every skill; then tags, pushes, syncs the website (site.ts bump + rebuild + commit via `CODERV_SITE_DIR`), and prints the one human step (`gh release create`). `--check` mode verifies without acting. Reason: "VERSION + CHANGELOG + tag + site move together" was enforced by memory and got missed (the site sat at 0.5.0 while the toolkit shipped 0.6.0) — machine gates over prose rules.
+- **coderv-router:** HIGH/LOW intent patterns + description line for `/lint` ("audit the docs", "is there a gap in the docs?", "docs are lying" → HIGH; "are the docs up to date?" → LOW). Docify's generate-intent patterns untouched.
+
+### Changed
+- **`/session` now rotates:** past ~20 entries, everything but the newest 10 moves to `docs/SESSIONS-ARCHIVE.md` — byte-identical, append-only, pointer left behind. The live file is read at every session start (skills + the project-context hook), so it must stay cheap; archives keep history greppable forever.
+- CLAUDE.md surface rule updated 5 → 6 commands with the ADR-005 justification recorded and the bar for slot 7 set explicitly.
+
+### Why bump 0.6.0 → 0.7.0
+Minor bump: a new command (first since the original five), a new repo-level tool (release.sh), and expanded router surface. All additive; existing installs upgrade with `./install.sh --force`.
+
 ## [0.6.0] — 2026-07-13
 
 ### Added

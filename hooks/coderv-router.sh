@@ -2,9 +2,9 @@
 # coderv-router — UserPromptSubmit hook for Claude Code
 #
 # Scans every user prompt for INTENT patterns (not just literal phrases) that
-# match one of the 5 toolkit skills (before, decision, ship, session, docify)
-# and injects a one-line reminder into Claude's context. The model picks it
-# up and offers the skill instead of charging ahead.
+# match one of the 6 toolkit skills (before, decision, ship, session, docify,
+# lint) and injects a one-line reminder into Claude's context. The model picks
+# it up and offers the skill instead of charging ahead.
 #
 # Why a hook (not just the skill description): skill descriptions are
 # guidelines for the model and can be missed mid-task. Hooks run in the
@@ -145,6 +145,19 @@ if [[ "$DOCIFY_NEGATIVE" -eq 0 ]]; then
 fi
 
 # ============================================================
+# /lint — INTENT: audit existing docs for rot (NOT generate: /docify)
+# ============================================================
+
+# HIGH: explicit audit/health-check language about docs.
+if [[ "$LOWER" =~ (lint\ (the\ )?docs|audit\ (the\ )?docs|docs?\ (are\ )?(lying|rott(en|ing)|stale)|doc\ rot|check\ for\ contradictions|contradictions?\ in\ (the\ )?docs|gap\ in\ (the\ )?(docs|documentation)|docs\ health|verify\ (the\ )?docs|do\ the\ docs\ match|docs\ match\ the\ code|clean\ up\ (the\ )?docs) ]]; then
+  HIGH+=("lint")
+
+# LOW: freshness questions that might mean "run a lint".
+elif [[ "$LOWER" =~ (docs\ up\ to\ date|are\ the\ docs\ (current|correct|right|accurate)|trust\ the\ docs) ]]; then
+  LOW+=("lint")
+fi
+
+# ============================================================
 # Render output
 # ============================================================
 
@@ -160,6 +173,7 @@ describe() {
     session-end)   echo "/session — user is wrapping up. Offer to write a handoff note so the next session picks up cleanly." ;;
     session-start) echo "/session last — user is resuming. Read the most recent handoff before answering." ;;
     docify)        echo "/docify — user wants fresh project docs generated from the codebase. Confirm scope, then run." ;;
+    lint)          echo "/lint — user suspects doc rot (contradictions, stale claims, dead references). Run the docs health check and report findings with file:line." ;;
   esac
 }
 

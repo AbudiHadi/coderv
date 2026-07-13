@@ -1,6 +1,6 @@
 # Project AI Instructions — claude-docs-toolkit
 
-> The CoderLap toolkit itself — 5 skills + installer + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
+> The CoderLap toolkit itself — 6 skills + 2 hooks + installer + release gate + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
 
 <!-- coderlap:rule:loop -->
 ## The loop (every task)
@@ -27,7 +27,7 @@
 
 - **Skill descriptions are the API.** Claude Code's skill picker reads the YAML `description` block. Every description includes a `TRIGGER — ... SKIP — ...` section. Editing those changes how often Claude proactively suggests the skill.
 - **Installer marker.** `install.sh` appends `<!-- claude-docs-toolkit -->` to every `SKILL.md` it copies. `--uninstall` only removes files containing that marker. **Never remove the marker from the source — it only gets added at install time.**
-- **VERSION, CHANGELOG, and git tag must move together.** Every version bump: edit `VERSION`, add CHANGELOG entry, commit, `git tag -a vX.Y.Z`, push tag, create GitHub release via `gh release create`.
+- **VERSION, CHANGELOG, and git tag must move together.** Every version bump: edit `VERSION`, add CHANGELOG entry, commit, then run `./release.sh` — the machine gate that verifies all of it (semver, CHANGELOG match, dated entry, clean tree, TRIGGER/SKIP on every skill), tags, pushes, syncs the website, and prints the `gh release create` command. Never tag by hand.
 - **LICENCE is duplicated** (here + on the website). When you edit, sync both files. Contact email must match (`support@coderv.com`).
 
 <!-- coderlap:rule:principles -->
@@ -40,7 +40,7 @@
 <!-- coderlap:rule:never-unrequested -->
 ## Never add unrequested scope
 
-Keep the 5-command surface area stable. New features go in the relevant existing skill (e.g. smarter TRIGGER phrases) before they justify a new command.
+Keep the 6-command surface area stable. New features go in the relevant existing skill (e.g. smarter TRIGGER phrases) before they justify a new command. (/lint earned slot 6 by completing the ingest→query→lint triad — see ADR-005; the bar for slot 7 is at least that high.)
 
 <!-- coderlap:rule:never-delete-history -->
 ## Never delete history

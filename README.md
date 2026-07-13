@@ -24,15 +24,15 @@
 
 ## What it does
 
-Five slash commands that help devs keep extremely clear docs — without getting tired or trying to remember.
+Six slash commands that help devs keep extremely clear docs — without getting tired or trying to remember.
 
 > **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero. Docs rot within a week.
 >
-> **The answer:** five commands. One generates real docs from your code. Four keep them fresh. Markdown only. No framework. No dependency.
+> **The answer:** six commands. One generates real docs from your code. Four keep them fresh. One audits them for lies. Markdown only. No framework. No dependency.
 
 ---
 
-## The five commands
+## The six commands
 
 | Command | The tired moment it fixes |
 |---|---|
@@ -40,7 +40,8 @@ Five slash commands that help devs keep extremely clear docs — without getting
 | **`/before <task>`** | *"What should I even read first?"* — Claude reads the relevant docs, greps prior art, checks past decisions, states a plan, waits for your OK. Auto-skips tiny tasks. |
 | **`/decision <title>`** | *"Write down why, so I never have to explain it again."* — Logs an ADR in 30 seconds while the choice is fresh. |
 | **`/ship`** | *"Did I forget to update any docs before committing?"* — Reads the diff, **auto-updates api.md / components.md / database.md** from the code change, validates every citation in the docs is still accurate, drafts a why-focused commit message. |
-| **`/session [last]`** | *"Pick up where I left off."* — End of session → leaves a handoff. Start of next → `/session last` reads it. |
+| **`/session [last]`** | *"Pick up where I left off."* — End of session → leaves a handoff. Start of next → `/session last` reads it. Rotates old entries to an archive so the live file stays cheap. |
+| **`/lint`** | *"Can I still trust these docs?"* — Audits `CLAUDE.md` + `docs/` for contradictions, stale claims, and dead references; reports findings with `file:line` and the reality they conflict with. Docs generate (`/docify`), stay fresh (`/ship`), and now get health-checked. |
 
 ## The loop
 
@@ -53,9 +54,10 @@ Five slash commands that help devs keep extremely clear docs — without getting
 /ship                  # auto-updates docs, validates citations, drafts commit
 <commit>
 /session               # handoff for next time
+/lint                  # every ~5 sessions: docs health check (rot, contradictions)
 ```
 
-`/docify` once. Four commands daily. Docs stay clean + honest as a side effect of doing your work.
+`/docify` once. Four commands daily, `/lint` weekly. Docs stay clean + honest as a side effect of doing your work.
 
 ---
 
@@ -79,7 +81,7 @@ cd coderv
 
 **Other CLIs (skills only — no hook):**
 
-The 5 skills also work in [Codex CLI](https://github.com/openai/codex) and [Gemini CLI](https://github.com/google-gemini/gemini-cli) — both adopted the same SKILL.md format.
+The 6 skills also work in [Codex CLI](https://github.com/openai/codex) and [Gemini CLI](https://github.com/google-gemini/gemini-cli) — both adopted the same SKILL.md format.
 
 ```bash
 ./install.sh --codex            # ~/.codex/skills/
@@ -168,7 +170,7 @@ No. Nothing overwrites. `/before` only creates the four files if they're missing
 Don't run `/decision`. Every command is optional. The toolkit is lighter than any framework — use what helps.
 
 **Why not just hooks / automation?**
-The 5 commands are visible — you invoke them, they do their job visibly, no silent failure. That's the core. The `coderv-router` hook (Claude Code) is a thin layer on top of that: it doesn't *do* the work, it just makes sure Claude *offers* the right command when your phrasing matches. The work itself is still in the visible, markdown-only commands.
+The 6 commands are visible — you invoke them, they do their job visibly, no silent failure. That's the core. The `coderv-router` hook (Claude Code) is a thin layer on top of that: it doesn't *do* the work, it just makes sure Claude *offers* the right command when your phrasing matches. The work itself is still in the visible, markdown-only commands.
 
 **Does the toolkit work with Codex CLI and Gemini CLI?**
 Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. The `coderv-router` hook is Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive than on Claude Code.

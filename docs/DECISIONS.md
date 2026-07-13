@@ -33,6 +33,30 @@ What did we decide?
 
 ---
 
+## ADR-005: `/lint` earns the 6th command slot — the toolkit gains its missing third operation
+
+**Date:** 2026-07-13
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+### Context
+The toolkit's rule says "keep the 5-command surface stable; features go in existing skills before they justify a new command." Yet field use (Al-Rafiq, 2026-07: a rule superseded → un-superseded → retired across three session entries; an obsolete OWNER-TODO list an audit had to catch; 9 draft docs wearing STALE banners for days) showed a failure class NO existing skill owns: docs that **lie**. Framed by the wiki pattern (ingest → query → lint): `/docify`+`/ship`+`/session` ingest, `/before`+`/session last` query — and *nothing* lints. `/ship`'s citation check is the only fragment, and it runs only when a commit happens to occur.
+
+### Decision
+Add `/lint` as the 6th command: audit CLAUDE.md + docs/ for contradictions, stale claims, dead references, and rot; report with `file:line` + the conflicting reality; offer fixes but never auto-apply and never delete history. Also in this release: `/session` rotates entries >20 to an append-only archive, and `release.sh` turns the VERSION/CHANGELOG/tag/website ritual into a machine gate.
+
+### Alternatives considered
+- **New `/lint` command** (chosen) — auditing is a distinct responsibility (SR): /docify generates, /ship maintains at commit time, /lint verifies on demand. Distinct trigger vocabulary ("are the docs up to date?" ≠ "write docs").
+- **Fold into `/docify --lint`** — conflates generate with audit; docify's TRIGGER intent ("no docs exist") is nearly opposite to lint's ("docs exist but may lie"); flag-modes are invisible in the skill picker.
+- **Fold into `/ship`** — lint only-on-commit misses exactly the rot that accumulates *between* commits, and makes shipping slower every time.
+
+### Consequences
+- Positive: the ingest/query/lint triad is complete; doc trust becomes checkable instead of assumed.
+- Negative / trade-off: 6 commands to learn instead of 5; the surface-stability rule needed an amendment (bar for slot 7 explicitly set at least this high).
+- Revisit if: /lint goes unused for months (fold its checks into /ship) or its checks prove too noisy (tighten to citations + version strings only).
+
+---
+
 ## ADR-004: Verification of model claims is a toolkit-wide principle, not a `/session` patch
 
 **Date:** 2026-04-25

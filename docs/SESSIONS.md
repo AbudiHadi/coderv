@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-07-13 — v0.7.0: the gap-closing release — /lint, session rotation, release gate
+
+**What shipped:**
+- `/lint` skill (ADR-005) — the missing ingest→query→**lint** operation; router patterns added; skills.md/README/CLAUDE.md updated to the 6-command surface.
+- `/session` rotation step — >20 entries → newest 10 stay, rest to SESSIONS-ARCHIVE.md (append-only).
+- `release.sh` — the VERSION/CHANGELOG/tag/website ritual as a refusing machine gate (`--check` for dry runs); CLAUDE.md ritual rule now points at it ("never tag by hand").
+- Context: gaps were identified by field use on Al-Rafiq the same day (rule flip-flops, stale TODO lists, the website stuck at 0.5.0) — each gap maps 1:1 to a shipped fix.
+
+**Gotchas the next session should know:**
+- release.sh website sync builds as the site repo's OWNER (root-owned toolkit vs appuser-owned site) and needs `CODERV_SITE_DIR` when the site isn't at /home/appuser/apps/coderv-docs.
+- The v0.6.0 AND v0.7.0 GitHub releases are still unpublished (owner approval pending) — tags exist.
+
+**Next session should probably:**
+- Run `/lint` on a real downstream project (alrafiq) as its first field test.
+
+---
+
 ## 2026-04-24 — `/docify` approved on toolkit, **not yet shipped**
 
 **What shipped (to disk, not to git):**

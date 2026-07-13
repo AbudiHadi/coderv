@@ -103,7 +103,25 @@ In the middle of active work with no break in sight.
 
 ### What it does
 
-Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md`.
+Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md`. When the file passes ~20 entries, rotates all but the newest 10 to `docs/SESSIONS-ARCHIVE.md` (append-only — never deleted).
+
+## /lint
+
+**File:** `skills/lint/SKILL.md` <!-- src: skills/lint/SKILL.md -->
+**One-line:** Docs health check — contradictions, stale claims, dead references, rot.
+**When to use:** every ~5 sessions, before a release, or whenever docs feel "off".
+
+### TRIGGER
+
+"lint the docs / audit the docs / are the docs up to date? / docs are lying / doc rot / check for contradictions / is there a gap in the docs? / docs health check". <!-- src: skills/lint/SKILL.md -->
+
+### SKIP
+
+Generating fresh docs (that's /docify), hand-editing one doc, or mid-task with uncommitted work.
+
+### What it does
+
+Inventories rules/claims/references/structure across `CLAUDE.md` + `docs/`, cross-checks them against reality (git, file existence, line counts, package manifests), reports severity-ranked findings with `file:line` + the conflicting truth, then offers fixes — mechanical ones in one approved batch, judgment calls one question at a time. Never deletes history.
 
 ## Adding a new skill
 

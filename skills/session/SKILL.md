@@ -83,7 +83,23 @@ Prepend a new entry to the **top** of `docs/SESSIONS.md`:
 
 Use today's date. If multiple sessions in one day, add a time suffix: `YYYY-MM-DD 14:30 — Title`.
 
-## Step 3 — Prompt for related follow-ups (briefly, one line each)
+## Step 3 — Rotate when the file gets heavy
+
+SESSIONS.md is read at every session start (by you, `/before`, and the project-context hook) — it must stay cheap. After saving the new entry:
+
+```bash
+grep -c '^## ' docs/SESSIONS.md
+```
+
+If there are **more than 20 entries** (or the file exceeds ~500 lines): move every entry beyond the newest 10 to `docs/SESSIONS-ARCHIVE.md` — appended under its existing dates, newest at top, content byte-identical. Create the archive with a one-line header if missing, and leave a pointer at the bottom of SESSIONS.md:
+
+```markdown
+> Older sessions: docs/SESSIONS-ARCHIVE.md (nothing is ever deleted)
+```
+
+**Never delete or summarize the moved entries** — rotation is a move, not a cleanup. History stays greppable, the live file stays readable in one breath.
+
+## Step 4 — Prompt for related follow-ups (briefly, one line each)
 
 If the session:
 - Made a non-obvious design choice → "Consider logging an ADR with `/decision`."
