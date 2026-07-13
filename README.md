@@ -67,7 +67,7 @@ Five slash commands that help devs keep extremely clear docs — without getting
 curl -fsSL https://coderv.dev/install.sh | bash
 ```
 
-Skills land in `~/.claude/skills/` and the `coderv-router` hook is wired into `~/.claude/settings.json` — so Claude Code surfaces the right command at the right moment without you having to remember.
+Skills land in `~/.claude/skills/` and two hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment) and `project-context` (every new session starts already knowing where each project left off) — without you having to remember or ask.
 
 **Manual path:**
 
@@ -121,6 +121,14 @@ Two confidence tiers:
 - **LOW** — phrasing is ambiguous, Claude briefly checks intent before running.
 
 The router is installed automatically when you install for Claude Code. To skip it (skills only), install for Codex / Gemini.
+
+---
+
+## The project-context hook (Claude Code)
+
+The other half of "never explain where you left off again": a `SessionStart` hook that scans your projects folder for `docs/SESSIONS.md` files and injects a live map into every new session — each project's newest session entry, sorted by recent activity, plus a standing rule telling Claude to read the real docs before touching anything.
+
+Memory can go stale or get skipped; this runs in the harness on every session start and reads the actual files at that moment. Point it at your projects root with `CODERV_PROJECTS_DIR` (defaults to `/home/appuser/apps`, then `~/apps`). On machines with no documented projects it injects nothing.
 
 ---
 

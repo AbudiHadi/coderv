@@ -10,9 +10,14 @@
 #   --all                all three
 #
 # Hook behavior:
-#   The coderv-router UserPromptSubmit hook is Claude-Code-specific. It is
-#   installed only when the Claude target is selected (--claude or --all).
-#   Codex and Gemini fall back to the in-skill TRIGGER blocks.
+#   The hooks are Claude-Code-specific and installed only when the Claude
+#   target is selected (--claude or --all). Codex and Gemini fall back to the
+#   in-skill TRIGGER blocks.
+#     coderv-router    (UserPromptSubmit) — suggests the right skill per prompt
+#     project-context  (SessionStart)     — injects a live project map (newest
+#                      SESSIONS.md entry per project) so every session starts
+#                      knowing where work left off. Scans CODERV_PROJECTS_DIR
+#                      (default /home/appuser/apps, else ~/apps).
 
 set -euo pipefail
 
@@ -206,6 +211,113 @@ print("    wired into settings.json (UserPromptSubmit)")
 PY
 }
 
+# Install the project-context SessionStart hook into Claude Code settings.json.
+# Same idempotent merge idiom as install_router_hook.
+install_context_hook() {
+  if [[ ! -f "$HOOKS_SRC/project-context.sh" ]]; then
+    echo -e "    ${YELLOW}skipped${NC} hook (hooks/project-context.sh not in toolkit)"
+    return 0
+  fi
+
+  local hook_dst="$CLAUDE_HOME/hooks/project-context.sh"
+  mkdir -p "$CLAUDE_HOME/hooks"
+  cp "$HOOKS_SRC/project-context.sh" "$hook_dst"
+  chmod +x "$hook_dst"
+  echo -e "    ${GREEN}installed${NC} hook → $hook_dst"
+
+  local settings="$CLAUDE_HOME/settings.json"
+  if [[ ! -f "$settings" ]]; then
+    echo '{}' > "$settings"
+  fi
+
+  python3 - "$settings" "$hook_dst" <<'PY'
+import json, sys
+settings_path, hook_path = sys.argv[1], sys.argv[2]
+with open(settings_path) as f:
+    try:
+        data = json.load(f)
+    except json.JSONDecodeError:
+        print("    ERROR: settings.json is not valid JSON — leaving it alone.")
+        sys.exit(0)
+if not isinstance(data, dict):
+    print("    ERROR: settings.json root is not an object — leaving it alone.")
+    sys.exit(0)
+
+hooks = data.setdefault("hooks", {})
+starts = hooks.setdefault("SessionStart", [])
+
+for entry in starts:
+    for h in entry.get("hooks", []):
+        if h.get("command") == hook_path:
+            print("    already wired into settings.json (no change)")
+            sys.exit(0)
+
+starts.append({
+    "hooks": [
+        {"type": "command", "command": hook_path, "timeout": 15,
+         "statusMessage": "Loading project map..."}
+    ]
+})
+with open(settings_path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+print("    wired into settings.json (SessionStart)")
+PY
+}
+
+# Uninstall the project-context hook + remove settings.json entry.
+uninstall_context_hook() {
+  local hook_dst="$CLAUDE_HOME/hooks/project-context.sh"
+  if [[ -f "$hook_dst" ]]; then
+    if grep -q "claude-docs-toolkit" "$hook_dst" 2>/dev/null; then
+      rm -f "$hook_dst"
+      echo -e "    ${GREEN}removed${NC} hook script"
+    else
+      echo -e "    ${YELLOW}skipped${NC} hook script (not from this toolkit)"
+    fi
+  fi
+
+  local settings="$CLAUDE_HOME/settings.json"
+  if [[ -f "$settings" ]]; then
+    python3 - "$settings" "$hook_dst" <<'PY'
+import json, sys
+settings_path, hook_path = sys.argv[1], sys.argv[2]
+with open(settings_path) as f:
+    try:
+        data = json.load(f)
+    except json.JSONDecodeError:
+        sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+hooks = data.get("hooks", {})
+starts = hooks.get("SessionStart", [])
+new_starts = []
+removed = False
+for entry in starts:
+    keep = []
+    for h in entry.get("hooks", []):
+        if h.get("command") == hook_path:
+            removed = True
+            continue
+        keep.append(h)
+    if keep:
+        entry = dict(entry, hooks=keep)
+        new_starts.append(entry)
+if removed:
+    if new_starts:
+        hooks["SessionStart"] = new_starts
+    else:
+        hooks.pop("SessionStart", None)
+    if not hooks:
+        data.pop("hooks", None)
+    with open(settings_path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    print("    removed entry from settings.json")
+PY
+  fi
+}
+
 # Uninstall the router hook + remove settings.json entry.
 uninstall_router_hook() {
   local hook_dst="$CLAUDE_HOME/hooks/coderv-router.sh"
@@ -265,6 +377,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
     uninstall_skills_for_host "Claude Code" "$CLAUDE_HOME/skills"
     uninstall_router_hook
+    uninstall_context_hook
   fi
   if [[ "$TARGET_CODEX" -eq 1 ]]; then
     uninstall_skills_for_host "Codex CLI" "$CODEX_HOME/skills"
@@ -281,6 +394,8 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
   install_skills_for_host "Claude Code" "$CLAUDE_HOME/skills"
   echo -e "${BLUE}→ coderv-router hook${NC} (Claude Code only)"
   install_router_hook
+  echo -e "${BLUE}→ project-context hook${NC} (Claude Code only)"
+  install_context_hook
 fi
 
 if [[ "$TARGET_CODEX" -eq 1 ]]; then

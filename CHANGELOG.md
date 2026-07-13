@@ -5,6 +5,17 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-07-13
+
+### Added
+- **`project-context` hook** — a `SessionStart` hook for Claude Code that injects a live project map into every new session: one line per project under the projects root (newest `docs/SESSIONS.md` entry + last-touched date, sorted by recent activity) plus a standing rule to Read the real CLAUDE.md/SESSIONS/DECISIONS/KNOWN-ISSUES before working. Lives at `hooks/project-context.sh`, installed to `~/.claude/hooks/` and wired into `settings.json` (SessionStart) automatically on `--claude`. Projects root configurable via `CODERV_PROJECTS_DIR` (default `/home/appuser/apps`, fallback `~/apps`); silently injects nothing on machines without documented projects. Reason for adding: the session-start ritual ("read the docs first") lived in agent memory and user reminders — both skippable. A SessionStart hook runs in the harness every session and reads the actual files at start time, so it can neither be forgotten nor go stale.
+
+### Changed
+- `install.sh` — installs/uninstalls both hooks for the Claude target with the same idempotent settings.json merge and `<!-- claude-docs-toolkit -->` marker protection; header documents the two hooks.
+
+### Why bump 0.5.0 → 0.6.0
+Minor bump: adds a second runtime component (new hook + new settings.json event wiring). Existing installs upgrade non-breaking — `./install.sh --force` adds the new hook alongside the router.
+
 ## [0.5.0] — 2026-04-28
 
 ### Added
