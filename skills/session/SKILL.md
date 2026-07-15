@@ -63,7 +63,7 @@ Then ask the user — terse, one prompt:
 
 Prepend a new entry to the **top** of `docs/SESSIONS.md`:
 
-```markdown
+````markdown
 ## YYYY-MM-DD — <Title>
 
 **What shipped:**
@@ -72,6 +72,15 @@ Prepend a new entry to the **top** of `docs/SESSIONS.md`:
 **In flight (not yet shipped):**
 - <what> — <blocker or next step>
 
+**State evidence (verbatim, from Step 2's commands):**
+```
+$ git log --oneline -3
+<raw output pasted — not retyped, not summarized>
+$ git status --short
+<raw output>
+<version file contents if the project has them>
+```
+
 **Gotchas the next session should know:**
 - <anything surprising>
 
@@ -79,9 +88,17 @@ Prepend a new entry to the **top** of `docs/SESSIONS.md`:
 - <suggested next step>
 
 ---
-```
+````
 
 Use today's date. If multiple sessions in one day, add a time suffix: `YYYY-MM-DD 14:30 — Title`.
+
+**The evidence block is the load-bearing part.** A handoff is often written
+late in a session — exactly when recollection is least reliable (and past the
+context gate, it's mandatory). The rule (per ADR-004): **state claims are
+pasted command output, never prose.** "Committed and pushed" without the `git
+log` line underneath is not a valid handoff claim — a degraded session can
+misremember; it can't mis-paste. The next session trusts the block, re-verifies
+anything outside it.
 
 ## Step 3 — Rotate when the file gets heavy
 

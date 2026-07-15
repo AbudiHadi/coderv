@@ -29,7 +29,16 @@ You've been asked to plan a task before writing any code. **Stop, read, plan, wa
 - User said "take your time", "think about this", or "be careful".
 - After a long gap — first task of the day, or first time in this repo this week.
 
-If you skip, tell the user: `skipping /before — task is <reason>`. Then do the task directly.
+If you skip, tell the user: `skipping /before — task is <reason>`, and **declare the skip to the grounding gate** so the first edit isn't blocked:
+
+```bash
+ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
+[ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)   # key by project root, same as the gate
+mkdir -p ~/.claude/coderlap/receipts
+printf '{"mode":"skip","reason":"<why in a few words>"}' > ~/.claude/coderlap/receipts/$(printf '%s' "$ROOT" | tr '/' '-')
+```
+
+Then do the task directly.
 
 ## Step 2 — First run in this project?
 
@@ -114,6 +123,45 @@ That's it. No big tables in the default response. The user usually just wants to
 ```
 
 Always end with **a recommendation**, in both default and detailed form. Never ask "approve to proceed?" with no opinion.
+
+## Step 5.5 — Write the grounding receipt + spec (to disk, before coding)
+
+Two small files anchor everything that happens later. Write them now, while
+the reading is fresh:
+
+**1. The grounding receipt** — unlocks the grounding-gate hook for this
+session, and records *what was actually read* (per ADR-004: artefacts cite
+sources, not recollections):
+
+```bash
+# Key both files by the PROJECT ROOT (the dir holding CLAUDE.md) — the
+# grounding-gate hook derives its key the same way, so cwd depth never matters.
+ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
+[ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)
+SLUG=$(printf '%s' "$ROOT" | tr '/' '-')
+mkdir -p ~/.claude/coderlap/receipts ~/.claude/coderlap/specs
+printf '{"mode":"full","task":"<task in a few words>","read":["CLAUDE.md","docs/<...>"],"prior_art":"<file:line or none>"}' \
+  > ~/.claude/coderlap/receipts/$SLUG
+```
+
+**2. The spec checklist** — the request as 3–5 checkable lines. This file is
+the reviewer's ground truth at `/ship` time: the diff is audited against
+*this*, never against anyone's memory of the conversation.
+
+```bash
+cat > ~/.claude/coderlap/specs/$SLUG.md <<'EOF'
+# Spec — <task title>   (written by /before, YYYY-MM-DD)
+Request: <the user's ask, one line, their words>
+- [ ] <verifiable outcome 1>
+- [ ] <verifiable outcome 2>
+- [ ] <verifiable outcome 3>
+Out of scope: <what was explicitly NOT asked>
+EOF
+```
+
+Each line must be checkable against a diff ("endpoint X returns Y", not "works
+well"). If the user corrects the plan in Step 6, update the spec file to match
+— the spec always mirrors the *approved* plan.
 
 ## Step 6 — Wait for approval
 

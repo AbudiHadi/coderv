@@ -81,7 +81,7 @@ When user is only asking about git status without intent to commit.
 
 ### What it does
 
-Reads `git diff`, categorises changes (routes / components / schema / etc.), offers to update the relevant doc itself (not just ask), re-validates every `<!-- src: -->` citation, drafts a why-focused commit message, suggests follow-ups (`/decision` if design choice, KNOWN-ISSUES entry if non-obvious bug).
+Reads `git diff`, categorises changes (routes / components / schema / etc.), offers to update the relevant doc itself (not just ask), re-validates every `<!-- src: -->` citation, spawns a fresh-context reviewer that audits the diff against the spec checklist `/before` wrote (quotes machine-verified by string match), drafts a why-focused commit message, and prints the **verification scorecard** — gates passed/total with real command output per gate; the user approves at 100%. Suggests follow-ups (`/decision` if design choice, KNOWN-ISSUES entry if non-obvious bug). (Reviewer + scorecard added in v0.8.0, ADR-006.)
 
 ## /session
 
@@ -103,7 +103,7 @@ In the middle of active work with no break in sight.
 
 ### What it does
 
-Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md`. When the file passes ~20 entries, rotates all but the newest 10 to `docs/SESSIONS-ARCHIVE.md` (append-only — never deleted).
+Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md` — including a mandatory "State evidence (verbatim)" block of pasted command output (v0.8.0: state claims are pasted, never prose). When the file passes ~20 entries, rotates all but the newest 10 to `docs/SESSIONS-ARCHIVE.md` (append-only — never deleted).
 
 ## /lint
 
@@ -121,7 +121,37 @@ Generating fresh docs (that's /docify), hand-editing one doc, or mid-task with u
 
 ### What it does
 
-Inventories rules/claims/references/structure across `CLAUDE.md` + `docs/`, cross-checks them against reality (git, file existence, line counts, package manifests), reports severity-ranked findings with `file:line` + the conflicting truth, then offers fixes — mechanical ones in one approved batch, judgment calls one question at a time. Never deletes history.
+Inventories rules/claims/references/structure across `CLAUDE.md` + `docs/`, cross-checks them against reality (git, file existence, line counts, package manifests), reports severity-ranked findings with `file:line` + the conflicting truth, then offers fixes — mechanical ones in one approved batch, judgment calls one question at a time. Never deletes history. v0.8.0: the sweep runs in a subagent (findings' quotes machine-verified by string match before reporting), stale coderlap artifacts (leftover specs/receipts) are flagged, and a freshness stamp is written for `/coderv`.
+
+## /coderv
+
+**File:** `skills/coderv/SKILL.md` <!-- src: skills/coderv/SKILL.md -->
+**One-line:** The front door — one command that classifies the request and drives the right pipeline of the other skills.
+**When to use:** any work request, in your own words. Added in v0.8.0 (ADR-007).
+
+### TRIGGER
+
+Any work request that doesn't name a skill: "I'd like to build / there's a bug / can we change / let's work on / fix this / new feature". <!-- src: skills/coderv/SKILL.md -->
+
+### SKIP
+
+A specific skill was invoked explicitly, a pure question with no work intent, or a /coderv chain is already running (never nest).
+
+### What it does
+
+Classifies the request (feature / bug / question / wrap-up / docs-health), checks project state from facts (lint freshness stamp in `~/.claude/coderlap/state/`, dirty git, newest handoff), assembles the pipeline — `/lint` when docs are stale (>14 days) → `/before` → work → `/ship` — shows it once, and drives the chain on a single yes. Pauses only at plan approval and scorecard approval; a failing step stops the chain.
+
+## The anti-dumb-zone gates (hooks, not skills)
+
+Added in v0.8.0 (ADR-006) — three always-on Claude Code hooks in `hooks/`, installed and wired by `install.sh` (Claude target only). Not user-invocable; they fire in the harness where they can't be forgotten:
+
+| Hook | Event | What it enforces |
+|---|---|---|
+| `grounding-gate.sh` | PreToolUse (Edit/Write/MultiEdit/NotebookEdit) | First code edit in a doc-system project is blocked until `/before` wrote a grounding receipt (or a skip was declared with a reason). Docs-only edits never blocked. <!-- src: hooks/grounding-gate.sh --> |
+| `compact-rehydrate.sh` | SessionStart (`compact`) | After compaction, injects a git/versions snapshot: when summary and snapshot conflict, the snapshot wins. <!-- src: hooks/compact-rehydrate.sh --> |
+| `context-gate.sh` | Stop | Real context % from the transcript. Warn at 60%, hard-block once per session at 75% (re-arms after compaction) — the only sanctioned move is an evidence-pasted handoff. <!-- src: hooks/context-gate.sh --> |
+
+Kill switch for all three: `CODERV_GATES_OFF=1`. Config: `CODERV_CONTEXT_WINDOW`, `CODERV_CTX_WARN_PCT`, `CODERV_CTX_BLOCK_PCT`.
 
 ## Adding a new skill
 

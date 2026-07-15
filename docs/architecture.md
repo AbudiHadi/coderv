@@ -25,7 +25,7 @@ A `SKILL.md` has:
 2. **TRIGGER / SKIP block inside the description** — natural-language phrases that should surface this skill even without the slash prefix. <!-- src: skills/docify/SKILL.md:5-9 -->
 3. **Step-by-step body** — markdown instructions Claude follows when the skill is invoked.
 
-Shape is consistent across all 5 skills: discover → plan → act → report.
+Shape is consistent across all 7 skills: discover → plan → act → report. (v0.8.0 adds a verify layer to the act/report steps of /before, /ship, /session, /lint — receipts, spec checklists, fresh-context review, evidence-pasted output — and three gate hooks in `hooks/`; see `skills.md` and ADR-006/007.)
 
 ## Templates
 
@@ -82,5 +82,5 @@ The website (`coderv-docs`) is **separate**. It:
 
 ## Related
 
-- [`overview.md`](./overview.md) — what the toolkit is and the 5 commands.
+- [`overview.md`](./overview.md) — what the toolkit is and the 7 commands.
 - [`skills.md`](./skills.md) — per-skill TRIGGER/SKIP reference.

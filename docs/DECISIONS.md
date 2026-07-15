@@ -33,6 +33,60 @@ What did we decide?
 
 ---
 
+## ADR-007: `/coderv` earns the 7th command slot — the router that makes the other six invisible
+
+**Date:** 2026-07-15
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+### Context
+ADR-005 set the bar for slot 7 "at least as high" as /lint's. Meanwhile the owner's real usage showed the actual adoption blocker: remembering which command comes next ("I don't want to keep writing commands manually — one command that identifies what's needed"). Six commands is a surface a human must index in their head; the craft literature (Matt Pocock's skills repo, `writing-great-skills`) names the cure: when user-invoked skills multiply past what you can remember, add a **router skill**.
+
+### Decision
+Add `/coderv <request>` as the 7th command: classify the request (feature / bug / question / wrap-up / docs-health), check project state from facts (lint freshness state file, dirty git, newest handoff), assemble the pipeline (/lint → /before → work → /ship → /session), show it once, drive the chain on a single yes — pausing only at the two human-judgment points (plan approval, scorecard approval).
+
+### Alternatives considered
+- **Router as 7th command** (chosen) — reduces the surface a human must remember from six to one; the six stay intact and individually invocable (SR preserved).
+- **Grow the coderv-router hook instead** — the hook can only *suggest* per prompt; it cannot sequence a pipeline or carry state between steps. Complementary, not sufficient.
+- **Fold routing into /before** — /before's single responsibility is pre-code grounding; making it also dispatch /lint//ship//session breaks SR and muddies its trigger vocabulary.
+
+### Consequences
+- Positive: the human types one command; discipline stops depending on memory. The 6-command surface is unchanged underneath — power users keep direct access.
+- Negative / trade-off: 7 commands in the catalog; a pipeline abstraction that must never bridge past approval pauses (rule written into the skill).
+- Revisit if: /coderv mis-classifies often (tighten Step 1 table) or users bypass it consistently (the router may be unnecessary on this machine).
+
+---
+
+## ADR-006: Anti-dumb-zone gates — ADR-004's principle extended from artefacts to live sessions
+
+**Date:** 2026-07-15
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+### Context
+ADR-004 ruled that durable artefacts must cite verifiable sources. But the failure that motivated it (a compacted summary claiming v0.3.9 was shipped when nothing was committed) is a *live-session* disease: long sessions degrade ("the dumb zone"), compaction swaps state for intent, and agents ignore existing docs and start from scratch. Docs cannot fix this — it is a context problem, not a knowledge problem. Field comparison against Matt Pocock's skills repo shaped the approach: prevention over policing, feedback loops against ground truth (tests, git) rather than LLM-judges-LLM, fresh-context handoffs over riding into compaction.
+
+### Decision
+Three always-on Claude Code hooks + verification steps in the skills:
+1. **grounding-gate** (PreToolUse) — first code edit in a doc-system project is blocked until /before writes a grounding receipt (or a conscious skip is declared). "Read the docs first" becomes physics, not advice. Docs-only edits never blocked.
+2. **compact-rehydrate** (SessionStart, matcher `compact`) — injects a git/versions snapshot with the rule "when summary and snapshot conflict, the snapshot wins."
+3. **context-gate** (Stop) — measures real context use from the transcript (last main-chain usage, sidechains excluded); warns at 60%, hard-blocks once per session at 75% with "write the handoff" as the only sanctioned move.
+Plus: /before writes a spec checklist to disk (ground truth for intent); /ship spawns a fresh-context adversarial reviewer and computes a **verification scorecard** (gates passed/total, evidence pasted, 100% required for approval — never a self-rated confidence); /session handoffs embed verbatim command output; /lint sweeps in a subagent whose findings' quotes are machine string-matched.
+
+### Alternatives considered
+- **Prevention + machine gates** (chosen) — every check anchors to something that cannot hallucinate (files, git, string matches, token counts).
+- **Always-on LLM auditor watching every turn** — cost/latency on every reply, judges share the model's blind spots, and a false accusation can push a true claim into a false "correction". Kept only in its cheap form: the fresh-context reviewer at /ship time.
+- **Standing panel of per-doc expert agents auditing every request** — subagents don't persist; 21 agent runs per request; secondhand summaries multiply hallucination (telephone game). The salvageable ideas — delegate heavy reading, independent fresh-context review — are in the chosen design.
+- **More/better documentation** — docs fix ignorance, not degradation; the failure occurs while holding perfect docs.
+
+### Consequences
+- Positive: the three failure modes each meet a mechanical gate; nothing depends on agent or human discipline. Scorecard turns approval into a glance.
+- Negative / trade-off: hooks run machine-wide (every session on this box) — a misbehaving gate is felt everywhere; hence `CODERV_GATES_OFF=1` and tight scoping (gate applies only where CLAUDE.md + docs/ exist). Receipt validity is session-start-time based, so a receipt from a parallel same-machine session can unlock the door (rare, benign — accepted for KISS).
+- Known residual risks (documented, accepted): reader/reviewer summaries are lossy (mitigated by file:line citations); a reviewer can share the model's blind spots where nothing is runnable; token % is a proxy for degradation, not a measure of it.
+- Revisit if: gates false-positive enough to annoy (loosen scoping), or the 75% block fires mid-atomic-operation in practice (add a grace mechanism).
+
+---
+
 ## ADR-005: `/lint` earns the 6th command slot — the toolkit gains its missing third operation
 
 **Date:** 2026-07-13

@@ -165,6 +165,37 @@ Offer to draft the entry yourself from the diff.
 
 - [ ] Update `CLAUDE.md` status section if the project tracks phases there.
 
+## Step 4.5 — Fresh-context reviewer (the independent audit)
+
+The session that wrote the code cannot be trusted to grade it — accumulated
+context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
+
+- the actual diff (`git diff` output, not your description of it),
+- the spec checklist written by /before — the ground truth for intent. Its
+  name is keyed by project root:
+  ```bash
+  ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
+  cat ~/.claude/coderlap/specs/$(printf '%s' "$ROOT" | tr '/' '-').md
+  ```
+- an adversarial brief: **"Find what's wrong. For each spec item, verdict
+  pass/fail with the diff lines proving it, quoted verbatim with file:line.
+  Run the build and tests if the project has them; paste raw output. Flag
+  anything in the diff the spec never asked for."**
+
+When the reviewer returns, **machine-verify its quotes before believing it**:
+each quoted line must literally exist at its cited location —
+
+```bash
+sed -n '<line>p' <file>   # must contain the quoted text
+```
+
+A quote that fails the string match = fabricated evidence → drop that finding,
+note it, and re-ask the reviewer for that item. Reviewer findings that survive
+become scorecard gates below.
+
+No spec file exists (work done without /before)? Say so — the "spec verified"
+gate scores ✖ and the scorecard caps below 100%.
+
 ## Step 5 — Draft the commit message
 
 Read last 5 commits to match style:
@@ -192,14 +223,49 @@ Explain **why**, not just what. No AI attribution unless the project already use
 - [ ] No secrets / API keys / `.env` leaking
 - [ ] No large binaries or generated files staged
 
-## Step 7 — Output (terse by default)
+## Step 7 — The Verification Scorecard (the approval moment)
 
-**Default response — short, ~6 lines:**
+The score is **computed, never felt**: gates passed / gates total, each gate a
+pass/fail check with its real output shown. The model's job is to run checks
+and show receipts — not to estimate confidence. Rules:
 
-```markdown
-🚢 Ready to ship — <N> files, <one-line summary of the change>.
+- **100% requires every gate ✅ with evidence attached.** A check that can't
+  run (no tests configured, no spec file) scores ✖ with the reason — never
+  silently dropped from the denominator, never rounded up.
+- Claims quote their evidence: "committed" shows the `git log` line; "tests
+  pass" shows the runner's summary line. **No pasted output → no claim.**
+- Human-judgment items (a trade-off, a design choice) are listed under
+  "Judgment items" — NEVER folded into the percentage.
 
-✅ Doc references valid · ✅ no secrets staged · <✅ docs updated | ⚠ N stale doc refs>
+The gates (drop only those meaningless for the project — say which and why):
+
+| # | Gate | Evidence shown |
+|---|---|---|
+| 1 | Grounding receipt exists for this session | receipt path + mtime |
+| 2 | Spec checklist: every item verified in the diff | per-item verdict + quoted diff line |
+| 3 | Build passes | last line of build output |
+| 4 | Tests pass | runner summary ("N passed, 0 failed") |
+| 5 | Doc citations valid (Step 3) | "N/N checked" |
+| 6 | Reviewer quotes machine-verified | "N/N string-matched" |
+| 7 | Fresh-context reviewer: no open objections | reviewer's verdict line |
+| 8 | Nothing unrequested in the diff | reviewer + your own check |
+| 9 | No secrets / large binaries staged | check output |
+
+**Default response:**
+
+````markdown
+🚢 Ready to ship — <N> files, <one-line summary>.
+
+**VERIFICATION SCORE: <P>% (<passed>/<total> gates)**
+
+✅ 1 Grounding receipt        → <path> (<date>)
+✅ 2 Spec verified 4/4        → [say "evidence" to see per-item proof]
+✅ 3 Build                    → "✓ built in 4.2s"
+✖ 4 Tests                    → no test runner configured in this repo
+… (all gates, one line each, pasted evidence or the reason it can't run)
+
+Unverified claims: <0, or list them>
+Judgment items for you: <none, or one line each>
 
 **Suggested commit message:**
 ```
@@ -210,10 +276,11 @@ Explain **why**, not just what. No AI attribution unless the project already use
 
 **To commit:** `git add <files> && git commit -m "<message>"`
 
-👉 **My recommendation: <ship as-is | fix warnings first | split>.** <one-sentence reason>.
+👉 **My recommendation: <approve — 100% | fix gate N first | ship at <P>% because <reason>>.**
+````
 
-*Want the full pre-commit checklist? Say "details".*
-```
+Below 100%, the failing gate line already says exactly what to fix — the user
+should never have to ask "why not 100?".
 
 **On request ("details" / "show checklist"), expand:**
 

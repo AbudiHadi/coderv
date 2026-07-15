@@ -5,6 +5,26 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-07-15
+
+### Added
+- **The anti-dumb-zone system** (ADR-006). Three always-on Claude Code hooks that turn "don't hallucinate, don't ignore the docs" from advice into mechanism:
+  - **`grounding-gate`** (PreToolUse on Edit/Write/MultiEdit/NotebookEdit) — blocks the session's first *code* edit in any project with a doc system (CLAUDE.md + docs/) until `/before` has written a grounding receipt (or a conscious skip is declared with a reason). Docs-only edits, non-doc-system repos, `~/.claude`, and temp paths are never blocked.
+  - **`compact-rehydrate`** (SessionStart, matcher `compact`) — after compaction (the #1 source of "shipped ✅" fiction), injects a live git/versions snapshot with the standing rule: when the summary and the snapshot conflict, the snapshot wins.
+  - **`context-gate`** (Stop) — measures real context usage from the transcript (last main-chain API call; sidechains excluded; never summed). Warns the user at 60% (once per 5% bucket), hard-blocks the agent once per session at 75% (re-arms after compaction): the only sanctioned moves are finishing the atomic step, writing an evidence-pasted handoff, and asking for a fresh session. `CODERV_CONTEXT_WINDOW` / `CODERV_CTX_WARN_PCT` / `CODERV_CTX_BLOCK_PCT` configure; `CODERV_GATES_OFF=1` disables all gates.
+- **`/coderv` — the 7th command, the front door** (ADR-007). Classifies a natural-language request (feature / bug / question / wrap-up / docs-health), checks project state from facts (lint freshness stamp, dirty git, newest handoff), assembles the pipeline (`/lint` when docs are stale → `/before` → work → `/ship`), shows it once, and drives the whole chain on a single yes — pausing only at plan approval and scorecard approval. The six commands a human had to remember become one.
+- **Verification scorecard in `/ship`.** Approval becomes a glance: `VERIFICATION SCORE: 100% (9/9 gates)` — computed from pass/fail gates (receipt, spec items verified in diff, build, tests, citations, quote matches, reviewer verdict, nothing-unrequested, no secrets), each line with its real command output pasted. 100% requires every gate green with evidence; unrunnable checks score ✖ with the reason, never silently dropped. Human-judgment items are listed separately, never folded into the number. The score is computed, never self-rated — "no hallucination" is expressed as its checkable form: *0 unverified claims*.
+- **Fresh-context reviewer in `/ship`.** One subagent with a clean context audits the actual diff against the spec checklist `/before` wrote to disk — adversarial brief, runs build/tests, quotes evidence verbatim; the primary machine-verifies every quote (string match at cited file:line) before believing a finding.
+
+### Changed
+- **`/before`** now writes two disk artifacts after stating the plan: the grounding receipt (which docs were actually read — unlocks the gate) and the spec checklist (the request as 3–5 checkable lines — the reviewer's ground truth for intent). Skips declare themselves to the gate with a reason.
+- **`/session`** handoffs gain a mandatory "State evidence (verbatim)" block: state claims are pasted command output, never prose — a degraded session can misremember, it can't mis-paste.
+- **`/lint`** runs its sweep in a subagent (the most context-hungry skill no longer pushes the main session toward the dumb zone), machine-verifies finding quotes before reporting, checks for stale coderlap artifacts (leftover specs/receipts from shipped tasks), and stamps a freshness state file that `/coderv` reads.
+- `install.sh` installs/wires/uninstalls the three gate hooks for the Claude target (same idempotent settings.json merge + marker protection); final banner shows 7 commands + the gates and kill switch.
+
+### Why bump 0.7.0 → 0.8.0
+Minor bump: a new command, three new hooks, and verification steps across four skills. All additive; existing installs upgrade with `./install.sh --force`. Design rationale — including what was deliberately rejected (an always-on LLM auditor, a standing panel of per-doc expert agents) — is in ADR-006/ADR-007.
+
 ## [0.7.0] — 2026-07-13
 
 ### Added

@@ -14,6 +14,23 @@ argument-hint: "[optional: docs subfolder or single file to audit]"
 
 /docify writes docs. /before and /session read them. **Nothing checks them** — claims go stale, rules get superseded twice, TODO lists outlive their plans. This skill is the missing third operation: ingest → query → **lint**.
 
+**Run the sweep in a subagent.** Lint is the most context-hungry skill in the
+toolkit (every doc + the code it cites); doing it inline pushes the main
+session toward the very dumb zone this toolkit guards against. Spawn one
+subagent to execute Steps 1–2 and return findings only. Its brief must demand:
+**every finding carries verbatim quotes from BOTH sides** — the doc line and
+the conflicting reality — each with `file:line`. Then, before reporting
+anything to the user, **machine-verify each quote**:
+
+```bash
+sed -n '<line>p' <file>   # must contain the quoted text
+```
+
+A quote that fails the string match = fabricated finding → drop it, note
+"1 finding dropped (quote didn't verify)", never present it as fact. (Small
+scope — one file — may skip the subagent and run inline; the quote rule still
+applies.)
+
 ## Step 1 — Inventory (read, don't fix yet)
 
 Read `CLAUDE.md` (all of them if a monorepo) and every file in `docs/` (or the scope the user gave). While reading, collect four lists:
@@ -33,6 +50,7 @@ For each list, verify the cheap way — greps and file checks, not guesswork:
 | 🟠 **Stale claims** | "NOT committed/restarted/published" older than ~7 days → check `git log` / the running process; TODOs whose plan changed; versions in docs vs `package.json`/`pubspec.yaml`; dead URLs skipped (report only). |
 | 🟠 **Dead references** | Cited file gone, or line range beyond the file's length (`wc -l`); links to docs that don't exist; documented commands missing from `package.json`/`scripts/`. |
 | 🟡 **Rot** | Draft files with STALE banners older than the last real doc update; orphan docs; empty sections; KNOWN-ISSUES prevention rules that never landed in CLAUDE.md or a test. |
+| 🟡 **Stale coderlap artifacts** | This project's spec + receipt under `~/.claude/coderlap/` (keyed by project-root path, `/` → `-`): spec describes a task that already shipped (its outcomes appear in `git log`) → offer cleanup. A leftover spec misleads the next `/ship` reviewer into auditing against last week's task. |
 
 Don't flag style. Don't flag history (SESSIONS/DECISIONS entries are records, not claims — only their *unresolved* forward-looking statements count).
 
@@ -62,3 +80,13 @@ Every finding needs `file:line` and the **reality** it conflicts with — a lint
 ## Step 5 — Close the loop
 
 After fixes are applied: one-line entry in `docs/SESSIONS.md` ("doc lint: N findings, M fixed"). If a finding revealed a *recurring* failure mode, suggest `/decision` (why the rule flip-flopped) or a KNOWN-ISSUES prevention rule — that's how the same rot stops coming back.
+
+Finally, stamp the freshness state file — `/coderv` reads it to decide whether
+a pipeline needs a lint first:
+
+```bash
+ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
+[ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)   # key by project root, same as all coderlap artifacts
+mkdir -p ~/.claude/coderlap/state
+date +%F > ~/.claude/coderlap/state/lint-$(printf '%s' "$ROOT" | tr '/' '-')
+```

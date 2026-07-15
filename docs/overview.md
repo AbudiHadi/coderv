@@ -5,19 +5,23 @@
 
 ## What this is
 
-The **CoderLap Docs Toolkit** — 5 slash commands for Claude Code that help devs keep clear docs without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them. <!-- src: install.sh -->
+The **CoderLap Docs Toolkit** — 7 slash commands + 5 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
 
 Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) repo.
 
-## The 5 commands
+## The 7 commands
 
 | Command | Role |
 |---|---|
+| `/coderv` | The front door — classifies the request and drives the pipeline of the others on one yes. v0.8.0, ADR-007. <!-- src: skills/coderv/SKILL.md --> |
 | `/docify` | Once per project — scans the codebase, writes `CLAUDE.md` + reference docs with source citations. <!-- src: skills/docify/SKILL.md --> |
-| `/before` | Pre-code checklist — reads docs, checks past decisions, states a plan, waits for approval. <!-- src: skills/before/SKILL.md --> |
+| `/before` | Pre-code checklist — reads docs, checks past decisions, states a plan, waits for approval; writes the grounding receipt + spec checklist. <!-- src: skills/before/SKILL.md --> |
 | `/decision` | Log an ADR in 30 seconds while the choice is fresh. <!-- src: skills/decision/SKILL.md --> |
-| `/ship` | Pre-commit checklist — auto-updates docs, validates citations, drafts commit message. <!-- src: skills/ship/SKILL.md --> |
-| `/session` | End-of-session handoff. `/session last` reads the previous one. <!-- src: skills/session/SKILL.md --> |
+| `/ship` | Pre-commit — auto-updates docs, validates citations, fresh-context reviewer, verification scorecard (approve at 100%). <!-- src: skills/ship/SKILL.md --> |
+| `/session` | End-of-session handoff with verbatim state evidence. `/session last` reads the previous one. <!-- src: skills/session/SKILL.md --> |
+| `/lint` | Docs health check — contradictions, stale claims, dead references, rot. v0.7.0, ADR-005. <!-- src: skills/lint/SKILL.md --> |
+
+Plus 5 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-context` (SessionStart), and the three v0.8.0 anti-dumb-zone gates — `grounding-gate` (PreToolUse), `compact-rehydrate` (SessionStart/compact), `context-gate` (Stop). See [`skills.md`](./skills.md). <!-- src: install.sh -->
 
 ## Repo layout
 
@@ -28,12 +32,15 @@ Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) r
 ├── README.md            ← marketing + install + used-in-production list
 ├── LICENCE              ← CoderLap Source-Available Licence v1.0
 ├── install.sh           ← idempotent installer, adds marker for --uninstall
-├── skills/              ← the 5 skills (each in its own folder)
+├── skills/              ← the 7 skills (each in its own folder)
 │   ├── before/SKILL.md
+│   ├── coderv/SKILL.md
 │   ├── decision/SKILL.md
 │   ├── docify/SKILL.md
+│   ├── lint/SKILL.md
 │   ├── session/SKILL.md
 │   └── ship/SKILL.md
+├── hooks/               ← 5 Claude Code hooks (router, project map, 3 gates)
 ├── templates/           ← scaffolds /docify copies into fresh projects
 │   ├── CLAUDE.md
 │   ├── DECISIONS.md

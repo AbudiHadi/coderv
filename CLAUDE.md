@@ -1,6 +1,6 @@
 # Project AI Instructions — claude-docs-toolkit
 
-> The CoderLap toolkit itself — 6 skills + 2 hooks + installer + release gate + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
+> The CoderLap toolkit itself — 7 skills + 5 hooks + installer + release gate + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
 
 <!-- coderlap:rule:loop -->
 ## The loop (every task)
@@ -40,7 +40,7 @@
 <!-- coderlap:rule:never-unrequested -->
 ## Never add unrequested scope
 
-Keep the 6-command surface area stable. New features go in the relevant existing skill (e.g. smarter TRIGGER phrases) before they justify a new command. (/lint earned slot 6 by completing the ingest→query→lint triad — see ADR-005; the bar for slot 7 is at least that high.)
+Keep the 7-command surface area stable. New features go in the relevant existing skill (e.g. smarter TRIGGER phrases) before they justify a new command. (/lint earned slot 6 by completing the ingest→query→lint triad — ADR-005. /coderv earned slot 7 as the router that shrinks the surface a human must remember from six to one — ADR-007. The bar for slot 8: it must *reduce* what the user has to hold in their head, not add to it.)
 
 <!-- coderlap:rule:never-delete-history -->
 ## Never delete history

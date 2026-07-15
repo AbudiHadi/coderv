@@ -18,6 +18,12 @@
 #                      SESSIONS.md entry per project) so every session starts
 #                      knowing where work left off. Scans CODERV_PROJECTS_DIR
 #                      (default /home/appuser/apps, else ~/apps).
+#     grounding-gate   (PreToolUse)       — blocks the first code edit in a
+#                      doc-system project until /before wrote a receipt
+#     compact-rehydrate(SessionStart)     — after compaction, injects a git
+#                      ground-truth snapshot ("the snapshot wins")
+#     context-gate     (Stop)             — warns at 60% context, hard-blocks
+#                      at 75% (the dumb zone); CODERV_GATES_OFF=1 disables all
 
 set -euo pipefail
 
@@ -265,6 +271,116 @@ print("    wired into settings.json (SessionStart)")
 PY
 }
 
+# Install one gate hook + wire it into settings.json under any event/matcher.
+# Args: script_name, event, matcher ("" = none), timeout_seconds
+# Same idempotent merge idiom as install_router_hook.
+install_gate_hook() {
+  local script="$1" event="$2" matcher="$3" timeout="$4"
+  if [[ ! -f "$HOOKS_SRC/$script" ]]; then
+    echo -e "    ${YELLOW}skipped${NC} hook (hooks/$script not in toolkit)"
+    return 0
+  fi
+
+  local hook_dst="$CLAUDE_HOME/hooks/$script"
+  mkdir -p "$CLAUDE_HOME/hooks"
+  cp "$HOOKS_SRC/$script" "$hook_dst"
+  chmod +x "$hook_dst"
+  echo -e "    ${GREEN}installed${NC} hook → $hook_dst"
+
+  local settings="$CLAUDE_HOME/settings.json"
+  if [[ ! -f "$settings" ]]; then
+    echo '{}' > "$settings"
+  fi
+
+  python3 - "$settings" "$hook_dst" "$event" "$matcher" "$timeout" <<'PY'
+import json, sys
+settings_path, hook_path, event, matcher, timeout = sys.argv[1:6]
+with open(settings_path) as f:
+    try:
+        data = json.load(f)
+    except json.JSONDecodeError:
+        print("    ERROR: settings.json is not valid JSON — leaving it alone.")
+        sys.exit(0)
+if not isinstance(data, dict):
+    print("    ERROR: settings.json root is not an object — leaving it alone.")
+    sys.exit(0)
+
+hooks = data.setdefault("hooks", {})
+entries = hooks.setdefault(event, [])
+
+for entry in entries:
+    for h in entry.get("hooks", []):
+        if h.get("command") == hook_path:
+            print("    already wired into settings.json (no change)")
+            sys.exit(0)
+
+new_entry = {"hooks": [{"type": "command", "command": hook_path,
+                        "timeout": int(timeout)}]}
+if matcher:
+    new_entry["matcher"] = matcher
+entries.append(new_entry)
+with open(settings_path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+print(f"    wired into settings.json ({event})")
+PY
+}
+
+# Uninstall one gate hook + remove its settings.json entry.
+# Args: script_name, event
+uninstall_gate_hook() {
+  local script="$1" event="$2"
+  local hook_dst="$CLAUDE_HOME/hooks/$script"
+  if [[ -f "$hook_dst" ]]; then
+    if grep -q "claude-docs-toolkit" "$hook_dst" 2>/dev/null; then
+      rm -f "$hook_dst"
+      echo -e "    ${GREEN}removed${NC} $script"
+    else
+      echo -e "    ${YELLOW}skipped${NC} $script (not from this toolkit)"
+    fi
+  fi
+
+  local settings="$CLAUDE_HOME/settings.json"
+  if [[ -f "$settings" ]]; then
+    python3 - "$settings" "$hook_dst" "$event" <<'PY'
+import json, sys
+settings_path, hook_path, event = sys.argv[1:4]
+with open(settings_path) as f:
+    try:
+        data = json.load(f)
+    except json.JSONDecodeError:
+        sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+hooks = data.get("hooks", {})
+entries = hooks.get(event, [])
+new_entries = []
+removed = False
+for entry in entries:
+    keep = []
+    for h in entry.get("hooks", []):
+        if h.get("command") == hook_path:
+            removed = True
+            continue
+        keep.append(h)
+    if keep:
+        entry = dict(entry, hooks=keep)
+        new_entries.append(entry)
+if removed:
+    if new_entries:
+        hooks[event] = new_entries
+    else:
+        hooks.pop(event, None)
+    if not hooks:
+        data.pop("hooks", None)
+    with open(settings_path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    print("    removed entry from settings.json")
+PY
+  fi
+}
+
 # Uninstall the project-context hook + remove settings.json entry.
 uninstall_context_hook() {
   local hook_dst="$CLAUDE_HOME/hooks/project-context.sh"
@@ -378,6 +494,9 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     uninstall_skills_for_host "Claude Code" "$CLAUDE_HOME/skills"
     uninstall_router_hook
     uninstall_context_hook
+    uninstall_gate_hook "grounding-gate.sh"    "PreToolUse"
+    uninstall_gate_hook "compact-rehydrate.sh" "SessionStart"
+    uninstall_gate_hook "context-gate.sh"      "Stop"
   fi
   if [[ "$TARGET_CODEX" -eq 1 ]]; then
     uninstall_skills_for_host "Codex CLI" "$CODEX_HOME/skills"
@@ -396,6 +515,10 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
   install_router_hook
   echo -e "${BLUE}→ project-context hook${NC} (Claude Code only)"
   install_context_hook
+  echo -e "${BLUE}→ anti-dumb-zone gates${NC} (Claude Code only)"
+  install_gate_hook "grounding-gate.sh"    "PreToolUse"   "Edit|Write|MultiEdit|NotebookEdit" 10
+  install_gate_hook "compact-rehydrate.sh" "SessionStart" "compact"                           10
+  install_gate_hook "context-gate.sh"      "Stop"         ""                                  15
 fi
 
 if [[ "$TARGET_CODEX" -eq 1 ]]; then
@@ -409,12 +532,17 @@ fi
 echo
 echo -e "${GREEN}Done.${NC}"
 echo
-echo "Six commands:"
+echo "Seven commands (you only need to remember the first):"
+echo "  /coderv <request> — The front door: classifies your request and drives the pipeline"
 echo "  /docify           — Once per project: generate CLAUDE.md + docs from your code"
 echo "  /before <task>    — Before coding: Claude reads docs + plans, waits for OK"
 echo "  /decision <title> — Log why you chose X over Y (30 seconds)"
-echo "  /ship             — Before commit: auto-updates docs + validates citations"
-echo "  /session          — End-of-session handoff for next time"
+echo "  /ship             — Before commit: reviewer + verification scorecard (approve at 100%)"
+echo "  /session          — End-of-session handoff (state as pasted evidence)"
 echo "  /lint             — Every ~5 sessions: audit docs for rot + contradictions"
+echo
+echo "Three always-on gates (Claude Code): grounding-gate (docs before code),"
+echo "compact-rehydrate (truth snapshot after compaction), context-gate (dumb-zone guard)."
+echo "Kill switch: CODERV_GATES_OFF=1"
 echo
 echo "Docs: https://coderv.dev"
