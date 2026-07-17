@@ -33,6 +33,70 @@ What did we decide?
 
 ---
 
+## ADR-010: Bounded convergence extended to the commit path — the gate-deny anti-loop rule lives in the workflow, not in memory
+
+**Date:** 2026-07-17
+**Status:** accepted
+**Decider(s):** owner (raised the concern + narrowed the escalation rule), Claude (implementer)
+
+### Context
+The codex-review-gate denies a commit until findings are resolved. A real
+incident: the gate denied 6× in a row because findings were fixed one-at-a-time
+and re-committed after each — every recommit is a fresh diff, so it earns a
+fresh review, and the loop never terminates. Twice a *real* finding was also
+wrongly dismissed on a lazy `grep` that matched a dependency's version, not the
+lockfile's. The owner intervened ("no unlimited loop"). The corrective behavior
+(batch-fix + commit-once + rebut-once + evidence-before-dismissal) was saved
+only as a memory note (`feedback-gate-deny-no-loop`). The owner's objection:
+memory is the *last* reinforcement layer, not the mechanism — a workflow rule
+that only lives in memory isn't a guarantee, because it's silently lost if the
+memory is pruned or the session runs where that memory isn't loaded. ADR-009
+already bounds the *design-phase* (`/before`) loop with a round cap; the
+*commit-time* loop had no equivalent bound in any durable artifact.
+
+### Decision
+Encode the rule into the workflow itself, four places, so it holds without
+memory: (1) `/ship` Step 7 gate-deny block; (2) the gate's own deny message
+(`REASON=` in `codex-review-gate.sh`) so it's in front of Claude even with no
+skill loaded — text only, no control-flow change; (3) `AI-WORKFLOW-PLAN.md`
+principle #8 (bounded convergence, both paths); (4) `~/.codex/AGENTS.md` so
+Codex expects one converged retry. The rule: on a deny, fix **all** real
+findings and retry in a **single** commit (never per-finding recommit); reject
+a finding **only** with parsed, machine-verified proof; rebut to Codex **once**;
+then **escalate to the owner when the same unresolved finding is rejected twice
+on substantially the same rationale.** "Substantially the same rationale" is
+defined narrowly: the **same underlying claim**, the **same cited evidence**,
+and **no materially new code or facts** bearing on that finding — if any of the
+three changes, it is a fresh finding and escalation does not trip. The memory
+note is demoted to a pointer at these durable homes (reinforcement, not
+mechanism).
+
+### Alternatives considered
+- **Docs + deny-message, no machine state** (chosen) — keeps the live gate's
+  control flow untouched (matches how the gate already trusts Claude to
+  adjudicate honestly), and the narrow escalation rule targets the real
+  pathology (same claim + same evidence bouncing back) without penalizing
+  legitimate iteration.
+- **A deny-counter in the hook** — a real machine backstop, but adds state +
+  reset logic to a live gate, and consecutive-deny ≠ loop (honest iteration
+  also denies repeatedly, each time on a *new* finding). Rejected by the owner.
+- **Leave it in memory** — the status quo this ADR exists to overturn: not a
+  guarantee, invisible to other sessions/machines, lost on prune.
+
+### Consequences
+- Positive: the anti-loop guarantee is self-contained — any session follows it
+  from `/ship` and the deny message, with or without memory. Same bounded-
+  convergence doctrine now covers both the plan path (round cap) and the commit
+  path (same-rationale escalation).
+- Negative / trade-off: no machine enforcement — the commit loop still relies on
+  Claude reading and following the deny text (as the gate already relies on
+  honest adjudication) and the owner as final arbiter.
+- Revisit if: a loop recurs despite the encoded rule (then reconsider the
+  deny-counter backstop), or "substantially the same rationale" proves too
+  fuzzy to apply consistently.
+
+---
+
 ## ADR-009: The two-model workflow reviews the PLAN, not just the diff — design-phase Codex loop + immutable stamped spec + drift-hunter gate
 
 **Date:** 2026-07-17

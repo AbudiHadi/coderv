@@ -299,10 +299,18 @@ REASON="CODEX ADVERSARIAL REVIEW (commit paused once, per the AI workflow rules)
 
 $REVIEW
 
-Adjudicate each finding: fix what is real BEFORE committing; findings you
-reject MUST be listed to the owner with your reason (transparency rule —
-never silently dropped). Then retry the commit — this exact diff will not
-be blocked again; if you change files, the new diff gets a fresh review."
+Adjudicate ALL findings before committing anything. Fix every real one, then
+retry with a SINGLE commit — do NOT fix one and re-commit, repeat: each recommit
+is a fresh diff that earns a fresh review and can deny indefinitely (batch, don't
+trickle). Reject a finding ONLY with parsed, machine-verified proof (the line
+quoted, the command output) — never a hunch or a lazy grep; no proof means fix it
+or escalate it, not dismiss it. Findings you reject MUST be listed to the owner
+with that proof (transparency rule — never silently dropped). Then retry: this
+exact diff will not be blocked again; a changed diff gets a fresh review.
+STOP and surface to the owner when the SAME unresolved finding has been rejected
+twice on substantially the same rationale (same underlying claim, same cited
+evidence, no materially new code or facts) — that is a loop, not convergence; the
+owner decides, you do not keep re-committing."
 [[ -n "$TRUNC_NOTE" ]] && REASON+=$'\n\n'"$TRUNC_NOTE"
 [[ -n "$HIST_NOTE" ]] && REASON+=$'\n\n'"$HIST_NOTE"
 [[ -n "$DRIFT_NOTE" ]] && REASON+=$'\n\n'"$DRIFT_NOTE"

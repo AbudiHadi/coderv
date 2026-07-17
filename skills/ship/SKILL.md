@@ -306,10 +306,36 @@ routes the diff through the codex-review-gate (the machine reviewer). A
 commit the user runs in their own terminal would silently bypass that gate.
 
 **If the gate denies — it opens a discussion, not a verdict.** Codex is a
-peer reviewer, not a boss; Claude holds final authority and can push back:
+peer reviewer, not a boss; Claude holds final authority and can push back.
 
-1. Adjudicate each finding. Fix what is genuinely real (a new diff earns a
-   fresh review automatically).
+> **Converge in ONE retry — never loop.** A recommit is a *fresh* diff, so it
+> earns a *fresh* review; fixing findings one-at-a-time and recommitting after
+> each produces a new review every time and can deny indefinitely (this is a
+> real incident, not a hypothetical — see ADR-010). So: **fix ALL real findings
+> first, then retry with a single commit.** Batch, don't trickle. This is the
+> commit-path twin of the design-phase round cap in
+> `docs/planning/two-brain-convergence.md` — both bound the loop so it
+> terminates.
+>
+> **Escalate — stop and surface to the owner — when the SAME unresolved finding
+> has been rejected twice on substantially the same rationale.** "Substantially
+> the same rationale" is narrow: the **same underlying claim**, resting on the
+> **same cited evidence**, with **no materially new code or facts** bearing on
+> that finding since the last rejection. If any of those three has changed (the
+> claim shifted, new evidence, or the diff/facts moved), it is a *fresh*
+> finding — keep going, escalation does not trip. But the same claim on the same
+> evidence bouncing back twice means you are looping, not converging: stop,
+> hand the owner every unresolved finding with your reasoning, and let them
+> decide. The owner is the arbiter above both models; an unresolved gate is
+> their call, never an excuse to keep hammering the commit.
+
+1. Adjudicate **all** findings before committing anything. Fix every finding
+   that is genuinely real, then commit the whole batch **once** — that single
+   retry earns one fresh review, instead of one review per finding.
+   **A finding is only rejected with parsed, machine-verified proof** — the
+   actual line quoted, the actual command output — never a hunch or a lazy
+   `grep` that matched the wrong thing (that once dismissed a *real* lockfile
+   finding). No proof → not rejected: fix it or escalate it.
 2. For a finding you believe is wrong, you may **rebut to Codex ONCE** —
    re-run the review with your counter-argument appended, same stdin channel.
    Include the approved plan when it exists, so a `[DRIFT]` finding can be
