@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-07-17 (BUILT) — two-brain workflow shipped: plan-review loop + immutable spec + drift-hunter gate
+
+**Items 1-5 of `docs/planning/two-brain-workflow-plan.md` are built, verified, and committed (`f9c0836`).** The two-model workflow now reviews the PLAN, not just the diff (ADR-009). Not yet pushed (see below) and NO version bump (owner: bump at release, this is `[Unreleased]`).
+
+**What shipped:**
+1. **`/before` step 5.6 — design-phase Codex loop.** Claude drafts the plan → pipes it to Codex via the gate's one-payload stdin channel → adjudicates → converges to one of **three terminal end states** (CONVERGED / CAP-STOPPED / REVIEW-UNAVAILABLE; `running` = non-terminal). FIXED-requires-VERIFIED (else UNVERIFIED-CARRIED). Timeout ≠ LGTM. Every finding surfaced to the user.
+2. **Immutable stamped spec.** `/before` Step 5.5 now OVERWRITES (never appends) the spec, stamped `Base: <HEAD>` + ISO date via an **injection-safe** pattern (quoted-heredoc body + `printf` for the two trusted stamp lines).
+3. **Drift-hunter gate.** `codex-review-gate.sh` reads a FRESH spec (Base is ancestor of HEAD via `git -C "$SPEC_ROOT" merge-base --is-ancestor`, AND `0 ≤ mtime < 24h`) and prepends it — findings tagged `[DRIFT]`/`[BUG]`. Stale/missing/wrong-base/future-mtime/no-stamp → generic prompt + loud "drift NOT checked" in EVERY outcome (LGTM + deny). **Both hook copies re-synced byte-identical** (sha `462a817…`).
+4. **`/ship` deny → discussion.** On a gate deny, Claude may rebut to Codex ONCE (OUT assigned, VERDICT read, plan included for `[DRIFT]` rebuttals); Claude's call final; outcome surfaced.
+5. **ADR-009 + CHANGELOG `[Unreleased]` + KI-001.**
+
+**The drift-hunter's first field test was its OWN commit** — exactly as the prior handoff predicted. During the build AND at commit time, the live gate reviewed this very implementation and caught **6 real bugs**, all fixed: (1) command injection in the spec heredoc, (2) future-mtime staleness bypass (`SPEC_AGE < 0` read as fresh), (3) inert `/ship` rebuttal (`$OUT` unassigned), (4) unlabeled 4th convergence state, (5) `SPEC_ROOT`/`$DIR` divergence in the ancestor check, (6) "four vs three end-states" doc contradiction. Rejected findings (surfaced, transparency rule): the recurring "second hook copy not in diff" (proven false positive — installed copy is *outside* the git tree, sha-identical) and Codex re-raising KI-001 as must-fix (owner ruled it a follow-up).
+
+**KI-001 (open, owner-accepted follow-up):** the fresh-spec/drift block sits AFTER the 24h review cache short-circuit, so a spec-state change on an unchanged diff reuses the cached verdict. Can't occur in normal use (`/before` writes the spec before any diff exists). Fix when addressed: fold a spec-freshness marker (Base + mtime) into the cache hash key. Full entry + prevention rule in `docs/KNOWN-ISSUES.md`.
+
+**Verified:** drift suite 14/14 (isolated HOME + stubbed codex + scratch repos, `scratchpad/drift_test.sh`); `/verify` drove the *installed* hook end-to-end through fresh-spec (drift mode, plan reached reviewer) / no-spec (generic + "drift NOT checked") / future-mtime (correctly not armed) states.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -2
+f9c0836 Add two-brain design+review workflow — plan-review loop, immutable spec, drift-hunter gate
+d618f39 docs: two-brain workflow design handoff (converged plan, not yet built)
+$ git status -sb        → ## main...origin/main [ahead 3]
+$ cat VERSION           → 0.9.0        $ git tag | grep v0.9.0 → v0.9.0
+$ sha256 both hook copies → 462a817940343ecbf8dd47df6eb19c5c2a900f0e24abba5b75021c2b5287ce84 (identical)
+$ drift suite           → RESULT: 14 passed, 0 failed
+```
+
+**Next session:**
+- **Push:** `main` is **ahead of origin by 3** (this commit + 2 prior doc handoffs) — `git push` when ready (nothing gates it; docs+skills, gate already dogfooded).
+- **Still needs a human (gh not authed here):** publish GitHub releases for v0.9.0 + backlog v0.6.0/v0.7.0/v0.8.0 (tags exist, releases never created) — carried over from the v0.9.0 handoff, independent of this work.
+- KI-001 fix (cache key) whenever the cache-vs-drift edge is worth closing.
+
+---
+
 ## 2026-07-17 (design, NOT built) — two-brain workflow plan CONVERGED, ready to implement next session
 
 **Nothing coded. This is a design handoff — the plan is approved-in-principle by the owner and peer-reviewed by Codex to CONVERGED. Build it in a FRESH session (context gate fired at 77% before implementation started).**
