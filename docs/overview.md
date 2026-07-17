@@ -5,7 +5,7 @@
 
 ## What this is
 
-The **CoderLap Docs Toolkit** — 7 slash commands + 5 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
+The **CoderLap Docs Toolkit** — 7 slash commands + 6 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
 
 Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) repo.
 
@@ -21,7 +21,7 @@ Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) r
 | `/session` | End-of-session handoff with verbatim state evidence. `/session last` reads the previous one. <!-- src: skills/session/SKILL.md --> |
 | `/lint` | Docs health check — contradictions, stale claims, dead references, rot. v0.7.0, ADR-005. <!-- src: skills/lint/SKILL.md --> |
 
-Plus 5 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-context` (SessionStart), and the three v0.8.0 anti-dumb-zone gates — `grounding-gate` (PreToolUse), `compact-rehydrate` (SessionStart/compact), `context-gate` (Stop). See [`skills.md`](./skills.md). <!-- src: install.sh -->
+Plus 6 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-context` (SessionStart), the three v0.8.0 anti-dumb-zone gates — `grounding-gate` (PreToolUse), `compact-rehydrate` (SessionStart/compact), `context-gate` (Stop) — and the 4th gate `codex-review-gate` (PreToolUse/Bash, adversarial Codex review before every commit). See [`skills.md`](./skills.md). <!-- src: install.sh -->
 
 ## Repo layout
 
@@ -40,7 +40,7 @@ Plus 5 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-co
 │   ├── lint/SKILL.md
 │   ├── session/SKILL.md
 │   └── ship/SKILL.md
-├── hooks/               ← 5 Claude Code hooks (router, project map, 3 gates)
+├── hooks/               ← 6 Claude Code hooks (router, project map, 4 gates)
 ├── templates/           ← scaffolds /docify copies into fresh projects
 │   ├── CLAUDE.md
 │   ├── DECISIONS.md

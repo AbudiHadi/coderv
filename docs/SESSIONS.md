@@ -4,6 +4,127 @@
 
 ---
 
+## 2026-07-17 (commit approval) — gate denied its own commit twice; 4 fixes, 2 rejections, then shipped
+
+Owner said "approve" → ran the commit per ADR-008; the codex gate live-fire denied FIVE rounds (working as designed — each fix changed the diff, triggering re-review; the all-rejected fifth round converged via the cache and the commit landed). Adjudicated 15 findings:
+- **Fixed (7):** merge/cherry-pick/revert/rebase integrate commits the gate can't see — clean worktree warns loudly instead of silently skipping, dirty worktree labels every outcome "incoming commits UNREVIEWED" (even LGTM); `-C` repo resolution tied to the commit-creating invocation (`git -C /other status && git commit` no longer reviews the wrong repo) with flags allowed around `-C`; review cache keys on repo+HEAD+diff (identical diff in another repo reviews afresh); jq-missing warning triggers on all commit-creating subcommands, not just "commit"; separate-arg long flags (`--git-dir X --work-tree X commit`) no longer bypass detection.
+- **Rejected, surfaced to owner (5):** "stdin may not reach codex alongside a positional prompt" — codex-cli 0.144.5 help documents piped stdin IS appended as a `<stdin>` block, and every live deny quoted diff content, proving delivery; "staged-hunk-with-reverted-worktree" / "cache keys worktree not index" / "review the index for plain commits" (the same family, raised THREE times) — the previously adjudicated accepted limitation in the hook header, plus the ADR-008 flow commits via `git add -A` so index = worktree for every gated commit, and reviewing the index instead would miss the common `add && commit` compound (PreToolUse fires before the add); "untracked binaries reviewed only as 'Binary files differ'" — an LLM cannot audit binary payload bytes, `--binary` would burn the 150KB budget on unreviewable base85, and the diff already discloses the binary's presence and path. Round 5 rejected wholesale: two "wrong capture group" claims (Codex miscounted — group 9 is correct for both SUBCMD and the `-C` dir; disproven empirically by suite cases T1/T2/T4/T5, which fail under Codex's counting) and "diff modifies CLAUDE.md/SESSIONS/DECISIONS which AGENTS.md forbids" — AGENTS.md scopes the CODEX reviewer ("writing them is the conductor's job", AGENTS.md:37-40); Claude is the conductor.
+- Verified by a 14-case stubbed-codex suite (isolated HOME, scratch repos) — 14/14 pass, incl. regressions. Both hook copies re-synced byte-identical. Grounding gate also fired on this session's first edit — conscious-skip receipt declared (grounding was done: CLAUDE.md + handoffs + full hook source read first).
+
+---
+
+## 2026-07-17 (later) — gap-scan list worked: gate hardened, /ship routed through it, docs de-staled
+
+**Gate activation verified (handoff item):** fresh session after restart, scratch repo, code-diff commit → gate fired and DENIED with two real Codex findings (unvalidated divisor, arithmetic-expression injection). The 4th gate is live.
+
+**Hook hardened** (`hooks/codex-review-gate.sh`, both copies byte-identical, 10/10 pipe tests with a stubbed codex):
+- Detection: command-position regex (quoted strings scrubbed first) — catches `git -C <dir>` / `-c` / long flags + merge / cherry-pick / revert / rebase; `echo "git commit"` and commit-message mentions no longer trigger.
+- Untracked files included in the reviewed diff AND the docs-only check (new-file-only bypass closed).
+- >150KB diffs: every outcome (LGTM, deny, context) states loudly that only the first 150KB was reviewed.
+- `codex exec` now `-s read-only` (config marks /root trusted — reviewer could otherwise run commands).
+- Missing jq: loud warning on commit-like commands instead of silent bypass; `cd` handles quoted paths + leading `~`; `git -C` wins over `cd` for repo resolution.
+- Accepted limitations documented in the header: pre-command tree on generate-then-commit; staged-hunk-with-reverted-worktree in mixed commits; diff goes off-box to OpenAI (owner-accepted); `$VAR` paths unexpanded.
+
+**/ship bypass closed (ADR-008):** scorecard approval pause unchanged, but after "approve" Claude runs the commit via Bash so it passes the gate. Outside-terminal commits still bypass (unfixable from inside Claude Code — documented). Installed skill copy synced, marker restored.
+
+**Docs de-staled:** AI-WORKFLOW-PLAN.md header → OPERATIONAL/verified; MEMORY.md + reference memory (v0.6.0 pin → 0.8.0, 6 hooks/4 gates, verified claim); install.sh banner → four gates + `install_gate_hook` grew optional statusMessage (output matches live settings entry exactly); README ×3, overview ×3, skills.md gate table, CLAUDE.md header → 6 hooks/4 gates. CHANGELOG [Unreleased] documents the hardening + ADR-008. Historical entries (v0.8.0 "three gates") left untouched — append-only.
+
+**Also:** removed `tracked.txt` (7-byte "edited" test debris at repo root, flagged by the scan). Gap-scan JSON stays LOCAL-ONLY at `docs/GAP-SCAN-2026-07-17.json` — now gitignored (`docs/GAP-SCAN-*.json`): 285KB of internal scan output incl. security-flagged evidence has no business in a repo strangers clone. All 24 confirmed findings now fixed, accepted-and-documented, or historical.
+
+**Fresh-context reviewer round (/ship step 4.5, quotes machine-verified):** caught 2 stale "three always-on gates" lines in README's hero (fixed), 3 real detection bypasses — env-prefix `FOO=1 git commit`, quoted-text `git -C /etc` dir hijack, apostrophe scrub-order — all fixed (env-prefix regex; `-C` extraction now command-position-anchored with repo-candidate priority git-C → cd → cwd; scrub double-then-single), attached `-C<dir>` form (fixed), installer never refreshing statusMessage on already-wired hooks (fixed), mktemp leak on harness timeout (trap added). Accepted + documented: `sh -c` wrapper commits undetected. REJECTED (surfaced per transparency rule): "broken grep makes jq-warning silent" — a box without working grep can't run any toolkit hook; contrived.
+
+**State evidence (verbatim, end of session — after reviewer-round fixes):**
+```
+$ git status --short
+ M .gitignore
+ M CHANGELOG.md
+ M CLAUDE.md
+ M README.md
+ M docs/DECISIONS.md
+ M docs/SESSIONS.md
+ M docs/overview.md
+ M docs/skills.md
+ M install.sh
+ M skills/ship/SKILL.md
+?? hooks/codex-review-gate.sh          # GAP-SCAN json now gitignored
+$ git log --oneline -1 && cat VERSION
+8e3ac12 v0.8.0: anti-dumb-zone system — 3 gate hooks, /coderv front door, computed scorecard
+0.8.0
+$ bash -n hooks/codex-review-gate.sh && bash -n install.sh   # SYNTAX-OK
+$ diff -q hooks/codex-review-gate.sh ~/.claude/hooks/codex-review-gate.sh   # RESYNCED, no output
+$ stubbed-codex pipe suites: 10 passed 0 failed, then post-reviewer 8 passed 0 failed
+```
+
+**COMMIT PENDING APPROVAL:** /ship ran to completion — scorecard 100% (7/7 runnable gates), commit message drafted (in the /ship reply + reproducible from CHANGELOG). Context gate ended the session at the approval pause. NOT committed.
+
+**Next session should probably:**
+- Say "approve" → run `git add -A && git commit` (the codex gate will review once, ~1-3 min; adjudicate any deny per its message). Commit message: subject "Harden codex-review-gate + route /ship commits through it (ADR-008)" + why-body from this entry.
+- Release run: version bump 0.8.0 → 0.9.0 (CHANGELOG [Unreleased] → dated), `./release.sh`, website site.ts sync.
+- Owner to confirm ADR-008 (Claude-runs-commit-after-approve) — logged as adjustable default, veto welcome.
+- NO new scans — owner explicitly said the ultra scan burned his tokens; the gap-scan work is DONE.
+
+---
+
+## 2026-07-17 — codex-review-gate: 4th gate, Codex adversarial review before every commit
+
+**What shipped (to disk, NOT committed — /ship pending):**
+- `hooks/codex-review-gate.sh` — PreToolUse/Bash gate: pipes the outgoing diff to Codex CLI before any `git commit`; findings deny once, agent adjudicates (rejected findings must be surfaced to owner), same-diff retry passes (24h hash cache at `~/.claude/coderlap/codex-reviewed/`). Skips: non-commit, non-git, empty/docs-only diffs. Codex down/auth lapsed → allow + loud warning. Kill: `CODEX_REVIEW_OFF=1` / `CODERV_GATES_OFF=1`.
+- `install.sh` — wires/unwires it like the other gates (`install_gate_hook ... "PreToolUse" "Bash" 240`).
+- `CHANGELOG.md` — entry under `[Unreleased]` (version NOT bumped yet).
+
+**State evidence (verbatim, end of session):**
+```
+$ git status --short            # toolkit repo — UNCOMMITTED
+ M CHANGELOG.md
+ M docs/SESSIONS.md
+ M install.sh
+?? hooks/codex-review-gate.sh
+$ git log --oneline -1 && cat VERSION
+8e3ac12 v0.8.0: anti-dumb-zone system — 3 gate hooks, /coderv front door, computed scorecard
+0.8.0
+$ codex --version && codex login status
+codex-cli 0.144.5
+Logged in using ChatGPT        (login-rc=0)
+$ jq -r '.hooks.PreToolUse[].matcher' ~/.claude/settings.json
+Edit|Write|MultiEdit|NotebookEdit
+Bash                            # ← codex-review-gate registered
+```
+- Pipe-tests all passed: non-commit/docs-only/empty → silent allow; planted-bug diff → deny with real Codex finding; same-diff retry → cached allow.
+- Live-fire proof FAILED in this session only (no hot-reload of hook config): `git commit` in the scratch repo went through unreviewed (`[main 40992df] live gate proof`). Activation = owner opens `/hooks` once or restarts the session.
+
+**Context:** this implements the machine gate of the owner's two-model workflow (`/root/AI-WORKFLOW-PLAN.md`; Claude implements, Codex reviews). Codex CLI 0.144.5 installed today, device-auth login done, global rules at `~/.codex/AGENTS.md`.
+
+**Codex review of the hook itself (manual pipeline run, adjudicated):**
+1. FIX — untracked files bypass review (`git diff HEAD` misses them; new-file commits skip the gate).
+2. ACCEPTED LIMITATION — compound commands that generate files then commit review the pre-command tree; PreToolUse cannot see the future tree. Document it.
+3. FIX — >150KB diffs are truncated for review but the hash cache marks the FULL diff reviewed; must warn loudly instead.
+4. FIX — `git -C /path commit` doesn't match the "git commit" substring → skips the gate; quoted `cd` paths also unhandled.
+5. FIX (trivial) — missing jq = silent bypass; emit a hand-built static JSON warning instead.
+
+**Ultra gap-scan (174 agents, 3-skeptic panels): 24 confirmed / 32 refuted.**
+Full JSON: `docs/GAP-SCAN-2026-07-17.json`. The CRITICAL one — hook's
+`permissionDecision:"allow"` paths auto-approved the ENTIRE Bash command
+(bypassing user permission prompts for anything containing "git commit") —
+was FIXED same session in both copies: allow paths now emit only
+systemMessage+additionalContext and defer to the normal permission flow.
+Top remaining (overlaps Codex's own review): git -C /merge/cherry-pick
+bypass detection; untracked-file commits unreviewed; 150KB truncation
+certifies full-diff hash; codex exec needs explicit `-s read-only` (config
+marks /root trusted); /ship's "user runs git commit" step bypasses the
+hook entirely (hook fires only on Claude's Bash); doc-count staleness
+("three gates"/"5 hooks" in banner/CLAUDE.md/README); MEMORY.md
+"OPERATIONAL" overclaim. 14 verify agents died on session rate limit
+(low-sev tail unverified). Two subagent security warnings in the scan run
+— review journal before trusting those two findings' evidence.
+
+**Next session should probably:**
+- Work docs/GAP-SCAN-2026-07-17.json confirmed list top-down (critical done; high next: detection regex incl. git -C/merge, untracked files, truncation-hash, -s read-only, /ship integration decision).
+- Verify the gate fires after a session restart (commit a code diff, expect Codex deny or LGTM message).
+- Check the ai-workflow-gap-scan workflow results (may overlap with the findings above).
+- Run /ship for this change; version bump 0.8.0 → 0.9.0 belongs to the release run.
+
+---
+
 ## 2026-07-15 (release run) — doc lint clean + reviewer qualifiers, v0.8.0 shipped
 
 - Doc lint (subagent sweep, quotes machine-verified): 2 findings, 0 fixed — the "stale" spec/receipt is the ACTIVE v0.8.0 task's (needed by /ship), and the context-window calibration item is already an honest open follow-up below. Freshness stamped.

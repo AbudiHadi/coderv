@@ -274,7 +274,7 @@ Judgment items for you: <none, or one line each>
 <2-3 sentences on WHY>
 ```
 
-**To commit:** `git add <files> && git commit -m "<message>"`
+**On "approve" I run:** `git add <files> && git commit -m "<message>"` — the codex-review-gate reviews the outgoing diff before it lands.
 
 👉 **My recommendation: <approve — 100% | fix gate N first | ship at <P>% because <reason>>.**
 ````
@@ -300,7 +300,12 @@ should never have to ask "why not 100?".
 - <blocker, or ✅ none>
 ```
 
-**Never run `git commit` yourself.** Show the command. The user runs it.
+**Never commit without the user's explicit approval.** Show the command and
+wait for "approve". Then run the commit yourself via the Bash tool — that
+routes the diff through the codex-review-gate (the machine reviewer). A
+commit the user runs in their own terminal would silently bypass that gate.
+If the gate denies: adjudicate each finding, fix the real ones, list any
+rejected ones to the user with your reason, then retry.
 
 ## Step 8 — Suggest follow-ups
 

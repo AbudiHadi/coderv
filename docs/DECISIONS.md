@@ -33,6 +33,30 @@ What did we decide?
 
 ---
 
+## ADR-008: /ship commits via Claude's Bash after approval — the human approves, the machine gate reviews
+
+**Date:** 2026-07-17
+**Status:** accepted
+**Decider(s):** Claude (per standing "adjust toward the better option" rule), pending owner veto
+
+### Context
+The codex-review-gate (4th gate) fires only on `git commit` run through Claude's Bash tool. /ship's old rule — "Never run `git commit` yourself. Show the command. The user runs it." — meant the toolkit's own commit ritual bypassed the machine reviewer entirely: a commit typed into the owner's terminal is invisible to Claude Code hooks. The 2026-07-17 gap scan confirmed this as a high-severity hole (two independent finder agents).
+
+### Decision
+/ship keeps the approval pause (nothing is committed until the user says "approve") but after approval **Claude runs the commit itself via Bash**, so every /ship commit passes through the codex-review-gate. On a gate deny, Claude adjudicates findings, fixes real ones, surfaces rejected ones with reasons, and retries.
+
+### Alternatives considered
+- **Approval-then-Claude-commits** (chosen) — preserves the old rule's intent (owner controls the commit moment) while guaranteeing the adversarial review the AI workflow plan mandates.
+- **Keep "user runs it"; /ship pipes the diff to Codex as a checklist step** — duplicates the hook's logic inside a skill (DRY violation) and produces two review paths that can drift.
+- **User runs commit via `! git commit` in-session** — depends on the user remembering the `!` prefix every time; a forgotten prefix silently skips review, which is exactly the failure mode gates exist to remove.
+
+### Consequences
+- Positive: "nothing lands unreviewed" now holds for the main commit path; the human-approval pause is unchanged.
+- Negative / trade-off: each /ship commit waits 1–3 min for Codex; commits made in an outside terminal still bypass the gate (unfixable from inside Claude Code — documented, not hidden).
+- Revisit if: the owner rejects Claude-run commits, or Codex latency makes /ship unusable (then consider reviewing at /ship-start in parallel).
+
+---
+
 ## ADR-007: `/coderv` earns the 7th command slot — the router that makes the other six invisible
 
 **Date:** 2026-07-15

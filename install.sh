@@ -275,7 +275,7 @@ PY
 # Args: script_name, event, matcher ("" = none), timeout_seconds
 # Same idempotent merge idiom as install_router_hook.
 install_gate_hook() {
-  local script="$1" event="$2" matcher="$3" timeout="$4"
+  local script="$1" event="$2" matcher="$3" timeout="$4" status_msg="${5:-}"
   if [[ ! -f "$HOOKS_SRC/$script" ]]; then
     echo -e "    ${YELLOW}skipped${NC} hook (hooks/$script not in toolkit)"
     return 0
@@ -292,9 +292,9 @@ install_gate_hook() {
     echo '{}' > "$settings"
   fi
 
-  python3 - "$settings" "$hook_dst" "$event" "$matcher" "$timeout" <<'PY'
+  python3 - "$settings" "$hook_dst" "$event" "$matcher" "$timeout" "$status_msg" <<'PY'
 import json, sys
-settings_path, hook_path, event, matcher, timeout = sys.argv[1:6]
+settings_path, hook_path, event, matcher, timeout, status_msg = sys.argv[1:7]
 with open(settings_path) as f:
     try:
         data = json.load(f)
@@ -311,11 +311,20 @@ entries = hooks.setdefault(event, [])
 for entry in entries:
     for h in entry.get("hooks", []):
         if h.get("command") == hook_path:
-            print("    already wired into settings.json (no change)")
+            if status_msg and h.get("statusMessage") != status_msg:
+                h["statusMessage"] = status_msg
+                with open(settings_path, "w") as f:
+                    json.dump(data, f, indent=2)
+                    f.write("\n")
+                print("    already wired — statusMessage refreshed")
+            else:
+                print("    already wired into settings.json (no change)")
             sys.exit(0)
 
-new_entry = {"hooks": [{"type": "command", "command": hook_path,
-                        "timeout": int(timeout)}]}
+hook_obj = {"type": "command", "command": hook_path, "timeout": int(timeout)}
+if status_msg:
+    hook_obj["statusMessage"] = status_msg
+new_entry = {"hooks": [hook_obj]}
 if matcher:
     new_entry["matcher"] = matcher
 entries.append(new_entry)
@@ -495,6 +504,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     uninstall_router_hook
     uninstall_context_hook
     uninstall_gate_hook "grounding-gate.sh"    "PreToolUse"
+    uninstall_gate_hook "codex-review-gate.sh" "PreToolUse"
     uninstall_gate_hook "compact-rehydrate.sh" "SessionStart"
     uninstall_gate_hook "context-gate.sh"      "Stop"
   fi
@@ -517,6 +527,7 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
   install_context_hook
   echo -e "${BLUE}→ anti-dumb-zone gates${NC} (Claude Code only)"
   install_gate_hook "grounding-gate.sh"    "PreToolUse"   "Edit|Write|MultiEdit|NotebookEdit" 10
+  install_gate_hook "codex-review-gate.sh" "PreToolUse"   "Bash"                              240 "Codex adversarial review..."
   install_gate_hook "compact-rehydrate.sh" "SessionStart" "compact"                           10
   install_gate_hook "context-gate.sh"      "Stop"         ""                                  15
 fi
@@ -541,7 +552,8 @@ echo "  /ship             — Before commit: reviewer + verification scorecard (
 echo "  /session          — End-of-session handoff (state as pasted evidence)"
 echo "  /lint             — Every ~5 sessions: audit docs for rot + contradictions"
 echo
-echo "Three always-on gates (Claude Code): grounding-gate (docs before code),"
+echo "Four always-on gates (Claude Code): grounding-gate (docs before code),"
+echo "codex-review-gate (Codex adversarial review before commit),"
 echo "compact-rehydrate (truth snapshot after compaction), context-gate (dumb-zone guard)."
 echo "Kill switch: CODERV_GATES_OFF=1"
 echo

@@ -1,6 +1,6 @@
 # Project AI Instructions — claude-docs-toolkit
 
-> The CoderLap toolkit itself — 7 skills + 5 hooks + installer + release gate + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
+> The CoderLap toolkit itself — 7 skills + 6 hooks + installer + release gate + templates. This is a small repo, but since it's the source people `git clone` from, it needs its own discipline. Rules with `<!-- coderlap:rule:* -->` markers are toolkit-owned.
 
 <!-- coderlap:rule:loop -->
 ## The loop (every task)

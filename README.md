@@ -24,11 +24,11 @@
 
 ## What it does
 
-Seven slash commands + three always-on gates that help devs keep extremely clear docs and honest agents — without getting tired or trying to remember.
+Seven slash commands + four always-on gates that help devs keep extremely clear docs and honest agents — without getting tired or trying to remember.
 
 > **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero. Docs rot within a week.
 >
-> **The answer:** seven commands. One is the front door that drives the rest. One generates real docs from your code. Four keep them fresh. One audits them for lies. Plus three always-on gates (Claude Code) that make "read the docs first" and "never work in the dumb zone" physics instead of advice. Markdown + bash only. No framework. No dependency.
+> **The answer:** seven commands. One is the front door that drives the rest. One generates real docs from your code. Four keep them fresh. One audits them for lies. Plus four always-on gates (Claude Code) that make "read the docs first", "no commit lands unreviewed", and "never work in the dumb zone" physics instead of advice. Markdown + bash only. No framework. No dependency.
 
 ---
 
@@ -70,7 +70,7 @@ Seven slash commands + three always-on gates that help devs keep extremely clear
 curl -fsSL https://coderv.dev/install.sh | bash
 ```
 
-Skills land in `~/.claude/skills/` and five hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment), `project-context` (every new session starts already knowing where each project left off), and the three anti-dumb-zone gates — `grounding-gate` (the first code edit is blocked until `/before` actually read the docs), `compact-rehydrate` (after compaction, a live git snapshot outranks the summary), `context-gate` (warns at 60% context, hard-stops new work at 75% — the dumb zone is a locked door, not a vibe). Kill switch: `CODERV_GATES_OFF=1`.
+Skills land in `~/.claude/skills/` and six hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment), `project-context` (every new session starts already knowing where each project left off), and the four anti-dumb-zone gates — `grounding-gate` (the first code edit is blocked until `/before` actually read the docs), `codex-review-gate` (every outgoing commit diff gets an adversarial review from a second model before it lands; needs [Codex CLI](https://github.com/openai/codex), fails loud-but-open without it), `compact-rehydrate` (after compaction, a live git snapshot outranks the summary), `context-gate` (warns at 60% context, hard-stops new work at 75% — the dumb zone is a locked door, not a vibe). Kill switch: `CODERV_GATES_OFF=1`.
 
 **Manual path:**
 
@@ -90,7 +90,7 @@ The 7 skills also work in [Codex CLI](https://github.com/openai/codex) and [Gemi
 ./install.sh --all              # all three hosts
 ```
 
-All five hooks (`coderv-router`, `project-context`, and the three anti-dumb-zone gates) are Claude-Code-specific — the other CLIs don't have an equivalent hook system. On Codex / Gemini, the toolkit relies on the in-skill TRIGGER blocks alone — auto-suggest works but is less aggressive, and the gates don't apply.
+All six hooks (`coderv-router`, `project-context`, and the four anti-dumb-zone gates) are Claude-Code-specific — the other CLIs don't have an equivalent hook system. On Codex / Gemini, the toolkit relies on the in-skill TRIGGER blocks alone — auto-suggest works but is less aggressive, and the gates don't apply.
 
 **Update:**
 
@@ -174,7 +174,7 @@ Don't run `/decision`. Every command is optional. The toolkit is lighter than an
 The 7 commands are visible — you invoke them, they do their job visibly, no silent failure. That's the core. The `coderv-router` hook (Claude Code) is a thin layer on top of that: it doesn't *do* the work, it just makes sure Claude *offers* the right command when your phrasing matches. The work itself is still in the visible, markdown-only commands.
 
 **Does the toolkit work with Codex CLI and Gemini CLI?**
-Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. All five hooks (router, project map, and the three gates) are Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive, and the anti-dumb-zone gates don't apply.
+Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. All six hooks (router, project map, and the four gates) are Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive, and the anti-dumb-zone gates don't apply.
 
 ---
 
