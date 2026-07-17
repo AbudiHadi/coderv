@@ -33,6 +33,37 @@ What did we decide?
 
 ---
 
+## ADR-009: The two-model workflow reviews the PLAN, not just the diff — design-phase Codex loop + immutable stamped spec + drift-hunter gate
+
+**Date:** 2026-07-17
+**Status:** accepted
+**Decider(s):** owner (approved the design in principle + green-lit the convergence mechanism), Claude (implementer)
+
+### Context
+ADR-006 put a machine reviewer on every *diff* (the codex-review-gate). But by the time a diff exists, a wrong *approach* has already been built — the cheapest place to catch a bad plan is before any code is written. The two-model AI workflow (`AI-WORKFLOW-PLAN.md`) says the value of a second model is independent judgment; we were spending that judgment only at review time, not at design time. Two gaps followed: (1) `/before` presented a plan to the user with no independent peer review; (2) the gate reviewed diffs for correctness but had no notion of *drift* — a diff can be individually correct yet silently do more (or less) than the approved plan. A latent flaw compounded it: the existing per-task spec had no base-commit stamp, so nothing distinguished a fresh plan from a stale one left over from a prior task.
+
+### Decision
+Extend the two-model collaboration to the design phase and make the spec the shared source of truth across both phases:
+1. **`/before` design-phase Codex loop** (new step 5.6): Claude drafts the plan, pipes it to Codex via one serialized stdin payload (the gate's channel), adjudicates findings, converges. Termination is guaranteed by a round cap (3), not by "disagreements shrink."
+2. **Immutable stamped spec**: `/before` OVERWRITES (never appends) `~/.claude/coderlap/specs/<root-slug>.md` with a `Base:` commit stamp + ISO date. One spec = one task; appended history exposes stale baselines.
+3. **Drift-hunter gate**: the codex-review-gate reads that spec ONLY when fresh (stamped base is an ancestor of HEAD AND file <24h old) and prepends it — the review then hunts for drift ([DRIFT]/[BUG] tags) on top of correctness. A stale/mismatched/missing spec falls back to the generic prompt and states "drift NOT checked" in every outcome — a drift review that never read a plan is never claimed.
+4. **`/ship` deny-handling becomes a discussion**: on a gate deny, Claude may rebut to Codex once; Claude's call is final; the outcome is surfaced to the user.
+
+Convergence has three terminal end states (CONVERGED / CAP-STOPPED / REVIEW-UNAVAILABLE) plus a non-terminal `running` label meaning "loop again"; "100%" means an empty *verified* unresolved-material set, never consensus; every finding is surfaced to the user with its classification, and the user overrules any of it. Full mechanism: `docs/planning/two-brain-convergence.md`.
+
+### Alternatives considered
+- **Plan review + immutable spec + drift gate** (chosen) — reuses the gate's exact stdin/slug patterns (DRY), adds no new user-facing command (stable-surface rule), and makes the same spec file serve `/before`, the gate, and the `/ship` reviewer.
+- **A dispatcher that routes tasks between the two models** — machinery the transparency rule already covers; the routing rule in `AI-WORKFLOW-PLAN.md` is applied by Claude as conductor, no code needed.
+- **"Convergence = disagreements shrink each round"** — rejected during the design's own Codex review: the material set can grow, so only the round cap guarantees termination.
+- **Append to the spec (keep history)** — rejected: a later drift review could hunt against the wrong (stale) plan. History lives in git + SESSIONS, not the live spec.
+
+### Consequences
+- Positive: independent judgment now applies at design AND review; a correct-but-off-plan diff is caught; the spec is unambiguously fresh-or-ignored; no new command to remember.
+- Negative / trade-off: `/before` adds a Codex round-trip (up to 480s, retried once) before the plan reaches the user; a genuinely fresh spec that predates an intervening commit reads as "not an ancestor" and drops to a generic review (fail-safe, not fail-open). Both degrade loud, never silent.
+- Revisit if: the plan-review latency makes `/before` unpleasant (then gate it behind task size), or Codex plan-review quality proves low-signal.
+
+---
+
 ## ADR-008: /ship commits via Claude's Bash after approval — the human approves, the machine gate reviews
 
 **Date:** 2026-07-17

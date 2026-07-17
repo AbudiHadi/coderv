@@ -304,8 +304,35 @@ should never have to ask "why not 100?".
 wait for "approve". Then run the commit yourself via the Bash tool — that
 routes the diff through the codex-review-gate (the machine reviewer). A
 commit the user runs in their own terminal would silently bypass that gate.
-If the gate denies: adjudicate each finding, fix the real ones, list any
-rejected ones to the user with your reason, then retry.
+
+**If the gate denies — it opens a discussion, not a verdict.** Codex is a
+peer reviewer, not a boss; Claude holds final authority and can push back:
+
+1. Adjudicate each finding. Fix what is genuinely real (a new diff earns a
+   fresh review automatically).
+2. For a finding you believe is wrong, you may **rebut to Codex ONCE** —
+   re-run the review with your counter-argument appended, same stdin channel.
+   Include the approved plan when it exists, so a `[DRIFT]` finding can be
+   reconsidered against the same ground truth the gate measured it against:
+   ```bash
+   OUT=$(mktemp)
+   SPEC=~/.claude/coderlap/specs/$(printf '%s' "$ROOT" | tr '/' '-').md
+   { printf '%s\n' "You flagged: <finding>." \
+       "Rebuttal: <why it is not a real issue — cite the code/convention>." \
+       "Reconsider. If you still disagree, say so and why."
+     [ -f "$SPEC" ] && { printf -- '--- APPROVED PLAN ---\n'; cat "$SPEC"; printf -- '--- END PLAN ---\n'; }
+     printf 'Diff below:\n'; git -C "$DIR" diff HEAD; } \
+     | timeout 180 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
+   VERDICT=$(cat "$OUT"); rm -f "$OUT"
+   ```
+   Read `$VERDICT` — Codex either concedes or holds. One rebuttal round only:
+   this is a strong hand, not an argument to win. Either way, **Claude's call
+   is final**.
+3. Surface the outcome to the user: every finding, whether fixed / rejected /
+   rebutted-and-held, with your reasoning. A rejection that survived a rebuttal
+   is still surfaced — never silently dropped (transparency rule). The user is
+   the final authority above both models.
+4. Then retry the commit.
 
 ## Step 8 — Suggest follow-ups
 

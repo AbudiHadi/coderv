@@ -5,6 +5,17 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Two-model workflow now reviews the PLAN, not just the diff** (ADR-009). Independent judgment moves one phase earlier, to where a wrong approach is cheapest to fix:
+  - **`/before` design-phase Codex loop** (new step 5.6). Claude drafts the plan, then pipes it to Codex via the gate's exact one-payload stdin channel for an adversarial review (gaps, risks, wrong approaches — findings only, no rewrite). Claude adjudicates and converges to one of three terminal end states (a fourth label, *running*, just means "loop again"): **CONVERGED** (Codex LGTM — empty unresolved-material set), **CAP-STOPPED** (3 rounds, ≥1 material finding open), or **REVIEW-UNAVAILABLE** (Codex timed out/auth-lapsed after one retry — never treated as LGTM). Every finding from every round is surfaced to the user with its material/not classification and reasoning; the user overrules any of it. Mechanism: `docs/planning/two-brain-convergence.md`.
+  - **Drift-hunter in `codex-review-gate`.** When `/before` left a FRESH approved plan for the repo — its stamped `Base:` commit is an ancestor of HEAD AND the spec is under 24h old — the gate prepends the plan and the review hunts on two axes: DRIFT from the plan (missed steps, unapproved scope, silent changes) plus the existing correctness/security pass, tagging findings `[DRIFT]`/`[BUG]`. A stale, mismatched, or missing plan falls back to the generic correctness prompt and states "drift NOT checked" in every outcome (LGTM and deny) — a drift review that never read a plan is never claimed.
+
+### Changed
+- **`/before` spec is now immutable and stamped** (ADR-009). The per-task spec is always OVERWRITTEN (never appended) and carries a `Base:` commit stamp + ISO date. One spec = one task; the stamp is what arms the drift-hunter, and an appended history would leave stale baselines a later review could hunt against by mistake.
+- **`/ship` gate-deny handling becomes a discussion** (ADR-009). On a codex-review-gate deny, Claude may rebut a finding to Codex ONCE (same stdin channel, one round) before deciding. Codex is a peer reviewer, not a boss: Claude's call is final, and every finding — fixed, rejected, or rebutted-and-held — is surfaced to the user, who is the final authority.
+
 ## [0.9.0] — 2026-07-17
 
 ### Added

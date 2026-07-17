@@ -145,29 +145,112 @@ printf '{"mode":"full","task":"<task in a few words>","read":["CLAUDE.md","docs/
 ```
 
 **2. The spec checklist** — the request as 3–5 checkable lines. This file is
-the reviewer's ground truth at `/ship` time: the diff is audited against
-*this*, never against anyone's memory of the conversation.
+the ground truth for TWO reviewers: the `/ship` fresh-context reviewer AND the
+codex-review-gate's drift-hunter. The diff is audited against *this*, never
+against anyone's memory of the conversation.
+
+**Always OVERWRITE, never append.** One spec = one task. An appended history
+leaves stale baselines behind that a later review could mistake for the current
+plan (a drift-hunter reading two plans hunts against the wrong one). Stamp a
+`Base:` line with the current commit — the gate trusts the spec only when that
+base is an ancestor of HEAD and the file is under 24h old; otherwise it falls
+back to a generic review and says "drift not checked". So the stamp is what
+*arms* the drift-hunter for this task:
+
+Compute the stamp values into shell variables first, then write the body with
+a QUOTED heredoc — the task/spec text is filled in by you and may contain `$(`,
+backticks, or other shell metacharacters; an unquoted heredoc would execute
+them. Only the two stamp lines interpolate, and they come from trusted commands:
 
 ```bash
-cat > ~/.claude/coderlap/specs/$SLUG.md <<'EOF'
-# Spec — <task title>   (written by /before, YYYY-MM-DD)
+STAMP_DATE=$(date +%F)
+STAMP_BASE=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo none)
+{ printf '# Spec — <task title>   (written by /before, %s)\n' "$STAMP_DATE"
+  printf 'Base: %s\n' "$STAMP_BASE"
+  cat <<'EOF'
 Request: <the user's ask, one line, their words>
 - [ ] <verifiable outcome 1>
 - [ ] <verifiable outcome 2>
 - [ ] <verifiable outcome 3>
 Out of scope: <what was explicitly NOT asked>
 EOF
+} > ~/.claude/coderlap/specs/$SLUG.md
 ```
 
-Each line must be checkable against a diff ("endpoint X returns Y", not "works
-well"). If the user corrects the plan in Step 6, update the spec file to match
-— the spec always mirrors the *approved* plan.
+Each checklist line must be checkable against a diff ("endpoint X returns Y",
+not "works well"). If the user corrects the plan in Step 6, OVERWRITE the spec
+file to match — the spec always mirrors the *approved* plan, and re-stamping
+(a fresh `Base:` from the current HEAD) keeps the drift-hunter armed.
+
+## Step 5.6 — Two-brain design review (Codex peer-reviews the PLAN)
+
+Before the plan reaches the user, the *other* AI reviews it. The gate already
+does this for diffs; this does it for plans — the same independent judgment,
+one phase earlier, where a wrong approach is cheapest to fix. Run this for any
+task substantial enough to warrant `/before` in the first place; skip it only
+when Codex is the very thing being planned in a way that would recurse.
+
+**Feed Codex ONE serialized stdin payload — no competing sources** (identical
+channel to `codex-review-gate.sh`; a heredoc is NOT used, so the instructions
+and the plan can never blur together):
+
+```bash
+OUT=$(mktemp)
+{ printf '%s\n' \
+    "You are reviewing a PLAN written by another AI (Claude), not a diff." \
+    "Findings ONLY — gaps, risks, wrong approaches, missed prior art. 2-3" \
+    "bullets max. Do NOT rewrite the plan. If it is solid, reply exactly: LGTM" \
+    "---PLAN BELOW---"
+  cat ~/.claude/coderlap/specs/$SLUG.md
+} | timeout 480 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
+RC=$?
+REVIEW=$(cat "$OUT"); rm -f "$OUT"
+```
+
+**Adjudicate, then decide the end state** (mechanism: `docs/planning/two-brain-convergence.md`):
+
+- **Codex unavailable** — `RC != 0` OR empty `REVIEW`: retry ONCE. Still failing
+  → **REVIEW-UNAVAILABLE**. Tell the user verbatim: *"Codex unavailable — plan
+  not peer-reviewed."* A timeout is **never** an LGTM. Stop the loop here.
+- Otherwise adjudicate every finding: fix the real ones (re-write the spec, it
+  stays the source of truth), reject the wrong ones **with a reason**. A finding
+  is "material" if unaddressed it could cause a wrong result, a security/data
+  problem, or unrequested scope — unsure → material.
+- **A fix leaves the unresolved-material set only when VERIFIED.** In the plan
+  phase a fix is usually a plan edit you can confirm on the spot. If a fix can't
+  be verified until code exists, mark it UNVERIFIED-CARRIED — it stays in the
+  unresolved set and rides to the diff-review (gate) phase, where the drift-
+  hunter can check it. A claimed-but-unverified fix never counts toward
+  CONVERGED (same rule the `/ship` scorecard enforces; convergence doc §"FIXED
+  requires verification").
+- **Approach changed** by a fix → re-send the updated plan (new round).
+- **Converge — one of exactly three end states** (same set as the gate and the
+  convergence doc; a conscious rejection is not a fourth state — it resolves
+  into these two by whether the *material* set is left empty):
+  - **CONVERGED** — the unresolved-material set is empty: Codex replied `LGTM`,
+    OR every remaining finding was adjudicated non-material (or fixed). The only
+    state that means "100% reviewed".
+  - **CAP-STOPPED** — 3 rounds reached with ≥1 unresolved *material* finding
+    (rejected, deferred, or unfixed).
+  - **REVIEW-UNAVAILABLE** — see the unavailable case above.
+
+**Transparency (non-negotiable):** EVERY finding from EVERY round is surfaced to
+the user with its classification (material/not) and your reasoning — resolved
+and unresolved alike. Classification is a recommendation, never a filter; the
+user overrules any of it and is the final authority. On CAP-STOPPED or a
+conscious-rejection stop, list every unresolved finding VERBATIM plus your
+rationale. Never hide a finding by mislabeling it.
 
 ## Step 6 — Wait for approval
 
 Do **not** start coding until the user confirms (or corrects) your plan. This is the whole point — catch misalignment before, not after.
 
-If the user corrects the plan, update it and re-state it. Don't code until aligned.
+Present the plan together with the Step 5.6 review outcome: the end state
+(CONVERGED / CAP-STOPPED / REVIEW-UNAVAILABLE) and any unresolved findings.
+The user approves, corrects, or overrules — they sit above both models.
+
+If the user corrects the plan, update the spec and re-state it (a substantive
+change re-arms Step 5.6). Don't code until aligned.
 
 ## Step 7 — Watch for follow-ups (during the task, not just after)
 

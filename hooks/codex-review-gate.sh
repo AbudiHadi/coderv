@@ -7,6 +7,14 @@
 # them (transparency rule: rejected findings must be reported to the owner)
 # and a retry of the same diff passes. A changed diff is reviewed afresh.
 #
+# Drift-hunter: when /before left an approved plan for this repo AND it is
+# FRESH (stamped base commit is an ancestor of HEAD, written within 24h),
+# the review also hunts for DRIFT from that plan — missed steps, unapproved
+# scope, silent changes — findings tagged [DRIFT]/[BUG]. A stale / mismatched
+# / missing plan falls back to the generic correctness prompt and every
+# outcome states "drift NOT checked" — a drift review that never read a plan
+# must never be claimed.
+#
 # Detects: commit / merge / cherry-pick / revert / rebase, including
 # `git -C <dir>` and other global flags, at command position (quoted
 # mentions like `echo "git commit"` do not trigger). Reviews the working-
@@ -188,10 +196,65 @@ if [[ "$SUBCMD" != "commit" ]]; then
     HIST_NOTE="⚠ 'git $SUBCMD' integrates existing commits the gate cannot see — only the local worktree delta was reviewed; the incoming commits are UNREVIEWED. Tell the owner; do not report this as a fully reviewed operation."
 fi
 
-PROMPT='You are the independent adversarial reviewer in a two-model workflow.
+# Drift-hunter: when /before wrote an approved plan for THIS repo, the review
+# hunts for DRIFT from that plan (missed steps, scope creep, silent changes)
+# on top of the correctness pass. The spec is trusted ONLY if fresh — its
+# stamped base commit is an ancestor of the current HEAD (the plan describes
+# THIS line of work, not a stale branch) AND it was written within 24h. A
+# stale / mismatched / missing spec falls back to the generic prompt and the
+# review SAYS "drift not checked" in every outcome — a claimed drift review
+# that never read a plan would be a lie (plan §2, §3; convergence doc: never
+# claim a review that did not happen). Slug derivation mirrors /before and
+# the /ship reviewer exactly (project root = nearest dir with CLAUDE.md).
+SPEC_ROOT="$DIR"
+while [[ "$SPEC_ROOT" != "/" && ! -f "$SPEC_ROOT/CLAUDE.md" ]]; do SPEC_ROOT=$(dirname "$SPEC_ROOT"); done
+[[ -f "$SPEC_ROOT/CLAUDE.md" ]] || SPEC_ROOT="$DIR"
+SPEC_FILE="$HOME/.claude/coderlap/specs/$(printf '%s' "$SPEC_ROOT" | tr '/' '-').md"
+SPEC=""; DRIFT_NOTE=""
+if [[ -f "$SPEC_FILE" ]]; then
+    SPEC_BASE=$(sed -n 's/^Base:[[:space:]]*//p' "$SPEC_FILE" | head -1)
+    SPEC_AGE=$(( $(date +%s) - $(stat -c %Y "$SPEC_FILE" 2>/dev/null || echo 0) ))
+    if [[ -z "$SPEC_BASE" ]]; then
+        DRIFT_NOTE="⚠ approved plan on file has no base commit stamp — drift NOT checked (reviewed for correctness only)."
+    elif (( SPEC_AGE < 0 || SPEC_AGE > 86400 )); then
+        # future mtime (clock skew / deliberately post-dated) is NOT fresh:
+        # a negative age must never read as "within 24h".
+        DRIFT_NOTE="⚠ approved plan on file is stale or has an invalid (future) timestamp — drift NOT checked (reviewed for correctness only)."
+    elif ! git -C "$SPEC_ROOT" merge-base --is-ancestor "$SPEC_BASE" HEAD 2>/dev/null; then
+        # Ancestor test runs in the SAME repo /before stamped Base: from — the
+        # repo containing SPEC_ROOT, not $DIR. They coincide in the normal case
+        # (CLAUDE.md at the git root); in a nested/monorepo layout where the two
+        # diverge, checking $DIR's HEAD against a Base: stamped from another repo
+        # would be meaningless — so the guard binds the check to SPEC_ROOT's repo
+        # (an unresolvable/non-repo SPEC_ROOT makes this fail → "drift NOT checked",
+        # the safe direction).
+        DRIFT_NOTE="⚠ approved plan's base commit is not an ancestor of HEAD (plan describes different work) — drift NOT checked (reviewed for correctness only)."
+    else
+        SPEC=$(cat "$SPEC_FILE")
+    fi
+else
+    DRIFT_NOTE="⚠ no approved plan on file (no /before spec for this repo) — drift NOT checked (reviewed for correctness only)."
+fi
+
+if [[ -n "$SPEC" ]]; then
+    PROMPT="You are the independent adversarial reviewer in a two-model workflow.
+An approved plan was written by the other AI (Claude) BEFORE this diff. Review
+the outgoing git diff on TWO axes: (1) DRIFT from the plan — steps missed,
+scope added that the plan never approved, silent changes; and (2) correctness
+bugs, edge cases, security, data integrity. Style nits do not count. Reply
+with a short numbered list of REAL findings only, tagging each [DRIFT] or
+[BUG]. If the diff faithfully implements the plan with no significant issue,
+reply exactly: LGTM
+
+--- APPROVED PLAN ---
+$SPEC
+--- END PLAN ---"
+else
+    PROMPT='You are the independent adversarial reviewer in a two-model workflow.
 Review this outgoing git diff for correctness bugs, edge cases, security,
 and data integrity. Style nits do not count. Reply with a short numbered
 list of REAL findings only. If nothing significant, reply exactly: LGTM'
+fi
 
 OUT=$(mktemp)
 trap 'rm -f "$OUT"' EXIT
@@ -219,6 +282,9 @@ if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
         MSG+=" — git $SUBCMD: incoming commits UNREVIEWED"
         CTX+=" $HIST_NOTE"
     fi
+    if [[ -n "$DRIFT_NOTE" ]]; then
+        CTX+=" $DRIFT_NOTE"
+    fi
     jq -n --arg msg "$MSG" --arg ctx "$CTX" '{
         systemMessage: $msg,
         hookSpecificOutput: {
@@ -239,6 +305,7 @@ never silently dropped). Then retry the commit — this exact diff will not
 be blocked again; if you change files, the new diff gets a fresh review."
 [[ -n "$TRUNC_NOTE" ]] && REASON+=$'\n\n'"$TRUNC_NOTE"
 [[ -n "$HIST_NOTE" ]] && REASON+=$'\n\n'"$HIST_NOTE"
+[[ -n "$DRIFT_NOTE" ]] && REASON+=$'\n\n'"$DRIFT_NOTE"
 jq -n --arg r "$REASON" '{
     hookSpecificOutput: {
         hookEventName: "PreToolUse",
