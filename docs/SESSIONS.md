@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-07-17 (design, NOT built) — two-brain workflow plan CONVERGED, ready to implement next session
+
+**Nothing coded. This is a design handoff — the plan is approved-in-principle by the owner and peer-reviewed by Codex to CONVERGED. Build it in a FRESH session (context gate fired at 77% before implementation started).**
+
+**What the next session builds** (full plan: `docs/planning/two-brain-workflow-plan.md`; convergence mechanism: `docs/planning/two-brain-convergence.md` — both durable in-repo). Make the CoderLap workflow "two-brain" — Claude (writer) + Codex (reviewer) collaborate at design AND review, Claude holds final authority:
+1. **`/before` design-phase Codex loop** (new step ~5.4, before presenting plan to user): Claude drafts → pipes plan to Codex via ONE serialized stdin payload (`{ printf instructions + delimiter; cat planfile; } | timeout 480 codex exec --skip-git-repo-check -s read-only -o "$OUT" -`) → adjudicates → re-sends after any substantive change → converges. NOT the current `/before` — an addition.
+2. **Immutable per-task spec**: `/before` OVERWRITES (never appends) `~/.claude/coderlap/specs/<slug>.md` with a stamped plan (task+ISO date+base commit); session-unique. Fixes a latent staleness bug in the existing spec design.
+3. **Drift-hunter gate**: `codex-review-gate.sh` PROMPT (hook lines 191-192) reads a FRESH spec and prepends it — "approved plan: X; find where the diff DEVIATED + any correctness/security/data bug." Stale/missing spec → fall back to current generic prompt AND say "drift not checked" (never claim a review that didn't happen).
+4. **`/ship` deny-handling → discussion** (`skills/ship/SKILL.md` step 7, lines ~303-308): on gate deny, Claude may push back to Codex ONCE with a rebuttal; strong hand, Claude's call final; outcome surfaced to user.
+5. **ADR-009** (two-brain design phase + immutable spec + drift gate + convergence mechanism); CHANGELOG [Unreleased]; NO version bump until release; NO new user commands (stable surface rule).
+
+**The convergence mechanism (owner's key architectural concern — fully resolved, see `docs/planning/two-brain-convergence.md`):** termination guaranteed by the ROUND CAP alone (NOT by "disagreements shrink" — Codex disproved that; the material set can grow). "100%" := empty *verified* unresolved-material set, NEVER consensus. Four labeled end states: CONVERGED / CAP-STOPPED / REVIEW-UNAVAILABLE / running. "Material" = impact threshold (correctness/security/scope), size-independent, ties→material. EVERY finding surfaced to user with classification+reasoning (Claude cannot hide a finding by mislabeling — Codex's sharpest catch). FIXED requires VERIFIED. Disagreement is a legal end state; user is final authority.
+
+**Live proof the loop works:** the plan (3 rounds, 7 findings, 6 fixed + 1 overruled — commit-range rejected: gate is PreToolUse, no commit exists yet) AND the convergence mechanism (4 rounds, 7 findings, all 7 accepted+fixed, ended in a genuine Codex LGTM = CONVERGED) were both run through the very loop being designed. This session IS the first field test, and it converged.
+
+**State evidence (verbatim):**
+```
+$ git status --short          # clean except the docs added THIS handoff step
+ (docs/planning/*.md + docs/SESSIONS.md — commit them, docs-only, gate passes)
+$ git log --oneline -2
+ad2064d docs: record v0.9.0 release run handoff
+e7ff058 Release v0.9.0 — codex-review-gate (4th anti-dumb-zone gate)
+$ cat VERSION      → 0.9.0        $ git tag | grep v0.9.0 → v0.9.0
+$ codex login status → authed     (plan-review calls confirmed working, rc=0)
+```
+Note: v0.9.0/0.8.0/0.7.0/0.6.0 GitHub releases still unpublished (gh not authed here) — owner runs `gh auth login` + `gh release create` per prior handoff. Independent of the two-brain work.
+
+**Next session:** fresh context → read `docs/planning/two-brain-workflow-plan.md` + `two-brain-convergence.md` → run `/before` to confirm the approach is still current → BUILD items 1-5 → it commits through the gate (drift-hunter is the first live test of the review half). Owner already approved the design in principle and green-lit the convergence mechanism.
+
+---
+
 ## 2026-07-17 (release run) — v0.9.0 shipped: codex-review-gate
 
 Owner said "approve" then "do it" (release). Chain ran clean:
