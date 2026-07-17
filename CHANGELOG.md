@@ -5,7 +5,7 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] — 2026-07-17
 
 ### Added
 - **`codex-review-gate`** (PreToolUse on Bash, 4th anti-dumb-zone gate). Implements the machine gate of the two-model workflow (owner's `AI-WORKFLOW-PLAN.md`): before any commit-creating git command runs, the outgoing working-tree diff is piped to Codex CLI for adversarial review (correctness, edge cases, security, data integrity). Findings block the commit once — the agent adjudicates, must surface rejected findings to the owner (transparency rule), and the same-diff retry passes via a 24h hash cache; a changed diff is reviewed afresh. Never blocks: non-commit commands, non-git dirs, empty or docs-only diffs. Codex missing/auth-lapsed/timeout → commit allowed WITH a loud warning (fail-loud, never fail-shut, never silent). Requires `codex` CLI logged in via ChatGPT sub. Kill switches: `CODEX_REVIEW_OFF=1` or `CODERV_GATES_OFF=1`. `install.sh` wires/unwires it like the other gates.
@@ -13,6 +13,9 @@ Versioning follows [SemVer](https://semver.org/).
 - **First live deny rounds hardened the gate further** (the gate reviewed its own commit across five deny rounds and kept finding real gaps — the fifth round's findings were all rejected with evidence, converging via the review cache; fixed before shipping, verified by a 14-case stubbed-codex suite): (1) `merge` / `cherry-pick` / `revert` / `rebase` integrate commits the gate cannot see — clean worktree now allows with a loud "NOT reviewed" warning instead of a silent skip, and dirty worktree labels every outcome (even LGTM) with "incoming commits UNREVIEWED". (2) `-C <dir>` repo resolution is tied to the commit-creating git invocation itself: `git -C /other status && git commit` no longer reviews the wrong repo, and `git -c k=v -C /repo commit` resolves correctly (flags may surround `-C`). (3) The 24h review cache keys on repo path + HEAD + diff, so an identical diff in a different repo is reviewed afresh. (4) The jq-missing warning triggers on all commit-creating subcommands, not just the literal word "commit". (5) Value-taking long flags in separate-argument form (`--git-dir X`, `--work-tree X`, …) no longer bypass detection (dir resolution for those exotic forms falls back to cd/cwd — documented). Accepted (documented in the hook header): compound commands committing in several repos review only the first matched invocation's repo; staged-hunk-with-reverted-worktree in mixed commits (previously adjudicated).
 - **`/ship` commits through the gate** (ADR-008). The scorecard pause is unchanged — nothing is committed before the user's "approve" — but after approval the agent runs `git commit` itself via Bash, so every /ship commit passes through `codex-review-gate`. The old "show the command, the user runs it" rule let commits typed in an outside terminal bypass the machine reviewer entirely.
 - `install.sh install_gate_hook` accepts an optional per-hook `statusMessage` (used by the codex gate: "Codex adversarial review...") so the installed settings entry matches the live one.
+
+### Why bump 0.8.0 → 0.9.0
+Minor bump: a new runtime component (the 4th gate hook + its Bash/PreToolUse wiring) plus a behavior change to `/ship` (it now runs the commit through the gate, ADR-008). All additive; existing installs upgrade non-breaking with `./install.sh --force`. The gate is opt-out (`CODEX_REVIEW_OFF=1` / `CODERV_GATES_OFF=1`) and degrades to a loud warning when Codex is absent, so an install without the `codex` CLI keeps working.
 
 ## [0.8.0] — 2026-07-15
 
