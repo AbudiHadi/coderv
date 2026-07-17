@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-07-17 (release run) — v0.9.0 shipped: codex-review-gate
+
+Owner said "approve" then "do it" (release). Chain ran clean:
+- VERSION 0.8.0 → 0.9.0; CHANGELOG `[Unreleased]` → `## [0.9.0] — 2026-07-17` + a "Why bump" note. Release-bump commit `e7ff058` went through the codex gate: 1 finding (**rejected, surfaced**) — "keep an empty `[Unreleased]` heading above 0.9.0"; rejected because the repo's actual convention (verified against shipped 8e3ac12) keeps NO standing Unreleased heading, and `release.sh` line 34-35 requires the CHANGELOG top entry to equal VERSION exactly, which an Unreleased heading would break.
+- `./release.sh --check` → all 7 gates green. `./release.sh` → tagged v0.9.0, pushed branch+tag (SSH, `8e3ac12..e7ff058`), website site.ts synced to 0.9.0, rebuilt, committed (`coderv-docs` `e5a7463`).
+- **State evidence (verbatim):**
+```
+$ git log --oneline -1 && cat VERSION
+e7ff058 Release v0.9.0 — codex-review-gate (4th anti-dumb-zone gate)
+0.9.0
+$ git tag | grep v0.9.0        → v0.9.0
+$ grep version .../site.ts     → version: '0.9.0'
+$ git -C coderv-docs log -1    → e5a7463 v0.9.0: site sync
+```
+
+**Still needs a human (gh not authed in this session):** publish GitHub releases for v0.9.0 AND the backlog tags v0.6.0/v0.7.0 (tags exist, releases never created). Commands are in the release-run chat reply; run `gh auth login` first.
+
+**Next session:** nothing outstanding on the gate itself — it's shipped and dogfooding. Owner still to confirm ADR-008 (logged adjustable). v0.8.0 GitHub release also never published — fold it into the same catch-up if desired.
+
+---
+
 ## 2026-07-17 (commit approval) — gate denied its own commit twice; 4 fixes, 2 rejections, then shipped
 
 Owner said "approve" → ran the commit per ADR-008; the codex gate live-fire denied FIVE rounds (working as designed — each fix changed the diff, triggering re-review; the all-rejected fifth round converged via the cache and the commit landed). Adjudicated 15 findings:
