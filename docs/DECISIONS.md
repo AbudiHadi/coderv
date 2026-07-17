@@ -33,6 +33,87 @@ What did we decide?
 
 ---
 
+## ADR-011: The installer completes the two-brain setup — detect Codex, ship portable reviewer rules, report honestly
+
+**Date:** 2026-07-17
+**Status:** accepted
+**Decider(s):** owner (asked for "one smart install that finds Codex and completes everything"; chose the non-destructive options), Claude (implementer)
+
+### Context
+Installing the toolkit set up the *Claude* half of the two-brain workflow
+(skills + the codex-review-gate hook) but left the *second brain* half manual:
+the installer never checked whether the Codex CLI was actually present, and
+never installed the reviewer rules Codex reads (`~/.codex/AGENTS.md`) — that
+file existed only on the author's machine and was VPS-specific (referenced
+`/home/appuser`, `SERVER-MAP.md`, "on this VPS"), so it could not ship
+verbatim. Result: a downloader got a gate that fails open with a warning on
+every commit, with no signal about *why* or how to enable the real review, and
+an un-instructed reviewer even after installing Codex.
+
+### Decision
+Make `install.sh` a single smart install that completes the workflow:
+1. **Detect Codex** — `codex_state()` echoes `absent` / `installed` (found but
+   not signed in) / `authed`.
+2. **Ship a portable reviewer-rules template** — `templates/codex-AGENTS.md`,
+   the universal role + working discipline + hard rules (never commit/push,
+   never touch prod infra, sibling-pattern, evidence-driven, no secrets,
+   bilingual-aware) with the VPS-specific environment notes rewritten
+   generically. The author's live `~/.codex/AGENTS.md` is left as-is.
+3. **Install the rules non-destructively** — create `~/.codex/AGENTS.md` from
+   the template if absent; if it already exists, **append our rules inside a
+   `<!-- claude-docs-toolkit:agents START/END -->` marked block** (idempotent —
+   skipped when the marker is present), never overwriting the user's content.
+   `--uninstall` matches markers by exact line (never substring) and removes the
+   block **line-based**: it drops only the START..END lines (plus an `OWNS-FILE`
+   sentinel when present) and keeps every other line verbatim — so user edits
+   made after install, above OR below the block, always survive. The whole file
+   is removed only when the `OWNS-FILE` sentinel (written solely on fresh create)
+   proves the toolkit made it AND nothing else remains — so a pre-existing empty
+   file, or a toolkit-created file the user later wrote into, is never destroyed.
+   Malformed/duplicated/markerless files are left untouched. The closing status
+   reports reviewer-rules state honestly for every Codex state and never claims
+   rules are installed when the template was missing.
+
+   **Rejected finding (transparency rule): line-based removal normalises CRLF→LF
+   and adds a final newline on a file that lacked one.** The gate flagged this as
+   "not byte-for-byte." Rejected in favour of the more important property: a
+   byte-exact (length-truncate) design was tried and **destroyed user edits made
+   after install** — the common, damaging case. CRLF / no-final-newline in a
+   `~/.codex/AGENTS.md` is rare, and normalising to LF-with-final-newline is
+   correct POSIX text anyway. We optimise for "never lose a user's edits" over
+   "preserve exotic byte encodings", and accept the normalisation.
+4. **Install the gate regardless of Codex state** (no regression — it fails
+   open harmlessly) and **print an honest status line**: two-brain ON (authed),
+   "run `codex login`" (installed-not-authed), or "second brain OFF — run
+   `npm i -g @openai/codex && codex login`" (absent).
+
+### Alternatives considered
+- **Marked-block append + gate-always + honest message** (chosen) — completes
+  the setup without ever clobbering a user's own Codex rules (reuses the
+  existing installer marker idiom) and without a second install run; the status
+  line turns the silent fail-open into a clear upgrade path.
+- **Create-only-if-absent** — leaves users who already have an `AGENTS.md` with
+  an incomplete setup and a manual step; rejected for "completes everything".
+- **Installer runs `npm i -g @openai/codex` for the user** — most hands-off but
+  makes the installer install third-party software (network + npm surface).
+  Rejected: the installer never installs third-party software (kept out of
+  scope); it points, it doesn't fetch.
+
+### Consequences
+- Positive: one `install.sh` run now stands up the whole two-brain workflow (or
+  clearly explains the one command to finish it); the reviewer is actually
+  instructed; existing user files are never harmed (verified across create /
+  append / idempotent-rerun / uninstall-keeps-content / untouched-file cases).
+- Negative / trade-off: the shipped reviewer rules are generic, so a user with
+  a specialised environment still tailors their own `AGENTS.md` (the marked
+  block coexists with their edits by design). Codex detection is a point-in-time
+  check — installing Codex later needs no re-run for the *rules* (already in
+  place), only `codex login` to flip the gate on.
+- Revisit if: hosts beyond Codex gain a review-gate equivalent (generalise the
+  reviewer-rules install), or users ask the installer to fetch Codex itself.
+
+---
+
 ## ADR-010: Bounded convergence extended to the commit path — the gate-deny anti-loop rule lives in the workflow, not in memory
 
 **Date:** 2026-07-17

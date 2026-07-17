@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Claude Docs Toolkit installer
-# Copies skills to one or more host CLI skill directories, and installs the
-# coderv-router hook (Claude Code only).
+# Copies skills to one or more host CLI skill directories, installs the
+# Claude-Code hooks/gates, and completes the two-brain workflow: it detects
+# whether the Codex CLI is installed + authed, installs the reviewer rules
+# Codex reads (~/.codex/AGENTS.md, never clobbering an existing file), and
+# reports honestly which mode the machine ended up in (two-brain ON, Codex
+# found-but-not-authed, or single-brain with a one-line enable path).
 #
 # Hosts:
 #   --claude  (default)  ~/.claude/skills/
@@ -71,7 +75,9 @@ for arg in "$@"; do
 Usage: ./install.sh [TARGET...] [--force] [--uninstall]
 
 Targets (default: --claude):
-  --claude     Install to ~/.claude/skills/  (also installs coderv-router hook)
+  --claude     Install to ~/.claude/skills/  (also installs hooks + gates, and
+               completes the two-brain setup: reviewer rules to ~/.codex/AGENTS.md
+               + an honest report of whether Codex is installed/authed)
   --codex      Install to ~/.codex/skills/   (skills only — no hook system)
   --gemini     Install to ~/.gemini/skills/  (skills only — no hook system)
   --all        Install to all three
@@ -496,6 +502,145 @@ PY
   fi
 }
 
+# Detect the Codex CLI's state, so setup can complete the two-brain workflow
+# or tell the user exactly how to enable it. Echoes one of:
+#   absent | installed | authed
+codex_state() {
+  command -v codex >/dev/null 2>&1 || { echo "absent"; return; }
+  if codex login status >/dev/null 2>&1; then echo "authed"; else echo "installed"; fi
+}
+
+# Install the portable reviewer rules to ~/.codex/AGENTS.md so Codex knows its
+# role in the two-brain workflow. NEVER overwrites a user's existing file:
+# if the file exists we append our rules inside a marked block (idempotent —
+# skipped when the marker is already present); if absent we create it from the
+# template. The marker lets --uninstall remove exactly our block and nothing
+# else. Args: none. Uses AGENTS_TEMPLATE + CODEX_HOME.
+AGENTS_TEMPLATE="$SCRIPT_DIR/templates/codex-AGENTS.md"
+AGENTS_START="<!-- claude-docs-toolkit:agents START -->"
+AGENTS_END="<!-- claude-docs-toolkit:agents END -->"
+# Written as the FIRST line only when the installer CREATED the whole file (no
+# pre-existing file). It is what lets --uninstall tell "a file we made" from "a
+# pre-existing (possibly empty) file we appended a block to" — the two are
+# otherwise byte-identical. Absent on the append path.
+AGENTS_OWNED="<!-- claude-docs-toolkit:agents OWNS-FILE -->"
+
+# Emit the reviewer rules wrapped in our START/END marked block, to stdout.
+# ALWAYS marker-wrapped — for both create and append — so ownership is proven
+# by the marker, never by a byte-compare heuristic. Args: none.
+emit_codex_block() {
+  printf '%s\n' "$AGENTS_START"
+  printf '%s\n' "<!-- Managed by claude-docs-toolkit. Edit above/below, not inside; --uninstall removes this block. -->"
+  cat "$AGENTS_TEMPLATE"
+  printf '%s\n' "$AGENTS_END"
+}
+
+# Set to 1 by install_codex_rules when the reviewer rules are in place, so the
+# closing status line never claims rules exist when the template was missing.
+CODEX_RULES_INSTALLED=0
+
+install_codex_rules() {
+  if [[ ! -f "$AGENTS_TEMPLATE" ]]; then
+    echo -e "    ${YELLOW}skipped${NC} reviewer rules (templates/codex-AGENTS.md not in toolkit)"
+    return 0
+  fi
+  CODEX_RULES_INSTALLED=1
+  local dst="$CODEX_HOME/AGENTS.md"
+  mkdir -p "$CODEX_HOME"
+
+  if [[ ! -f "$dst" ]]; then
+    # We are creating the whole file: stamp the OWNS-FILE sentinel first so
+    # uninstall knows it may remove the file entirely (a pre-existing empty
+    # file we merely appended to must NOT be deleted — hence the sentinel).
+    { printf '%s\n' "$AGENTS_OWNED"; emit_codex_block; } > "$dst"
+    echo -e "    ${GREEN}installed${NC} reviewer rules → $dst"
+    return 0
+  fi
+
+  # File exists — never clobber it. Append our rules as a marked block, once.
+  # Exact-line match so user prose mentioning the marker text isn't misread.
+  if grep -qxF "$AGENTS_START" "$dst" 2>/dev/null; then
+    echo -e "    ${YELLOW}exists${NC}  reviewer rules already present in $dst (marked block)"
+    return 0
+  fi
+  # Ensure the file ends in a newline so the START marker lands on its own line.
+  # Uninstall removes the START..END lines (block) but preserves every other
+  # line — including anything the user adds later, above or below the block —
+  # so the removal is line-exact, not byte-exact. (A rare CRLF file is
+  # normalised to LF and a missing final newline is added; see ADR-011 — that
+  # trade-off is accepted in favour of never destroying user edits.)
+  [[ -s "$dst" && -n "$(tail -c1 "$dst")" ]] && printf '\n' >> "$dst"
+  emit_codex_block >> "$dst"
+  echo -e "    ${GREEN}appended${NC} reviewer rules (marked block) → $dst"
+}
+
+# Remove ONLY our marked block from ~/.codex/AGENTS.md, leaving the user's own
+# content intact. If we originally created the whole file (it is exactly our
+# template with no user edits) remove it entirely. Args: none.
+uninstall_codex_rules() {
+  local dst="$CODEX_HOME/AGENTS.md" rc
+  [[ -f "$dst" ]] || return 0
+
+  # Exact-line match (grep -x), never substring: user prose that merely mentions
+  # the marker text must not be read as our block.
+  if grep -qxF "$AGENTS_START" "$dst" 2>/dev/null || grep -qxF "$AGENTS_END" "$dst" 2>/dev/null; then
+    # Strip our block ONLY if the markers are well-formed: exactly one START
+    # line, exactly one END line, START before END. Any other shape (missing
+    # partner, wrong order, duplicated markers) is hand-edited/corrupted —
+    # removing it blindly could eat the user's own content, so Python exits
+    # nonzero and we leave the file untouched with a warning. All marker checks
+    # live in one place (Python) so bash and Python can't disagree.
+    if python3 - "$dst" "$AGENTS_START" "$AGENTS_END" "$AGENTS_OWNED" <<'PY'
+import sys, os
+path, start, end, owned = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+lines = open(path).read().splitlines(keepends=True)
+# Exact-line match: a marker is a line equal to the marker text (ignoring only
+# its trailing newline), NOT a line that merely contains it.
+starts = [i for i, ln in enumerate(lines) if ln.rstrip("\n") == start]
+ends   = [i for i, ln in enumerate(lines) if ln.rstrip("\n") == end]
+# Well-formed = exactly one START line, one END line, START before END. Any
+# other shape (missing partner, wrong order, duplicated markers) is hand-
+# edited/corrupted — removing it blindly could eat user content, so exit
+# nonzero and the caller leaves the file untouched.
+if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+    sys.exit(3)
+s0, e0 = starts[0], ends[0]
+# The OWNS-FILE sentinel (written only on fresh create) sits on the line just
+# above START; remove it together with the block when present.
+has_sentinel = s0 >= 1 and lines[s0 - 1].rstrip("\n") == owned
+lo = s0 - 1 if has_sentinel else s0
+# Line-based removal: drop the block (and sentinel) lines, KEEP every other
+# line verbatim — including anything the user added later, above OR below the
+# block. This preserves post-install edits (the byte-length-truncate approach
+# did not); the trade-off is CRLF→LF / added-final-newline on exotic files,
+# accepted per ADR-011.
+out = lines[:lo] + lines[e0 + 1:]
+# Remove the whole file ONLY when we created it (sentinel) AND nothing else
+# remains. A pre-existing file (no sentinel) or one the user wrote into is
+# always kept.
+if has_sentinel and not out:
+    os.remove(path); sys.exit(10)   # 10 = file removed (was ours, now empty)
+open(path, "w").writelines(out)
+sys.exit(0)
+PY
+    then
+      echo -e "    ${GREEN}removed${NC} reviewer-rules block from $dst"
+    else
+      rc=$?   # capture BEFORE any command (incl. `local`) resets $?
+      if [[ "$rc" -eq 10 ]]; then
+        echo -e "    ${GREEN}removed${NC} reviewer rules $dst (was toolkit-created)"
+      else
+        echo -e "    ${YELLOW}skipped${NC} $dst — reviewer-rules markers are malformed/hand-edited"
+        echo -e "             (remove the block manually to avoid data loss)"
+      fi
+    fi
+    return 0
+  fi
+
+  # No toolkit marker at all → a file the user fully owns. Never touch it.
+  echo -e "    ${YELLOW}skipped${NC} $dst (no toolkit marker — leaving your file untouched)"
+}
+
 # ---------- Uninstall path ----------
 if [[ "$UNINSTALL" -eq 1 ]]; then
   echo -e "${YELLOW}Uninstalling…${NC}"
@@ -507,6 +652,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     uninstall_gate_hook "codex-review-gate.sh" "PreToolUse"
     uninstall_gate_hook "compact-rehydrate.sh" "SessionStart"
     uninstall_gate_hook "context-gate.sh"      "Stop"
+    uninstall_codex_rules
   fi
   if [[ "$TARGET_CODEX" -eq 1 ]]; then
     uninstall_skills_for_host "Codex CLI" "$CODEX_HOME/skills"
@@ -530,6 +676,12 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
   install_gate_hook "codex-review-gate.sh" "PreToolUse"   "Bash"                              240 "Codex adversarial review..."
   install_gate_hook "compact-rehydrate.sh" "SessionStart" "compact"                           10
   install_gate_hook "context-gate.sh"      "Stop"         ""                                  15
+
+  # Complete the second brain: install the reviewer rules Codex reads. This
+  # runs regardless of whether Codex is installed yet — the rules sit ready
+  # for when it is, and the honest status line below says which mode you got.
+  echo -e "${BLUE}→ Codex reviewer rules${NC} (the second brain)"
+  install_codex_rules
 fi
 
 if [[ "$TARGET_CODEX" -eq 1 ]]; then
@@ -542,6 +694,39 @@ fi
 
 echo
 echo -e "${GREEN}Done.${NC}"
+
+# Two-brain status — honest about which mode this machine got. Only meaningful
+# when the Claude target installed the gate + reviewer rules.
+if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
+  echo
+  case "$(codex_state)" in
+    authed)
+      echo -e "${GREEN}Two-brain workflow: ON.${NC} Codex is installed and authed — the"
+      echo "codex-review-gate will review every commit adversarially."
+      ;;
+    installed)
+      echo -e "${YELLOW}Two-brain workflow: Codex found but not signed in.${NC}"
+      echo "Run  codex login  to turn on adversarial review. Until then commits"
+      echo "pass through single-brain (the gate fails open with a warning)."
+      ;;
+    absent)
+      echo -e "${YELLOW}Two-brain workflow: second brain OFF.${NC} Codex CLI isn't installed,"
+      echo "so commits run single-brain now (the gate fails open harmlessly)."
+      echo "To enable adversarial review:"
+      echo -e "    ${BLUE}npm i -g @openai/codex && codex login${NC}"
+      ;;
+  esac
+  # Reviewer-rules status applies to EVERY Codex state — the reviewer needs its
+  # rules whether or not Codex is authed. Never claim they are installed when
+  # the template was missing (CODEX_RULES_INSTALLED stays 0 in that case).
+  if [[ "$CODEX_RULES_INSTALLED" -eq 1 ]]; then
+    echo "Reviewer rules: in place at ~/.codex/AGENTS.md."
+  else
+    echo -e "${RED}Reviewer rules: NOT installed${NC} — templates/codex-AGENTS.md was"
+    echo "missing from the toolkit; re-run from a complete checkout, or Codex will"
+    echo "review without the two-brain rules."
+  fi
+fi
 echo
 echo "Seven commands (you only need to remember the first):"
 echo "  /coderv <request> — The front door: classifies your request and drives the pipeline"
