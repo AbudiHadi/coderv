@@ -169,117 +169,32 @@ uninstall_skills_for_host() {
   done
 }
 
-# Install the coderv-router hook into Claude Code settings.json. Idempotent.
-install_router_hook() {
-  if [[ ! -f "$HOOKS_SRC/coderv-router.sh" ]]; then
-    echo -e "    ${YELLOW}skipped${NC} hook (hooks/coderv-router.sh not in toolkit)"
-    return 0
-  fi
-
-  local hook_dst="$CLAUDE_HOME/hooks/coderv-router.sh"
-  mkdir -p "$CLAUDE_HOME/hooks"
-  cp "$HOOKS_SRC/coderv-router.sh" "$hook_dst"
-  chmod +x "$hook_dst"
-  echo -e "    ${GREEN}installed${NC} hook → $hook_dst"
-
-  # Wire into settings.json (create or merge — never clobber other keys).
-  local settings="$CLAUDE_HOME/settings.json"
-  if [[ ! -f "$settings" ]]; then
-    echo '{}' > "$settings"
-  fi
-
-  python3 - "$settings" "$hook_dst" <<'PY'
-import json, sys
-settings_path, hook_path = sys.argv[1], sys.argv[2]
-with open(settings_path) as f:
-    try:
-        data = json.load(f)
-    except json.JSONDecodeError:
-        print("    ERROR: settings.json is not valid JSON — leaving it alone.")
-        sys.exit(0)
-if not isinstance(data, dict):
-    print("    ERROR: settings.json root is not an object — leaving it alone.")
-    sys.exit(0)
-
-hooks = data.setdefault("hooks", {})
-ups = hooks.setdefault("UserPromptSubmit", [])
-
-# Already wired?
-for entry in ups:
-    for h in entry.get("hooks", []):
-        if h.get("command") == hook_path:
-            print("    already wired into settings.json (no change)")
-            sys.exit(0)
-
-ups.append({
-    "hooks": [
-        {"type": "command", "command": hook_path, "timeout": 10}
-    ]
-})
-with open(settings_path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-print("    wired into settings.json (UserPromptSubmit)")
-PY
-}
-
-# Install the project-context SessionStart hook into Claude Code settings.json.
-# Same idempotent merge idiom as install_router_hook.
-install_context_hook() {
-  if [[ ! -f "$HOOKS_SRC/project-context.sh" ]]; then
-    echo -e "    ${YELLOW}skipped${NC} hook (hooks/project-context.sh not in toolkit)"
-    return 0
-  fi
-
-  local hook_dst="$CLAUDE_HOME/hooks/project-context.sh"
-  mkdir -p "$CLAUDE_HOME/hooks"
-  cp "$HOOKS_SRC/project-context.sh" "$hook_dst"
-  chmod +x "$hook_dst"
-  echo -e "    ${GREEN}installed${NC} hook → $hook_dst"
-
-  local settings="$CLAUDE_HOME/settings.json"
-  if [[ ! -f "$settings" ]]; then
-    echo '{}' > "$settings"
-  fi
-
-  python3 - "$settings" "$hook_dst" <<'PY'
-import json, sys
-settings_path, hook_path = sys.argv[1], sys.argv[2]
-with open(settings_path) as f:
-    try:
-        data = json.load(f)
-    except json.JSONDecodeError:
-        print("    ERROR: settings.json is not valid JSON — leaving it alone.")
-        sys.exit(0)
-if not isinstance(data, dict):
-    print("    ERROR: settings.json root is not an object — leaving it alone.")
-    sys.exit(0)
-
-hooks = data.setdefault("hooks", {})
-starts = hooks.setdefault("SessionStart", [])
-
-for entry in starts:
-    for h in entry.get("hooks", []):
-        if h.get("command") == hook_path:
-            print("    already wired into settings.json (no change)")
-            sys.exit(0)
-
-starts.append({
-    "hooks": [
-        {"type": "command", "command": hook_path, "timeout": 15,
-         "statusMessage": "Loading project map..."}
-    ]
-})
-with open(settings_path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-print("    wired into settings.json (SessionStart)")
-PY
-}
+# ---------- The gate roster — single source of truth ----------
+# Every Claude-side hook the toolkit wires into settings.json, in the order it
+# should appear. Both the install AND uninstall paths iterate THIS list, so a
+# gate can never be added on one side and forgotten on the other (the bug this
+# array exists to kill). One row per hook, '^'-separated — '^' because it is a
+# non-whitespace char (so `read` keeps empty fields instead of collapsing them,
+# which a tab would) and it appears in no field (the grounding matcher contains
+# '|', ruling '|' out):
+#
+#   script ^ event ^ matcher ("" = none) ^ timeout_seconds ^ statusMessage ("" = none)
+#
+# The router (UserPromptSubmit) and project-context (SessionStart) hooks are
+# plain rows here — install_gate_hook already handles every field they need, so
+# they need no bespoke installer. Order matters: it fixes the key-insertion
+# order of settings.json (UserPromptSubmit, SessionStart, PreToolUse, Stop).
+GATE_ROSTER=(
+  "coderv-router.sh^UserPromptSubmit^^10^"
+  "project-context.sh^SessionStart^^15^Loading project map..."
+  "grounding-gate.sh^PreToolUse^Edit|Write|MultiEdit|NotebookEdit^10^"
+  "codex-review-gate.sh^PreToolUse^Bash^240^Codex adversarial review..."
+  "compact-rehydrate.sh^SessionStart^compact^10^"
+  "context-gate.sh^Stop^^15^"
+)
 
 # Install one gate hook + wire it into settings.json under any event/matcher.
-# Args: script_name, event, matcher ("" = none), timeout_seconds
-# Same idempotent merge idiom as install_router_hook.
+# Args: script_name, event, matcher ("" = none), timeout_seconds, statusMessage ("" = none)
 install_gate_hook() {
   local script="$1" event="$2" matcher="$3" timeout="$4" status_msg="${5:-}"
   if [[ ! -f "$HOOKS_SRC/$script" ]]; then
@@ -386,112 +301,6 @@ if removed:
         hooks[event] = new_entries
     else:
         hooks.pop(event, None)
-    if not hooks:
-        data.pop("hooks", None)
-    with open(settings_path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    print("    removed entry from settings.json")
-PY
-  fi
-}
-
-# Uninstall the project-context hook + remove settings.json entry.
-uninstall_context_hook() {
-  local hook_dst="$CLAUDE_HOME/hooks/project-context.sh"
-  if [[ -f "$hook_dst" ]]; then
-    if grep -q "claude-docs-toolkit" "$hook_dst" 2>/dev/null; then
-      rm -f "$hook_dst"
-      echo -e "    ${GREEN}removed${NC} hook script"
-    else
-      echo -e "    ${YELLOW}skipped${NC} hook script (not from this toolkit)"
-    fi
-  fi
-
-  local settings="$CLAUDE_HOME/settings.json"
-  if [[ -f "$settings" ]]; then
-    python3 - "$settings" "$hook_dst" <<'PY'
-import json, sys
-settings_path, hook_path = sys.argv[1], sys.argv[2]
-with open(settings_path) as f:
-    try:
-        data = json.load(f)
-    except json.JSONDecodeError:
-        sys.exit(0)
-if not isinstance(data, dict):
-    sys.exit(0)
-hooks = data.get("hooks", {})
-starts = hooks.get("SessionStart", [])
-new_starts = []
-removed = False
-for entry in starts:
-    keep = []
-    for h in entry.get("hooks", []):
-        if h.get("command") == hook_path:
-            removed = True
-            continue
-        keep.append(h)
-    if keep:
-        entry = dict(entry, hooks=keep)
-        new_starts.append(entry)
-if removed:
-    if new_starts:
-        hooks["SessionStart"] = new_starts
-    else:
-        hooks.pop("SessionStart", None)
-    if not hooks:
-        data.pop("hooks", None)
-    with open(settings_path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    print("    removed entry from settings.json")
-PY
-  fi
-}
-
-# Uninstall the router hook + remove settings.json entry.
-uninstall_router_hook() {
-  local hook_dst="$CLAUDE_HOME/hooks/coderv-router.sh"
-  if [[ -f "$hook_dst" ]]; then
-    if grep -q "claude-docs-toolkit" "$hook_dst" 2>/dev/null; then
-      rm -f "$hook_dst"
-      echo -e "    ${GREEN}removed${NC} hook script"
-    else
-      echo -e "    ${YELLOW}skipped${NC} hook script (not from this toolkit)"
-    fi
-  fi
-
-  local settings="$CLAUDE_HOME/settings.json"
-  if [[ -f "$settings" ]]; then
-    python3 - "$settings" "$hook_dst" <<'PY'
-import json, sys
-settings_path, hook_path = sys.argv[1], sys.argv[2]
-with open(settings_path) as f:
-    try:
-        data = json.load(f)
-    except json.JSONDecodeError:
-        sys.exit(0)
-if not isinstance(data, dict):
-    sys.exit(0)
-hooks = data.get("hooks", {})
-ups = hooks.get("UserPromptSubmit", [])
-new_ups = []
-removed = False
-for entry in ups:
-    keep = []
-    for h in entry.get("hooks", []):
-        if h.get("command") == hook_path:
-            removed = True
-            continue
-        keep.append(h)
-    if keep:
-        entry = dict(entry, hooks=keep)
-        new_ups.append(entry)
-if removed:
-    if new_ups:
-        hooks["UserPromptSubmit"] = new_ups
-    else:
-        hooks.pop("UserPromptSubmit", None)
     if not hooks:
         data.pop("hooks", None)
     with open(settings_path, "w") as f:
@@ -646,12 +455,10 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   echo -e "${YELLOW}Uninstalling…${NC}"
   if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
     uninstall_skills_for_host "Claude Code" "$CLAUDE_HOME/skills"
-    uninstall_router_hook
-    uninstall_context_hook
-    uninstall_gate_hook "grounding-gate.sh"    "PreToolUse"
-    uninstall_gate_hook "codex-review-gate.sh" "PreToolUse"
-    uninstall_gate_hook "compact-rehydrate.sh" "SessionStart"
-    uninstall_gate_hook "context-gate.sh"      "Stop"
+    for row in "${GATE_ROSTER[@]}"; do
+      IFS='^' read -r script event _ _ _ <<<"$row"
+      uninstall_gate_hook "$script" "$event"
+    done
     uninstall_codex_rules
   fi
   if [[ "$TARGET_CODEX" -eq 1 ]]; then
@@ -667,15 +474,11 @@ fi
 # ---------- Install path ----------
 if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
   install_skills_for_host "Claude Code" "$CLAUDE_HOME/skills"
-  echo -e "${BLUE}→ coderv-router hook${NC} (Claude Code only)"
-  install_router_hook
-  echo -e "${BLUE}→ project-context hook${NC} (Claude Code only)"
-  install_context_hook
-  echo -e "${BLUE}→ anti-dumb-zone gates${NC} (Claude Code only)"
-  install_gate_hook "grounding-gate.sh"    "PreToolUse"   "Edit|Write|MultiEdit|NotebookEdit" 10
-  install_gate_hook "codex-review-gate.sh" "PreToolUse"   "Bash"                              240 "Codex adversarial review..."
-  install_gate_hook "compact-rehydrate.sh" "SessionStart" "compact"                           10
-  install_gate_hook "context-gate.sh"      "Stop"         ""                                  15
+  echo -e "${BLUE}→ hooks + anti-dumb-zone gates${NC} (Claude Code only)"
+  for row in "${GATE_ROSTER[@]}"; do
+    IFS='^' read -r script event matcher timeout status_msg <<<"$row"
+    install_gate_hook "$script" "$event" "$matcher" "$timeout" "$status_msg"
+  done
 
   # Complete the second brain: install the reviewer rules Codex reads. This
   # runs regardless of whether Codex is installed yet — the rules sit ready
