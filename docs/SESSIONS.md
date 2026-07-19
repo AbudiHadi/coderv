@@ -22,7 +22,7 @@ cd /root/claude-docs-toolkit
 ```
 **v0.11.0 RELEASED 2026-07-19** (architecture-audit shape, commit `c3db615`, tagged + pushed + website synced + **GitHub Release page live**) — newest entry below. Queued next:
 - ~~`gh auth login`~~ — DONE 2026-07-19 (authed as AbudiHadi via OAuth device flow). ~~`gh release create v0.11.0`~~ — DONE, release page live + marked Latest.
-- **v0.10.1 + v0.10.0 release pages: OWNER MUST RUN THE TWO `!` COMMANDS** (see later-12 entry) — the auto-mode classifier refuses to let the agent publish releases the user didn't type, and refuses agent-written allow rules. Alternative: owner adds `Bash(gh release create *)` via `/permissions`, then the agent can also backfill v0.6.0–v0.9.0 (tagged, no release pages).
+- ~~v0.10.1 + v0.10.0 release pages~~ — DONE 2026-07-19: owner added `Bash(gh release create *)` via `/permissions`; ALL nine missing pages backfilled (v0.3.9, v0.4.0, v0.4.1, v0.6.0–v0.10.1) with CHANGELOG notes, `--latest=false`, titled in the existing `vX.Y.Z — descriptor` style. Every tag now has a release page; v0.11.0 stays Latest.
 - ~~Owner decision parked: `/root/coderv-brief.md`~~ — RESOLVED 2026-07-19: owner approved publish; refreshed to v0.11.0, reviewer-corrected, committed as `docs/coderv-brief.md` (`0874f1b`, pushed).
 - Parked (not urgent): fold router/context installers into the generic `install_gate_hook` (arch candidate #1; #2 gate-roster was fixed in `cada876`).
 - ~~Housekeeping: rotate SESSIONS.md~~ — DONE 2026-07-19: 8 entries (2026-07-19 later-2 back through 2026-07-17 release run) moved to SESSIONS-ARCHIVE.md, newest 10 kept.
