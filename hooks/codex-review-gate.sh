@@ -52,6 +52,44 @@
 set -o pipefail
 export LC_ALL=C
 
+# --- Live-loop event log (PURE side-effect) -------------------------------
+# Appends one JSON object per line to loop-events.jsonl so the optional
+# coderv-loop dashboard can stream the real Claude<->Codex exchange live.
+# CONTRACT: this MUST NEVER influence the gate's allow/deny decision, never
+# error the hook, and never write when jq is absent. Every call is wrapped so
+# a failed write (full disk, bad perms) is swallowed — the gate outranks the
+# log. Honour the same kill switches as the gate itself: no gate run, no log.
+LOOP_LOG="${CODERV_LOOP_LOG:-$HOME/.claude/coderlap/loop-events.jsonl}"
+log_event() {
+    # log_event <actor> <type> <json-payload-object>   (payload defaults to {})
+    [[ "${CODERV_LOG_OFF:-0}" == "1" ]] && return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local actor="$1" etype="$2" payload="${3:-{\}}"
+    local line
+    line=$(jq -cn --argjson ts "$(date +%s)" \
+               --arg repo "${REPO_ID:-${DIR:-}}" \
+               --arg actor "$actor" \
+               --arg type "$etype" \
+               --argjson payload "$payload" \
+               '{ts:$ts, repo:$repo, actor:$actor, type:$type, payload:$payload}' 2>/dev/null) || return 0
+    {
+        mkdir -p "$(dirname "$LOOP_LOG")" 2>/dev/null || true
+        # flock serialises concurrent gate runs so two large lines never
+        # interleave (viewer relies on one valid JSON object per line). The
+        # lock is BOUNDED (-w 1): a hung lock holder must never stall the
+        # hook — the gate's pure-side-effect contract outranks log ordering.
+        # On timeout (or no flock binary) fall through to a plain append; a
+        # rare interleave is preferable to the gate blocking on its own log.
+        if command -v flock >/dev/null 2>&1 &&
+           flock -w 1 "$LOOP_LOG.lock" bash -c 'printf "%s\n" "$1" >> "$2"' _ "$line" "$LOOP_LOG"; then
+            :
+        else
+            printf '%s\n' "$line" >> "$LOOP_LOG"
+        fi
+    } 2>/dev/null || true
+    return 0
+}
+
 [[ "${CODERV_GATES_OFF:-0}" == "1" ]] && exit 0
 [[ "${CODEX_REVIEW_OFF:-0}" == "1" ]] && exit 0
 
@@ -171,7 +209,22 @@ HASH=$(sha256sum <<<"${REPO_ID}@${BASE}${NL}${DIFF}" | cut -d' ' -f1)
 CACHE="$HOME/.claude/coderlap/codex-reviewed"
 mkdir -p "$CACHE"
 find "$CACHE" -type f -mmin +1440 -delete 2>/dev/null
-[[ -f "$CACHE/$HASH" ]] && exit 0
+# Already reviewed once (the adjudicate-then-retry of an IDENTICAL diff): the
+# commit is allowed to proceed. Log the successful retry so the dashboard
+# shows the loop closing — without it, the viewer would freeze on the denial
+# and never show the commit landing. REPO_ID isn't computed yet on this early
+# path, so stamp repo from DIR.
+if [[ -f "$CACHE/$HASH" ]]; then
+    REPO_ID=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
+    # Emit the writer's beat before the cached outcome so a same-diff retry
+    # still shows a commit_attempt (wire-pulse) on the dashboard — without it
+    # the retry would land with no visible writer turn, only a bare outcome.
+    log_event claude commit_attempt "$(jq -cn \
+        --arg sub "$SUBCMD" --argjson bytes "${#DIFF}" \
+        '{subcmd:$sub, diff_bytes:$bytes, cached:true}')"
+    log_event system outcome "$(jq -cn '{result:"passed", cached:true}')"
+    exit 0
+fi
 
 # Fail LOUD, not shut: a broken reviewer must never lock the owner out.
 command -v codex >/dev/null 2>&1 || allow_with_warning \
@@ -256,6 +309,18 @@ and data integrity. Style nits do not count. Reply with a short numbered
 list of REAL findings only. If nothing significant, reply exactly: LGTM'
 fi
 
+# Live-loop: Claude has produced a diff and is attempting a commit; the
+# reviewer is about to look at it. Emit both the writer's turn and the
+# reviewer-started turn so the dashboard shows the hand-off.
+log_event claude commit_attempt "$(jq -cn \
+    --arg sub "$SUBCMD" --argjson bytes "${#DIFF}" \
+    '{subcmd:$sub, diff_bytes:$bytes}')"
+log_event codex review_started "$(jq -cn \
+    --argjson bytes "${#DIFF}" \
+    --argjson drift "$([[ -n "$SPEC" ]] && echo true || echo false)" \
+    --argjson truncated "$([[ -n "$TRUNC_NOTE" ]] && echo true || echo false)" \
+    '{diff_bytes:$bytes, drift_checked:$drift, truncated:$truncated}')"
+
 OUT=$(mktemp)
 trap 'rm -f "$OUT"' EXIT
 printf '%s' "${DIFF:0:150000}" | timeout 180 codex exec --skip-git-repo-check \
@@ -264,6 +329,11 @@ RC=$?
 REVIEW=$(cat "$OUT" 2>/dev/null); rm -f "$OUT"
 
 if [[ $RC -ne 0 || -z "$REVIEW" ]]; then
+    log_event system review_failed "$(jq -cn --argjson rc "$RC" '{rc:$rc}')"
+    # The gate fails OPEN here (commit allowed unreviewed), so the loop is
+    # over — emit a terminal outcome or the dashboard hangs on "reviewing…"
+    # forever. Mark unreviewed:true so it never reads as a passed review.
+    log_event system outcome "$(jq -cn '{result:"passed", unreviewed:true}')"
     allow_with_warning \
         "⚠ codex-review-gate: review failed (rc=$RC) — commit NOT reviewed" \
         "CODEX REVIEW FAILED (exit $RC, possibly a timeout). Tell the owner explicitly; per the AI workflow rules a skipped review must never stay silent."
@@ -272,6 +342,8 @@ fi
 touch "$CACHE/$HASH"
 
 if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
+    log_event codex verdict "$(jq -cn '{verdict:"lgtm", findings:0}')"
+    log_event system outcome "$(jq -cn '{result:"passed"}')"
     MSG="✓ Codex review: LGTM"
     CTX="Codex adversarial review of this diff: LGTM (no findings)."
     if [[ -n "$TRUNC_NOTE" ]]; then
@@ -294,6 +366,46 @@ if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
     }'
     exit 0
 fi
+
+# Live-loop: the reviewer found problems and is about to block the commit
+# once. Emit the verdict plus one event per COMPLETE finding so the dashboard
+# can card each one. A finding starts at a numbered/bulleted marker and owns
+# every following line until the next marker — so wrapped evidence/remediation
+# lines stay with their finding (not truncated to the first line). Each finding
+# is emitted NUL-delimited to survive its own embedded newlines. Parsing is
+# best-effort and log-only — it never gates.
+# A finding STARTS at a top-level marker: a number (`N.`/`N)`, any indent) or
+# a bullet (`-`/`*`) at COLUMN 0. An INDENTED `-`/`*` is a nested evidence
+# bullet and folds into its parent finding, not a new one (else nested bullets
+# inflate the count and split findings). This regex is the single source of
+# truth for both the count and the awk splitter below — they must match.
+TOPMARK='^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]'
+FINDING_COUNT=$(grep -cE "$TOPMARK" <<<"$REVIEW" 2>/dev/null)
+[[ "$FINDING_COUNT" =~ ^[0-9]+$ ]] || FINDING_COUNT=0
+log_event codex verdict "$(jq -cn --argjson n "$FINDING_COUNT" '{verdict:"findings", findings:$n}')"
+# NUL-delimited findings are piped STRAIGHT into the read loop — never captured
+# in $(...), which strips NUL bytes and would merge every finding into one.
+if (( FINDING_COUNT > 0 )); then
+    while IFS= read -r -d '' fitem; do
+        [[ -z "${fitem//[[:space:]$'\n']/}" ]] && continue
+        ftag="note"
+        [[ "$fitem" == *"[DRIFT]"* ]] && ftag="drift"
+        [[ "$fitem" == *"[BUG]"* ]] && ftag="bug"
+        log_event codex finding "$(jq -cn --arg tag "$ftag" --arg text "$fitem" '{tag:$tag, text:$text}')"
+    done < <(awk '
+        /^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]/ {
+            if (buf != "") printf "%s\0", buf
+            sub(/^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]+/, "")
+            buf = $0; next
+        }
+        { if (buf != "") buf = buf "\n" $0 }
+        END { if (buf != "") printf "%s\0", buf }
+    ' <<<"$REVIEW" 2>/dev/null)
+else
+    # Codex replied in prose without a list — log the raw review so nothing is lost.
+    log_event codex finding "$(jq -cn --arg tag "note" --arg text "$REVIEW" '{tag:$tag, text:$text}')"
+fi
+log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" '{result:"denied", findings:$n}')"
 
 REASON="CODEX ADVERSARIAL REVIEW (commit paused once, per the AI workflow rules):
 
