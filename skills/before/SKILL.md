@@ -73,6 +73,10 @@ Read in this order:
 4. If `docs/DECISIONS.md` exists — grep it for terms related to the task. If any ADR applies, read it.
 5. If `docs/KNOWN-ISSUES.md` exists — grep it. If there's a prior bug in this area, note the prevention rule.
 6. If `docs/SESSIONS.md` exists — read the last entry. It may have "next session should probably…" hints or in-flight context.
+7. If a `docs/ARCH-REVIEW-*.md` exists — read the newest one. Its **open P0/P1
+   findings are prior art**: if the file you're about to change is named in one,
+   plan around it (surface it as a "heads-up" row in Step 5), so you don't
+   re-introduce or worsen a known structural problem.
 
 ## Step 4 — Find prior art in the code
 

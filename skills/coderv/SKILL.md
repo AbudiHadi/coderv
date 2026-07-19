@@ -62,6 +62,18 @@ Read the argument and pick ONE shape:
 | ❓ **Question** | "how does", "why is", "what happens", "explain" | answer from docs + code — no pipeline, no edits |
 | 👋 **Wrap-up** | "done", "wrapping up", "stopping", "end of day" | /session |
 | 🧹 **Docs health** | "are docs fresh", "audit docs" | /lint alone |
+| 🏛 **Architecture / system audit** | "review architecture", "audit the system", "check all integrations", "is anything left running", "server left alone", "tech debt", "is this well-structured", "tight coupling" | **architecture-review.md** run-book → findings → (on yes) /before → work → verify → /ship |
+
+The 🏛 shape is driven by the `architecture-review.md` run-book beside this
+file: a read-only scout, then a **parallel fan-out** over seven dimensions
+(layering, coupling/cohesion, duplication, module boundaries, dead code,
+**integration wiring**, **service liveness**), deduped, then **each finding is
+adversarially verified by Codex** (same channel as the commit gate) before it
+reaches a scored P0–P3 report. It **advises, never auto-fixes** — on one yes the
+top finding hands into the normal fix pipeline above. The report is wired into
+every other command (see the run-book's "the weave" table), so a finding stays
+in view — `/before` reads it as prior art, `/ship` flags diffs that touch an
+open P0/P1 file, `/session` surfaces open findings — until it's fixed.
 
 **Confused which shape it is?** (vague target — "fix the slow thing", "clean up
 that mess", "make it better", or a request naming nothing you can locate) do

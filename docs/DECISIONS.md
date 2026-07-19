@@ -33,6 +33,32 @@ What did we decide?
 
 ---
 
+## ADR-014: The architecture & integration audit is a `/coderv` shape woven through all seven commands — not an eighth command
+
+**Date:** 2026-07-19
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+Extends ADR-007 (the /coderv router) and ADR-013 (the shape-classifier). The 7-command surface is unchanged.
+
+### Context
+The owner asked for a whole-project capability: audit the code's architecture (layering, coupling, cohesion, duplication, boundaries, dead code), audit how everything *integrates* (every API/DB/`proxy_pass`/env target points at something live), and detect *"a server left alone"* (orphaned PM2 apps, retired-but-routed ports, dead nginx sites) — the exact hazards the owner's global CLAUDE.md + SERVER-MAP.md discipline exists to prevent. The explicit ask: *"integrate it with ALL coderv commands, nothing left, everything connects in a smart way,"* plus a high-quality workflow drawing. The forces: (1) CLAUDE.md's `never-unrequested` rule caps the surface at 7 commands and sets a bar for slot 8 — it must *reduce* what the human holds in their head, not add to it; (2) the toolkit's grain is find→adversarially-verify with Codex, not first-draft opinion; (3) a report read once and forgotten changes nothing — the error-reduction has to come from the *weave*, not the audit alone.
+
+### Decision
+Add the audit as a new **🏛 Architecture / system audit** shape in `/coderv`'s Step 1 classifier, driven by a new `skills/coderv/architecture-review.md` run-book (scout → 7-dimension parallel fan-out → dedup → Codex adversarial verify each finding → scored P0–P3 report). It **advises, never auto-fixes**; on one yes the top finding hands into the normal fix pipeline. The report is then wired into every other command so a finding stays in view until fixed: `/before` reads it as prior art, `/ship` flags diffs touching an open P0/P1 file (in the harness, at commit time), `/session` surfaces open findings, `/lint` flags a stale review, `/docify` links it, `/decision` fires when a structural finding is acted on. Codex is invoked through the **exact serialized-stdin channel** `codex-review-gate.sh` uses (DRY with the two-brain seam). A high-quality rendered workflow Artifact + a versioned Mermaid diagram in the run-book document the flow.
+
+### Alternatives considered
+- **A `/coderv` shape woven through all commands** (chosen) — honors the 7-cap (no new slot), and *is* the "integrate with all commands" the owner asked for. The weave — not the audit — is where the error-reduction lives.
+- **A standalone `/audit-arch` slot-8 command** — rejected: it breaks the 7-cap and fails the slot-8 bar (a periodic health investigation doesn't reduce daily mental load enough to earn permanent real estate). It also reads the owner's "integrate with all commands" ask more weakly than a native shape does.
+- **Fold it into `/ship`'s reviewer** — rejected: SR violation. `/ship` reviews a *diff*; a whole-codebase audit is a different altitude and would slow every commit.
+
+### Consequences
+- Positive: no surface growth; the audit's findings keep reducing errors long after it runs, because five other commands hold them in view; Codex verification keeps the advice honest (refuted findings are dropped but footnoted, never silently).
+- Negative / trade-off: the coupling/cohesion scoring is a heuristic, not a measurement — real judgment stays with the owner; the integration + liveness dimensions need live-service context (SERVER-MAP.md / `ss` / `pm2`) and degrade to a code-only audit that explicitly states it did NOT check liveness when that context is absent (same honesty rule as the gate's "drift NOT checked").
+- Revisit if: the shape proves heavy enough in daily use that a dedicated command would genuinely reduce mental load — then it goes through the slot-8 bar separately.
+
+---
+
 ## ADR-013: `/coderv` acts before it asks — bare-scan-propose, scout-when-confused, always-verify
 
 **Date:** 2026-07-19

@@ -5,6 +5,22 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.11.0] — 2026-07-19
+
+### Added
+- **Architecture & integration audit — a new `/coderv` shape woven through all seven commands** (ADR-014). A whole-project health investigation that answers three questions a diff-level reviewer can't: is the code well-structured (layering, coupling/cohesion, duplication, module boundaries, dead code), is everything wired to something live (integration wiring), and is anything left running that shouldn't be (service liveness — "a server left alone"). Driven by a new `skills/coderv/architecture-review.md` run-book:
+  - **Pipeline:** read-only scout → **parallel fan-out over 7 dimensions** → dedup by `file:line`+principle → **Codex adversarially verifies each finding** through the exact serialized-stdin channel `codex-review-gate.sh` uses (DRY with the two-brain seam) → scored **P0–P3** report at `docs/ARCH-REVIEW-<date>-<time>.md` (always timestamped, never overwritten, full-SHA base-commit stamp, open findings carried forward so the newest report is the complete open set). It **advises, never auto-fixes** — on one yes the top finding hands into the normal `/before → work → verify → /ship` pipeline.
+  - **Honest degradation, four states:** with observed runtime (`ss`/`pm2`/`nginx -T` all ran) both live dimensions run; with partial runtime, checks gate per source that actually ran (source exit status verified, output sanitized at collection); with only a `SERVER-MAP.md` registry, wiring is checked against the registry but service liveness does NOT run (a static registry can't reveal an orphan process or a dead listener); with neither, both are skipped and the report says *"code-only audit; integration wiring and service liveness NOT checked"* — never a claimed check that couldn't run (same rule as the gate's "drift NOT checked"). Codex-refuted findings are dropped from the report but footnoted, never silently discarded.
+  - **The weave (nothing left, everything connects):** `/coderv` routes the shape and hands findings to the fix pipeline; `/before` reads the newest review as prior art so new work plans around known fragile spots; `/ship` flags any diff touching a file with an open P0/P1 finding and asks the reviewer whether the change addressed or worsened it (regression caught at every `/ship`-run commit — the check lives in the `/ship` checklist, not the gate hook); `/session` surfaces open P0/P1 findings so they don't rot; `/lint` flags a review whose `Base commit:` stamp predates structural changes as maybe-stale; `/docify` links the newest review from `architecture.md`; `/decision` fires when a structural finding is acted on. The audit finds a problem once and five other commands keep it in view until it's fixed.
+  - A high-quality rendered **workflow diagram** (Artifact) plus a versioned **Mermaid** diagram in the run-book document the flow. Surface stays at 7 commands — the audit is a shape, not an eighth command (ADR-014 rejects slot 8 against the `never-unrequested` bar).
+
+### Changed
+- **`/coderv` now acts before it asks** (ADR-013). A bare `/coderv` discovers project state itself (git, docs freshness, last handoff) and proposes the next move instead of asking "what do you want?"; a vague target spawns a read-only scout before planning; the verify step is always on.
+- **`codex-review-gate` loop events enriched for the dashboard** — each review beat now carries the review duration, and each finding carries its `file:line`, so the coderv-loop viewer can show where a finding points without opening the transcript.
+
+### Fixed
+- **`install.sh` gate roster folded into one source of truth.** Install and uninstall previously each typed the four gate-hook names separately — a drifted list could leave an orphaned hook config behind on uninstall. Both paths now read the same roster.
+
 ## [0.10.1] — 2026-07-19
 
 ### Changed

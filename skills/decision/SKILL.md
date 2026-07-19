@@ -3,7 +3,7 @@ name: decision
 description: |
   Log an architectural decision (ADR) so the reasoning survives across sessions. Use right after you pick a library, a pattern, or a trade-off. Takes 30 seconds while it's fresh. Prevents "why did we do it this way?" re-debates months later. Also retrieves past decisions with `/decision list` or `/decision <topic>`.
 
-  TRIGGER — suggest this skill (even without /decision prefix) when the user: picks between options ("X or Y?", "should we use A vs B", "choosing between"), asks "why did we pick X?", "why are we using Y?", "why did we choose", wants to document a trade-off, mentions "architectural decision", "ADR", "tech choice", or accepts a trade-off ("going with X despite the downside of Y").
+  TRIGGER — suggest this skill (even without /decision prefix) when the user: picks between options ("X or Y?", "should we use A vs B", "choosing between"), asks "why did we pick X?", "why are we using Y?", "why did we choose", wants to document a trade-off, mentions "architectural decision", "ADR", "tech choice", accepts a trade-off ("going with X despite the downside of Y"), or **acts on a structural finding from a 🏛 architecture audit** (e.g. splitting a god-module, breaking a dependency cycle) — the *why* of the restructure should outlive the review.
 
   SKIP — for trivial picks with no trade-off (e.g. picking a variable name).
 user-invocable: true

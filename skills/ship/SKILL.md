@@ -196,6 +196,46 @@ become scorecard gates below.
 No spec file exists (work done without /before)? Say so — the "spec verified"
 gate scores ✖ and the scorecard caps below 100%.
 
+**Architecture hot-spot check.** If a `docs/ARCH-REVIEW-*.md` exists, cross the
+diff's changed files (untracked included — they commit too) against the
+**newest** review's **open P0/P1** findings:
+
+```bash
+# newest by filename (ISO dates sort lexicographically) — NOT ls -t: closing
+# a row edits an older file's mtime and would make it look newest
+REVIEW=$(ls docs/ARCH-REVIEW-*.md 2>/dev/null | sort | tail -1)
+# --name-status -M + cut/tr prints BOTH sides of a rename — a moved P0/P1
+# file must still match findings citing its old path
+[ -n "$REVIEW" ] && { git diff --name-status -M HEAD | cut -f2- | tr '\t' '\n'; git ls-files --others --exclude-standard; } | while read -r f; do
+  # match only OPEN P0/P1 title rows (fixed/withdrawn drop), and only their
+  # cited \`path:line\` field — evidence prose that merely mentions a file
+  # must not trigger a false hot-spot warning
+  awk '/^## P0/{on=1} !on{next} /^## P2/{exit}
+    /^- / && /Status: \*\*open\*\*/' "$REVIEW" | grep -qF "\`$f:" \
+    && echo "  ↑ $f has an open P0/P1 finding in $REVIEW"
+done
+```
+
+Any hit → ask the reviewer one extra question: *"This file carries an open
+architecture finding (`<title>`). Does this change **address** it, **worsen**
+it, or leave it untouched?"* A "worsen" verdict is a scorecard gate — it caps
+the score until acknowledged. Close the finding only on a **fully resolved**
+verdict backed by evidence (the diff line that removes the flagged problem) —
+"addressed" can mean partially mitigated, and a partial mitigation leaves the
+row **open** with a progress note rather than removing a still-valid P0/P1
+from every downstream check. Closing happens **after the commit lands** —
+never during the ship flow (the row records the fixing commit's hash, which
+doesn't exist yet, and editing now would mutate a diff the reviewer already
+verified): once `git commit` succeeds, edit the row to
+`Status: fixed YYYY-MM-DD (commit <hash>)` and commit that report edit as
+its own docs-only follow-up. Never delete the row — same pattern as marking a
+tracked gap shipped. This is how a
+structural problem found once gets caught again at every commit that touches
+it at every `/ship` — not left to memory. (This lives in the `/ship`
+checklist, not in `codex-review-gate.sh` — a commit made without `/ship`
+skips it, which is one more reason the repo rule "never commit without
+`/ship`" exists.)
+
 ## Step 5 — Draft the commit message
 
 Read last 5 commits to match style:

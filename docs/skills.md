@@ -139,7 +139,11 @@ A specific skill was invoked explicitly, a pure question with no work intent, or
 
 ### What it does
 
-Classifies the request (feature / bug / question / wrap-up / docs-health), checks project state from facts (lint freshness stamp in `~/.claude/coderlap/state/`, dirty git, newest handoff), assembles the pipeline — `/lint` when docs are stale (>14 days) → `/before` → work → `/ship` — shows it once, and drives the chain on a single yes. Pauses only at plan approval and scorecard approval; a failing step stops the chain.
+Classifies the request (feature / bug / question / wrap-up / docs-health / **architecture-system-audit**), checks project state from facts (lint freshness stamp in `~/.claude/coderlap/state/`, dirty git, newest handoff), assembles the pipeline — `/lint` when docs are stale (>14 days) → `/before` → work → `/ship` — shows it once, and drives the chain on a single yes. Pauses only at plan approval and scorecard approval; a failing step stops the chain.
+
+### The 🏛 architecture / system audit shape (v0.11.0, ADR-014)
+
+Driven by the run-book `skills/coderv/architecture-review.md` <!-- src: skills/coderv/architecture-review.md -->. Not an eighth command — a shape inside `/coderv`. Read-only scout → parallel fan-out over 7 dimensions (layering, coupling/cohesion, duplication, module boundaries, dead code, integration wiring, service liveness) → dedup by `file:line`+principle → **each finding adversarially verified by Codex** through the same serialized-stdin channel as `codex-review-gate.sh` → scored P0–P3 report at `docs/ARCH-REVIEW-<date>-<time>.md` (always timestamped, never overwritten, full-SHA base-commit stamp, open findings carried forward). Advises, never auto-fixes. Integration-wiring + service-liveness degrade honestly through four context states: observed runtime (`ss` / `pm2` / `nginx -T` — both run), partial runtime (checks gate per source that actually ran), registry-only (`SERVER-MAP.md` without runnable runtime — wiring checked against the registry, liveness NOT run), or none (code-only audit); the report always states what it did NOT check. The report is woven into all 7 commands — `/before` reads it as prior art, `/ship` flags diffs touching an open P0/P1 file, `/session` surfaces open findings, `/lint` flags a stale review, `/docify` links it, `/decision` fires on a structural fix.
 
 ## The anti-dumb-zone gates (hooks, not skills)
 

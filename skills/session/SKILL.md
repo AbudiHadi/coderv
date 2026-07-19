@@ -84,11 +84,29 @@ $ git status --short
 **Gotchas the next session should know:**
 - <anything surprising>
 
+**Open architecture findings (if any):**
+- <paste open P0/P1 rows from the newest `docs/ARCH-REVIEW-*.md`, or "none">
+  <!-- so a structural problem found by an audit doesn't rot between sessions -->
+
 **Next session should probably:**
 - <suggested next step>
 
 ---
 ````
+
+If a `docs/ARCH-REVIEW-*.md` exists, pull its open P0/P1 findings into the block
+above so they stay visible across sessions:
+
+```bash
+# newest review only; P0+P1 sections; whole finding blocks (title + evidence
+# lines) are kept or dropped together — only rows explicitly marked open
+# survive (fixed, withdrawn, or any future closed status all drop)
+REVIEW=$(ls docs/ARCH-REVIEW-*.md 2>/dev/null | sort | tail -1)  # newest by filename, not mtime
+[ -n "$REVIEW" ] && awk '/^## P0/{on=1} !on{next} /^## P2/{exit}
+  /^## P[01]/{print; next} /^- /{keep=($0 ~ /Status: \*\*open\*\*/)} keep' "$REVIEW"
+# no head-cap: open P0/P1 must ALL surface — truncating mid-block would hide
+# findings, and a long list is itself the signal the handoff needs to carry
+```
 
 Use today's date. If multiple sessions in one day, add a time suffix: `YYYY-MM-DD 14:30 — Title`.
 

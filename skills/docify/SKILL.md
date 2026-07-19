@@ -196,6 +196,12 @@ Every claim cited. If no README exists, write `<!-- TODO: verify -->` for the "w
 - Layering (where business logic lives vs routes vs persistence)
 - Core services discovered by reading `lib/services/` or equivalent
 - Cross-cutting concerns (auth, logging, error handling) — only if found
+- **If a `docs/ARCH-REVIEW-*.md` exists**, add a one-line link to the newest one
+  (by filename sort — report names are always timestamped) at the top, using the
+  **exact basename** so the link can't break:
+  *"Latest architecture audit: [&lt;basename&gt;](&lt;basename&gt;)"* —
+  so generated docs point at the live, Codex-verified audit instead of drifting
+  from it.
 
 One sentence per service, with citation.
 
