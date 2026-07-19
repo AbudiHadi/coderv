@@ -78,7 +78,9 @@ reviewing the whole working tree, not the staged subset.
 - **Re-install the gate hook** (`install.sh` re-run, or copy `hooks/codex-review-gate.sh`
   → `/root/.claude/hooks/`) so the live gate emits the new duration/anchor fields.
 - **`sudo -u appuser pm2 restart coderv-loop`** so PROD (:3130) serves the new viewer.
-- **Log /coderv autonomy as an ADR** via `/decision` — next queued item.
+- ~~Log /coderv autonomy as an ADR~~ — **DONE this session: ADR-013** (extends
+  ADR-007; records bare-scan-propose + scout-when-confused + always-verify, and
+  the six gate-caught defects as evidence the reviewer earns its latency).
 
 ---
 

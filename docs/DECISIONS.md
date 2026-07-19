@@ -33,6 +33,37 @@ What did we decide?
 
 ---
 
+## ADR-013: `/coderv` acts before it asks — bare-scan-propose, scout-when-confused, always-verify
+
+**Date:** 2026-07-19
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude, Codex (adversarial review — 6 findings fixed pre-merge)
+
+Extends ADR-007 (the /coderv router); the 7-command surface and the router's role are unchanged.
+
+### Context
+ADR-007 shipped /coderv as a router that classifies a *stated* request and drives the pipeline. Real use exposed two friction points where it still pushed work back onto the human, plus a safety gap. (1) A bare `/coderv` with no words answered with a question — "feature, bug, or wrap-up?" — when the project state (dirty git, an unfinished handoff, an open gap) usually already implies the one obvious next move. (2) A vague request ("fix the slow thing", "clean up that mess") made the router either guess a target or bounce the question back, when the codebase itself holds the answer. (3) The pipeline shipped code straight from build to /ship with no step that actually *ran* the change — the reviewer reads the diff, but nobody drives the flow. The owner's framing: *"I type coderv and the tools start looking for everything; if the request is confusing, they investigate and pick the right command; and they verify the work."*
+
+### Decision
+Add three behaviours to the /coderv skill (no new command):
+- **Step 0 — bare-scan-propose.** `/coderv` with no argument scans state (lint freshness, dirty git, newest *dated* SESSIONS entry read in full, open gaps/known-issues) and proposes the single most likely next task by a fixed precedence (uncommitted > unfinished handoff > open gap > stale docs > clean slate), then takes one yes. It does not interrogate.
+- **Step 1 — scout-when-confused.** A vague target spawns ONE read-only `Explore` subagent to surface concrete candidates (file:line) before classifying — the same "delegate heavy reading to a subagent" idiom the Question shape already uses — then confirms the real target in one line.
+- **Steps 3–4 — always-verify.** On a code change the pipeline runs an inline verify step (drive the affected flow, observe behaviour) between build and /ship. Worded as plain *verify*, deliberately **not** a `/verify` skill invocation, because the toolkit ships no such skill — a skill reference would dangle on a clean install. Config is not auto-exempt from verify (hooks/CI/manifests usually have a validation path); only pure docs/prose diffs skip.
+
+### Alternatives considered
+- **Fold the three behaviours into /coderv** (chosen) — keeps the surface at 7 commands (ADR-007's bar: slot N must *reduce* what the human holds in their head), and each behaviour removes a prompt the human previously had to answer.
+- **Author a real `/verify` skill as slot 8** — rejected here: it would grow the command surface, and the built-in per-project /verify already covers driving the flow. If a toolkit-owned verify ever earns its own slot it goes through the ADR-005/007 slot bar separately.
+- **Make bare `/coderv` just ask the one-line menu** — the status quo; rejected because the state scan almost always already implies the answer, and asking when you could propose is the friction ADR-007 set out to remove.
+
+### Consequences
+- Positive: the human types `coderv` (or nothing after it) and gets a concrete proposal or a scouted target, not a questionnaire; code no longer reaches /ship unexercised.
+- Negative / trade-off: Step 0's proposal can be wrong when state is ambiguous (mitigated — it's always a one-yes proposal the user can redirect); the verify step adds a beat to the pipeline on code changes (intended — it's the point).
+- Revisit if: bare-scan mis-proposes often (tighten the precedence list) or the scout subagent proves overkill for the vague-request rate on this machine.
+
+Note: this ADR was itself hardened by the codex-review-gate during /ship — the gate caught six real defects in the implementation before it merged (a dangling `/verify` skill reference, an over-broad config-skip, and four bugs in the handoff-scan command: heading-only grep, non-fence-aware parsing, a truncating output cap, plus jq leading-zero and endpoint-false-match bugs in the companion gate change). Recorded as live evidence that the adversarial reviewer (ADR-008) earns its latency.
+
+---
+
 ## ADR-012: The context-gate triggers on an absolute token budget, not a percentage of the model's window
 
 **Date:** 2026-07-19
