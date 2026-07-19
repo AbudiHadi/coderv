@@ -22,7 +22,7 @@ cd /root/claude-docs-toolkit
 ```
 **v0.11.0 RELEASED 2026-07-19** (architecture-audit shape, commit `c3db615`, tagged + pushed + website synced) — newest entry below. Queued next:
 - Optional `gh release create v0.11.0` (and v0.10.1, v0.10.0) for GitHub Release pages — `release.sh` prints the exact command. **BLOCKED on `gh auth login`** (owner must run it).
-- Owner decision parked: `/root/coderv-brief.md` (moved out of the repo at release; describes v0.10.1) — publish updated, keep private, or delete.
+- ~~Owner decision parked: `/root/coderv-brief.md`~~ — RESOLVED 2026-07-19: owner approved publish; refreshed to v0.11.0 and committed as `docs/coderv-brief.md`.
 - Parked (not urgent): fold router/context installers into the generic `install_gate_hook` (arch candidate #1; #2 gate-roster was fixed in `cada876`).
 
 **To view the dashboard from your PC** (server → your laptop):
