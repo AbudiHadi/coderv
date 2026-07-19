@@ -26,8 +26,8 @@
 #                      doc-system project until /before wrote a receipt
 #     compact-rehydrate(SessionStart)     — after compaction, injects a git
 #                      ground-truth snapshot ("the snapshot wins")
-#     context-gate     (Stop)             — warns at 60% context, hard-blocks
-#                      at 75% (the dumb zone); CODERV_GATES_OFF=1 disables all
+#     context-gate     (Stop)             — warns then hard-blocks at an absolute
+#                      dumb-zone token budget (~180k); CODERV_GATES_OFF=1 disables all
 
 set -euo pipefail
 

@@ -33,6 +33,45 @@ What did we decide?
 
 ---
 
+## ADR-012: The context-gate triggers on an absolute token budget, not a percentage of the model's window
+
+**Date:** 2026-07-19
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude, Codex (adversarial review)
+
+Refines ADR-006 (the context-gate's trigger mechanism only; the three-gate design stands).
+
+### Context
+ADR-006 shipped the context-gate with a **percentage-of-window** trigger: `pct = 100 * ctx / CODERV_CONTEXT_WINDOW`, warn at 60%, block at 75%, with `CODERV_CONTEXT_WINDOW` defaulting to 200000. That default was correct when 200k was the standard Claude Code window. On Claude Opus 4.8 the standard window is **1,000,000 tokens** — so the gate divided real usage by the wrong denominator and reported ~5× too high (140k of context read as "70%" against a 200k budget, when it is only ~14% of the real 1M window). The naive "fix" — set `CODERV_CONTEXT_WINDOW=1000000` — is worse: it would move the hard block to 750k, deep into the degradation zone, because it assumes quality survives to 75% of *whatever the server will admit*. ADR-006 itself flagged this residual risk: "token % is a proxy for degradation, not a measure of it."
+
+Three things were verified this session before deciding: (1) the "dumb zone" (context rot / lost-in-the-middle) is best modelled as an **absolute** amount of occupied context (~150–200k), not a fraction of the admission limit — a bigger max window does not move where reasoning degrades; (2) the model ID in the transcript is bare `claude-opus-4-8` with no `1m` marker, and Opus 4.8's 1M window is standard (not a header-gated variant) — so the window **cannot** be inferred from the model string, killing any "detect model → map to window" approach; (3) the occupied-context figure stays sourced from the transcript's last main-chain call. A consolidated `usage` object on the Stop payload was considered as a faster source but rejected during review: whether its counts are per-call or cumulative-across-the-session is unverified, and a cumulative value would overcount and block healthy sessions — so the one figure we can reason about (the transcript's last call) remains authoritative. The occupied-context sum now also includes that call's `output_tokens`, since the just-generated response is carried into the next turn.
+
+### Decision
+The gate triggers on an **absolute occupied-context token budget**, taking whichever fires first:
+
+    trigger = min( quality_budget_tokens , window * safety_fraction )
+
+- `quality_budget_tokens` (default ~180k) is the real dumb-zone guard — an absolute floor, configurable, documented as **policy, not measured science**. It is what actually protects quality and is independent of the model's max window.
+- `window * safety_fraction` remains only as a ceiling to catch genuinely small-window models before they hit their hard admission limit.
+
+All comparisons move to **absolute tokens** rather than a rounded percentage. The variable that meant "window" is relabelled to mean "quality budget" so the code says what it does.
+
+### Alternatives considered
+- **Absolute budget + percentage safety ceiling** (chosen) — models the dumb zone as an absolute occupancy floor (the real phenomenon), stays correct across window sizes, and removes the wrong-denominator class of bug for good.
+- **A) Set `CODERV_CONTEXT_WINDOW=1000000`** — rejected: silently moves the block to 750k (deep rot) and disables protection entirely if a smaller-window model is ever run on the same box; a safety gate that fails open is the worst failure.
+- **B) Detect the model and map it to its real window** — rejected as the primary fix: the transcript model ID carries no window marker (`claude-opus-4-8` is the same string at 200k or 1M), so detection cannot distinguish the modes; and even a correct window is the wrong basis, since the dumb zone is absolute, not a fraction of the window.
+- **Keep percentage-of-window, just fix the default** — rejected: makes the displayed number right while preserving the conceptual bug (that quality scales with the admission limit).
+
+### Consequences
+- Positive: the gate fires at an honest, model-independent floor (~180k) instead of a coincidence of a hardcoded denominator; the wrong-denominator bug class is gone; absolute-token comparisons also remove the percentage-scaling bugs at large windows (50k-wide warn buckets, 100k-wide re-arm hysteresis, `round()` boundary jitter).
+- Negative / trade-off: `quality_budget_tokens` is a judgement call, not a measurement — it will need tuning as evidence accrues; and the two-brain marketing surface now describes a gate whose mechanism differs from ADR-006's wording, so ADR-006's text carries a pointer here.
+- Revisit if: a model ships whose usable-reasoning window is genuinely and measurably larger (raise the budget on evidence), or Anthropic publishes a degradation curve that lets the floor be set from data rather than policy.
+
+### Related
+- Refines ADR-006 (anti-dumb-zone gates); supersedes only its trigger math, not its design.
+
+---
+
 ## ADR-011: The installer completes the two-brain setup — detect Codex, ship portable reviewer rules, report honestly
 
 **Date:** 2026-07-17
@@ -260,7 +299,7 @@ Add `/coderv <request>` as the 7th command: classify the request (feature / bug 
 ## ADR-006: Anti-dumb-zone gates — ADR-004's principle extended from artefacts to live sessions
 
 **Date:** 2026-07-15
-**Status:** accepted
+**Status:** accepted (context-gate trigger math refined by ADR-012, 2026-07-19)
 **Decider(s):** Hadi (CoderLap author), Claude
 
 ### Context

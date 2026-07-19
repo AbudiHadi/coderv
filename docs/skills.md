@@ -150,9 +150,9 @@ Three gates added in v0.8.0 (ADR-006), a fourth on 2026-07-17 (ADR-008) — alwa
 | `grounding-gate.sh` | PreToolUse (Edit/Write/MultiEdit/NotebookEdit) | First code edit in a doc-system project is blocked until `/before` wrote a grounding receipt (or a skip was declared with a reason). Docs-only edits never blocked. <!-- src: hooks/grounding-gate.sh --> |
 | `codex-review-gate.sh` | PreToolUse (Bash) | Any commit-creating git command (commit/merge/cherry-pick/revert/rebase, incl. `git -C`) with a code diff — untracked files included — gets an adversarial Codex CLI review first (`-s read-only`). Findings deny once; adjudicated retries pass (24h hash cache). Docs-only/empty diffs skip; Codex down = allow + loud warning; >150KB diffs declare partial review. Extra kill switch: `CODEX_REVIEW_OFF=1`. <!-- src: hooks/codex-review-gate.sh --> |
 | `compact-rehydrate.sh` | SessionStart (`compact`) | After compaction, injects a git/versions snapshot: when summary and snapshot conflict, the snapshot wins. <!-- src: hooks/compact-rehydrate.sh --> |
-| `context-gate.sh` | Stop | Real context % from the transcript. Warn at 60%, hard-block once per session at 75% (re-arms after compaction) — the only sanctioned move is an evidence-pasted handoff. <!-- src: hooks/context-gate.sh --> |
+| `context-gate.sh` | Stop | Real occupied-context tokens (transcript's last main-chain call; sidechains excluded, never summed). Warn at 0.75× and hard-block once per session at an **absolute** dumb-zone budget (~180k, not a % of the window — ADR-012); re-arms after compaction — the only sanctioned move is an evidence-pasted handoff. <!-- src: hooks/context-gate.sh --> |
 
-Kill switch for all four: `CODERV_GATES_OFF=1`. Config: `CODERV_CONTEXT_WINDOW`, `CODERV_CTX_WARN_PCT`, `CODERV_CTX_BLOCK_PCT`.
+Kill switch for all four: `CODERV_GATES_OFF=1`. context-gate config: `CODERV_CTX_BUDGET` (absolute dumb-zone tokens, default 180000), `CODERV_CTX_WINDOW` (default 1000000) + `CODERV_CTX_SAFETY_PCT` (default 90) for the small-window safety ceiling. The old `CODERV_CONTEXT_WINDOW` is still honoured as a window fallback.
 
 ## Adding a new skill
 
