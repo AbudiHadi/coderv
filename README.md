@@ -135,6 +135,18 @@ Memory can go stale or get skipped; this runs in the harness on every session st
 
 ---
 
+## Watch the two brains work (coderv-loop)
+
+The `codex-review-gate` runs the whole Claude↔Codex exchange in the background — you only see the final deny or LGTM. **coderv-loop** is an optional companion dashboard that makes that exchange visible live.
+
+The gate appends one JSON line per beat to `~/.claude/coderlap/loop-events.jsonl` — the writer's commit attempt, the reviewer starting, its verdict, each finding, and the terminal outcome. It's a pure side-effect: the log never influences the gate's allow/deny decision, never errors the hook, and stays silent when `jq` is absent. Point the log elsewhere with `CODERV_LOOP_LOG`, or turn it off entirely with `CODERV_LOG_OFF=1`.
+
+Every review closes with a terminal `outcome` event — a denied review, a passed one, a cache-hit retry, even a reviewer that timed out (marked `unreviewed:true`) — so a dashboard tailing the stream never hangs waiting for a beat that isn't coming.
+
+coderv-loop is not part of the seven-command toolkit — it's a separate local app you run only if you want to watch. The toolkit works exactly the same without it.
+
+---
+
 ## The three living files
 
 Once you run `/before` in a fresh project, it scaffolds these:
