@@ -35,6 +35,69 @@ sudo -u appuser bash -c 'export NVM_DIR=/home/appuser/.nvm; . $NVM_DIR/nvm.sh; c
 
 ---
 
+## 2026-07-19 (later 8) — later-7 finished + go-live done; 4 commits local, NOT pushed (context gate)
+
+Closed out the later-7 ship. Both queued items done, plus the go-live the owner
+approved. Nothing mid-flight — a fresh session resumes cleanly from here.
+
+**What happened this session:**
+- Landed the 3 ship commits from later-7 (`cada876`, `e86b853`, `bb96e87`) — see
+  later-7 for the 6 gate-caught bugs + 3 rejected findings.
+- **Go-live (owner approved, verified):** copied the new `codex-review-gate.sh`
+  → `/root/.claude/hooks/` (live gate now emits duration_ms + file/line);
+  `sudo -u appuser pm2 restart coderv-loop` + `pm2 save` → :3130 serves the new
+  viewer (heartbeat/anchor-chip/summary/timing/project all confirmed in served
+  HTML, bytes matched disk index.html).
+- **ADR-013 logged** (`b422bc2`) — /coderv autonomy design, extends ADR-007.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -6
+b422bc2 Log ADR-013: /coderv acts before it asks (autonomy design)
+bb96e87 Emit review duration and finding file:line for the loop viewer
+e86b853 Make /coderv autonomous: discover, scout when confused, always verify
+cada876 Fold the gate roster into one source of truth for install and uninstall
+b1816dc Release 0.10.1: sharper session handoff + doc-lint cleanup
+f8a0314 Release 0.10.0: live-loop event log + coderv-loop dashboard
+
+$ git status -sb
+## main...origin/main [ahead 4]
+
+$ cat VERSION
+0.10.1
+
+$ diff -q /root/.claude/hooks/codex-review-gate.sh hooks/codex-review-gate.sh
+(IDENTICAL — live gate hook is current)
+
+$ sudo -u appuser pm2 describe coderv-loop | grep -E 'status|uptime|restarts'
+status   online
+restarts 2
+uptime   2m
+
+$ ss -tlnp | grep :3130
+LISTEN 0 511 127.0.0.1:3130 ... users:(("node /home/appu",pid=1716022,...))
+```
+
+**Next session should probably (pick from these — none urgent):**
+- **`git push`** — 4 commits are local only (`main ahead 4`). Not pushed this
+  session; owner hadn't decided. This is the first thing to resolve.
+- **Cut a release** when ready: `VERSION` (still 0.10.1) + `CHANGELOG` + run
+  `./release.sh` (never tag by hand — CLAUDE.md). The 4 new commits are unreleased.
+- **`gh release create v0.10.1`** (and v0.10.0) — GitHub Release pages, pending
+  since later-5's handoff. Independent of today's work.
+
+**Gotchas carried forward:**
+- The codex-review-gate reviews the **whole working tree**, not just the staged
+  subset — so `git add <one file>` still gets every uncommitted change reviewed.
+  Expect findings about files you haven't staged yet.
+- `~/.codex/AGENTS.md` #2 forbids **Codex** (the reviewer) from writing
+  source-of-truth docs (SESSIONS/DECISIONS/…) but reserves that for the
+  **conductor** (Claude). If the gate flags "SESSIONS.md is protected" on a
+  Claude commit, that's role-confusion — reject it (it fired once, then passed
+  the identical diff and later commits clean).
+
+---
+
 ## 2026-07-19 (later 7) — SHIPPED later-6's work: 3 commits, gate caught 6 real bugs en route
 
 Resumed the "later 6" handoff and ran `/ship`. The three changes landed as three
