@@ -20,9 +20,10 @@
 cd /root/claude-docs-toolkit
 /session last          # loads the newest handoff below (this file)
 ```
-**v0.10.1** (session-handoff sharpening + doc-lint cleanup + SESSIONS rotation) is the newest entry below — run `release.sh` to tag/push it if not already done. shellcheck 0.9.0 IS installed and the hooks came back clean (0 errors, no fix needed — see 2026-07-19 (later 3)). Queued next:
-- Optional `gh release create v0.10.1` (and v0.10.0) for a GitHub Release page — `release.sh` prints the exact command.
-- Parked (not urgent): architecture-review candidates — start with #2 (gate roster typed twice in `install.sh:651-654` vs `675-678`, an orphaned-config bug) then #1 (fold router/context installers into the generic `install_gate_hook`). Regenerate the report with `/improve-codebase-architecture`.
+**v0.11.0 RELEASED 2026-07-19** (architecture-audit shape, commit `c3db615`, tagged + pushed + website synced) — newest entry below. Queued next:
+- Optional `gh release create v0.11.0` (and v0.10.1, v0.10.0) for GitHub Release pages — `release.sh` prints the exact command. **BLOCKED on `gh auth login`** (owner must run it).
+- Owner decision parked: `/root/coderv-brief.md` (moved out of the repo at release; describes v0.10.1) — publish updated, keep private, or delete.
+- Parked (not urgent): fold router/context installers into the generic `install_gate_hook` (arch candidate #1; #2 gate-roster was fixed in `cada876`).
 
 **To view the dashboard from your PC** (server → your laptop):
 Termius → Port Forwarding → **Local**, listen `9130`, destination host `localhost`, destination port `3130`, over this server → open **http://localhost:9130**.
@@ -32,6 +33,57 @@ Termius → Port Forwarding → **Local**, listen `9130`, destination host `loca
 ```
 sudo -u appuser bash -c 'export NVM_DIR=/home/appuser/.nvm; . $NVM_DIR/nvm.sh; cd /home/appuser/apps/coderv-loop && pm2 restart coderv-loop --update-env && pm2 save'
 ```
+
+---
+
+## 2026-07-19 (later 11) — v0.11.0 SHIPPED & RELEASED: audit shape landed through a 15-round Codex gate convergence
+
+Fresh session resumed the later-10 handoff and finished the job: **/ship →
+commit `c3db615` → release.sh → tag v0.11.0 pushed + website synced.**
+
+**What shipped:** the whole later-10 feature (run-book + 7-command weave +
+ADR-014 + VERSION/CHANGELOG), hardened by ~40 adversarial findings across a
+7-defect fresh-context reviewer pass and **14 Codex gate rounds** before the
+adjudication-cache pass landed it. Material upgrades the reviews forced:
+finding lifecycle (open → fixed/withdrawn/superseded, closed only on
+evidenced full resolution after the fixing commit lands), carry-forward with
+exactly-one-open-copy, always-timestamped never-overwritten reports with
+full-SHA base stamps (+dirty blob hashes), four per-source liveness states,
+collection-time secret sanitization (pm2/nginx/registry, userinfo + query
+strings), PM2 socket-verified never-daemonizing scout, exact-line dedup,
+rename-aware hot-spot check, open-only awk block filters, CHANGELOG
+backfill of 4 unreleased commits (cada876..b422bc2), restored later-9
+heading. One Codex finding rejected with proof (coderv-brief is untracked);
+one sanitizer re-raise rejected as a loop per the gate's own stop rule.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -2
+c3db615 Add the architecture audit as a /coderv shape woven through all seven commands
+8f499f0 Add later-8 session handoff
+$ git tag --contains c3db615
+v0.11.0
+$ ./release.sh (tail)
+ok     tagged v0.11.0
+   8f499f0..c3db615  HEAD -> main
+ * [new tag]         v0.11.0 -> v0.11.0
+ok     pushed branch + tag
+ok     website rebuilt at 0.11.0
+```
+
+**Gotchas the next session should know:**
+- **A codex-gate deny blocks the ENTIRE Bash command** — in `git add X && git
+  commit`, the `git add` never runs on a deny. Stage in a separate command,
+  or the index silently goes stale (bit us for ~4 rounds; status showed MM).
+- The gate's adjudication cache is the designed exit: fix/reject findings,
+  then retry the IDENTICAL diff — it passes. Changing the diff (even one
+  word) restarts the review, which is how a big prose diff loops ~15 rounds.
+- `docs/coderv-brief.md` was moved to `/root/coderv-brief.md` (untracked
+  file blocked release.sh's clean-tree gate; content preserved, unpublished).
+
+**Next session should probably:**
+1. Owner: `gh auth login`, then the `gh release create v0.11.0` line release.sh printed.
+2. Owner: decide `/root/coderv-brief.md` fate (update to v0.11.0 + commit, or keep private).
 
 ---
 
