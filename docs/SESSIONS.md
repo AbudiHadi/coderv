@@ -38,6 +38,57 @@ sudo -u appuser bash -c 'export NVM_DIR=/home/appuser/.nvm; . $NVM_DIR/nvm.sh; c
 
 ---
 
+## 2026-07-19 (later 13) — Housekeeping cleared: SESSIONS rotated + ALL release pages backfilled; queue is EMPTY
+
+Short session that closed both items queued by later-12. Owner added
+`Bash(gh release create *)` via `/permissions`, unblocking the backfill the
+classifier had refused.
+
+**What shipped:**
+- **SESSIONS.md rotated** (`5c4865b`) — 8 entries (2026-07-19 later-2 back
+  through the 2026-07-17 v0.9.0 release run) moved byte-identical
+  (machine-verified with `diff` → `MOVED-IDENTICAL`) into SESSIONS-ARCHIVE.md;
+  live file 859 → 579 lines, newest 10 entries kept, pointer updated.
+- **All 9 missing GitHub release pages backfilled** — v0.3.9, v0.4.0, v0.4.1,
+  v0.6.0, v0.7.0, v0.8.0, v0.9.0, v0.10.0, v0.10.1 — each with its CHANGELOG
+  section as notes (`awk` extraction, same pattern as release.sh), titled in
+  the existing `vX.Y.Z — descriptor` style, `--latest=false`. Verified:
+  tag-vs-release `comm` diff came back EMPTY (every tag has a page) and
+  v0.11.0 kept the Latest badge. Bookkeeping commit `d6b3170`.
+
+**In flight (not yet shipped):**
+- Nothing. Tree clean, queue empty.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+d6b3170 Mark release-page backfill done in the SESSIONS resume block
+5c4865b Rotate SESSIONS.md: move 8 older entries to SESSIONS-ARCHIVE.md
+d5dafd9 Add later-12 session handoff: brief published, gh authed, v0.11.0 release page live
+$ git status --short --branch
+## main...origin/main
+$ cat VERSION
+0.11.0
+$ gh release list --limit 3 | head -3
+v0.11.0	Latest	v0.11.0	2026-07-19T21:32:41Z
+v0.10.1 — /session hands the next session its exact starting point + doc-lint fixes		v0.10.1	2026-07-19T21:44:37Z
+v0.10.0 — Plan-phase Codex review + drift-hunter + live-loop event log		v0.10.0	2026-07-19T21:44:37Z
+```
+
+**Gotchas the next session should know:**
+- SESSIONS.md sits at ~620 lines even freshly rotated to the newest 10 —
+  recent entries are just long. That's the rotation rule's floor; don't
+  re-rotate below 10, it's expected.
+- The `/permissions` rule `Bash(gh release create *)` is now standing — future
+  release runs can publish the `gh release create` step themselves instead of
+  printing it for the owner.
+
+**Next session should probably:**
+- Nothing queued. Only parked (not urgent): fold the router/context installers
+  into the generic `install_gate_hook` (arch candidate #1 from the audit).
+
+---
+
 ## 2026-07-19 (later 12) — Brief published (`0874f1b`) + gh authed + v0.11.0 GitHub Release live; v0.10.x backfills need owner's hands
 
 Resumed later-11 and cleared its queue as far as the harness allows.
