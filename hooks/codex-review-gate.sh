@@ -323,10 +323,29 @@ log_event codex review_started "$(jq -cn \
 
 OUT=$(mktemp)
 trap 'rm -f "$OUT"' EXIT
+# Stamp review wall-clock start so the verdict can carry how long Codex took —
+# a pure side-effect for the dashboard, never read by the allow/deny logic.
+REVIEW_START_MS=$(date +%s%3N 2>/dev/null)
+[[ "$REVIEW_START_MS" =~ ^[0-9]+$ ]] || REVIEW_START_MS=""
 printf '%s' "${DIFF:0:150000}" | timeout 180 codex exec --skip-git-repo-check \
     -s read-only -o "$OUT" "$PROMPT" >/dev/null 2>&1
 RC=$?
 REVIEW=$(cat "$OUT" 2>/dev/null); rm -f "$OUT"
+# Elapsed ms (empty when the clock is unavailable — duration_ms is then emitted
+# as JSON null, never a bogus 0). The key is always present so consumers read one
+# stable shape (number | null) and never have to test for a missing field.
+# `%s%3N` is GNU date; a non-numeric result (BSD date) leaves REVIEW_START_MS
+# empty and duration_ms is null.
+REVIEW_MS=""
+if [[ -n "$REVIEW_START_MS" ]]; then
+    NOW_MS=$(date +%s%3N 2>/dev/null)
+    [[ "$NOW_MS" =~ ^[0-9]+$ ]] && REVIEW_MS=$(( NOW_MS - REVIEW_START_MS ))
+    (( REVIEW_MS < 0 )) && REVIEW_MS=""   # clock skew guard — never a negative duration
+fi
+# Reusable jq arg pair: binds $dur to the real number, or JSON null when the
+# clock was unavailable. An array (not a $(...) string) so the two tokens pass
+# without relying on word-splitting — shellcheck-clean and quote-safe.
+DUR_ARG=(--argjson dur "${REVIEW_MS:-null}")
 
 if [[ $RC -ne 0 || -z "$REVIEW" ]]; then
     log_event system review_failed "$(jq -cn --argjson rc "$RC" '{rc:$rc}')"
@@ -342,7 +361,7 @@ fi
 touch "$CACHE/$HASH"
 
 if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
-    log_event codex verdict "$(jq -cn '{verdict:"lgtm", findings:0}')"
+    log_event codex verdict "$(jq -cn "${DUR_ARG[@]}" '{verdict:"lgtm", findings:0, duration_ms:$dur}')"
     log_event system outcome "$(jq -cn '{result:"passed"}')"
     MSG="✓ Codex review: LGTM"
     CTX="Codex adversarial review of this diff: LGTM (no findings)."
@@ -382,7 +401,7 @@ fi
 TOPMARK='^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]'
 FINDING_COUNT=$(grep -cE "$TOPMARK" <<<"$REVIEW" 2>/dev/null)
 [[ "$FINDING_COUNT" =~ ^[0-9]+$ ]] || FINDING_COUNT=0
-log_event codex verdict "$(jq -cn --argjson n "$FINDING_COUNT" '{verdict:"findings", findings:$n}')"
+log_event codex verdict "$(jq -cn --argjson n "$FINDING_COUNT" "${DUR_ARG[@]}" '{verdict:"findings", findings:$n, duration_ms:$dur}')"
 # NUL-delimited findings are piped STRAIGHT into the read loop — never captured
 # in $(...), which strips NUL bytes and would merge every finding into one.
 if (( FINDING_COUNT > 0 )); then
@@ -391,7 +410,31 @@ if (( FINDING_COUNT > 0 )); then
         ftag="note"
         [[ "$fitem" == *"[DRIFT]"* ]] && ftag="drift"
         [[ "$fitem" == *"[BUG]"* ]] && ftag="bug"
-        log_event codex finding "$(jq -cn --arg tag "$ftag" --arg text "$fitem" '{tag:$tag, text:$text}')"
+        # Best-effort file:line extraction for the dashboard's anchor chip —
+        # the FIRST `path/with.ext:NNN` token in the finding. Purely additive:
+        # when nothing matches, file/line are null and the viewer just shows
+        # the finding without a chip. The extension must be a KNOWN SOURCE
+        # extension (SRC_EXT below), not just any dotted token — otherwise
+        # host:port and IP:port endpoints masquerade as anchors (127.0.0.1:3000
+        # would parse as file "127.0.0.1" line 3000; example.com:8080 as
+        # "example.com"). Restricting to real code extensions also keeps prose
+        # like "12:30" (times) and "step 2:3" out.
+        SRC_EXT='(js|mjs|cjs|jsx|ts|tsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|cs|php|swift|sh|bash|sql|json|ya?ml|toml|md|html?|css|scss|vue|svelte)'
+        ffile=""; fline=""
+        if [[ "$fitem" =~ ([A-Za-z0-9_./-]+\.${SRC_EXT}):([0-9]+) ]]; then
+            ffile="${BASH_REMATCH[1]}"
+            # Base-10 normalise so a leading-zero line (e.g. foo.js:08) is a valid
+            # JSON number for --argjson. jq 1.7 tolerates leading zeros, but 1.6
+            # (and the JSON spec) reject them — a downloader on 1.6 would otherwise
+            # get a jq error and a degraded finding event. 10# forces base-10 so
+            # 08/09 never read as bad octal either. Group 3 is the line number —
+            # SRC_EXT's own parens are group 2.
+            fline=$(( 10#${BASH_REMATCH[3]} ))
+        fi
+        LINE_ARG=(--argjson line "${fline:-null}")
+        log_event codex finding "$(jq -cn --arg tag "$ftag" --arg text "$fitem" \
+            --arg file "$ffile" "${LINE_ARG[@]}" \
+            '{tag:$tag, text:$text, file:(if $file=="" then null else $file end), line:$line}')"
     done < <(awk '
         /^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]/ {
             if (buf != "") printf "%s\0", buf
