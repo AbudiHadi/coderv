@@ -128,7 +128,11 @@ If the session:
 ```markdown
 📝 Handoff saved: **<title>** → top of `docs/SESSIONS.md`.
 
-👉 Next session: start with `/session last`.
+👉 Next session: start fresh (your project path: `<absolute repo path>`), run `/session last`. It'll load the handoff with these queued items:
+- <queued item 1>
+- <queued item 2>
 ```
+
+Always fill the `<absolute repo path>` slot with the real project directory (the nearest ancestor holding `CLAUDE.md` — the same root the handoff was written for), so the next session knows exactly where to `cd` before anything else. List the queued items from the handoff's "Next session should probably" section (omit the bullets if there are none).
 
 If a follow-up is genuinely worth recommending (ADR worth logging, bug worth adding to KNOWN-ISSUES, CLAUDE.md status worth updating), add **one** suggestion line — the single most worthwhile one. Don't list all three. The user can ask "anything else?" if they want more.

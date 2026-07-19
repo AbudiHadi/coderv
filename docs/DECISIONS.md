@@ -252,7 +252,7 @@ Convergence has three terminal end states (CONVERGED / CAP-STOPPED / REVIEW-UNAV
 
 **Date:** 2026-07-17
 **Status:** accepted
-**Decider(s):** Claude (per standing "adjust toward the better option" rule), pending owner veto
+**Decider(s):** Claude (per standing "adjust toward the better option" rule); shipped in v0.9.0, no owner veto raised
 
 ### Context
 The codex-review-gate (4th gate) fires only on `git commit` run through Claude's Bash tool. /ship's old rule — "Never run `git commit` yourself. Show the command. The user runs it." — meant the toolkit's own commit ritual bypassed the machine reviewer entirely: a commit typed into the owner's terminal is invisible to Claude Code hooks. The 2026-07-17 gap scan confirmed this as a high-severity hole (two independent finder agents).

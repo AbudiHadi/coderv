@@ -5,6 +5,15 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.10.1] — 2026-07-19
+
+### Changed
+- **`/session` handoff now hands the next session its exact starting point.** The closing template prints the absolute repo path (the nearest ancestor holding `CLAUDE.md`) plus the queued "next session should probably" items inline with the `/session last` pointer — so a fresh session knows where to `cd` and what's parked before it reads anything. Skill body only; no behaviour change to the saved handoff file.
+
+### Fixed
+- **Doc lint pass (4 findings):** `docs/architecture.md` said the toolkit adds "three gate hooks" — corrected to **four** (+ADR-008); the three `/docify`-generated docs (`overview.md`, `architecture.md`, `skills.md`) carried a stale `fbb1954` (v0.3.8) provenance banner while their bodies describe v0.10.0 — banners now note they are hand-maintained and last verified against `f8a0314`; and ADR-008 in `docs/DECISIONS.md` read `Status: accepted` yet still carried a "pending owner veto" trailer (it shipped in v0.9.0) — trailer corrected. A fifth finding (KI-001's deferred prevention rule) was an owner-accepted open follow-up, not rot — left as-is.
+- **`docs/SESSIONS.md` rotated** — grown past the ~500-line threshold, its 7 oldest entries (2026-07-17 gap-scan back to 2026-04-24 docify) moved byte-identical into new `docs/SESSIONS-ARCHIVE.md`, per the `/session` rotation rule, with a pointer left behind.
+
 ## [0.10.0] — 2026-07-19
 
 ### Added
