@@ -5,6 +5,13 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.12.1] — 2026-07-20
+
+### Fixed
+- **System-map cards now size to their content instead of a fixed width.** Each card measures its widest row and clamps to it (170–340px), so long service names and deep file paths no longer overflow the box; overflow text is truncated code-point-safely (emoji never split) with the full value on hover, rows are re-spaced so text no longer crowds, and the author grid scales from the origin so wider cards get room without losing negative coordinates.
+- **System-map: labels nudged clear of cards can no longer be clipped by Fit.** The bounds were framed before the label-collision nudge ran (it runs in a later animation frame), so a nudged label could fall outside the viewport. Bounds are now re-measured and re-framed one frame after the nudges settle.
+- **System-map: confirmed parallel reversed edges (A→B and B→A) do not stack their labels.** The edge's bow direction already flips with its endpoints, so the existing fan sign keeps forward and reversed edges on distinct sides — verified by render; no change was needed (the earlier concern was a false positive).
+
 ## [0.12.0] — 2026-07-20
 
 ### Added
