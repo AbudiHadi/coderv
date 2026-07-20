@@ -4,6 +4,91 @@
 
 ---
 
+## 2026-07-20 (later 2) — Map-offer-on-resume SHIPPED (4eff5ea); NEXT: agents hand-roll a simple map instead of using the frozen template — run-book must FORCE the template
+
+Short session, one fix shipped + VPS reinstalled. Then the owner surfaced a
+bigger, still-OPEN problem for the next session to fix.
+
+**SHIPPED this session (`4eff5ea`, pushed, installed to ~/.claude):**
+- Fixed the gap where the interactive-map offer was skipped on RESUME. The
+  offer was anchored only to "after writing the report" (a fresh audit run), so
+  a session resuming onto an existing/never-drawn report never offered the map.
+- Added a durable `<!-- Map: drawn <YYYY-MM-DD> -->` marker in the run-book's
+  System-map report section; **absent marker == not drawn == offer** (so legacy
+  reports still get offered). `/session last` (Argument=`last` path) and
+  `/coderv` Step 0 now discover the newest `ARCH-REVIEW-*.md`, check for open
+  P0/P1 + the marker, and OFFER the map. On yes → render + stamp `Map: drawn`.
+- Files: `skills/coderv/architecture-review.md`, `skills/session/SKILL.md`,
+  `skills/coderv/SKILL.md`. Reinstalled via `./install.sh --force`.
+- `/ship` fresh-context reviewer caught a SHOWSTOPPER pre-commit: the awk
+  anchored open-findings scan on `/^## P0/` only, but a zero-P0 report OMITS
+  the `## P0` header (the real Al-Rafiq report does) → offer would never fire.
+  Fixed to `/^## P0/||/^## P1/{on=1; next} /^## /{on=0}` in both awks, proven
+  against the real report (finds the open P1, offer fires). Codex gate LGTM.
+
+**⚠ STILL OPEN — the reason this handoff exists (owner is unhappy, rightly):**
+An agent in a SEPARATE Al-Rafiq session drew a system map that is **NOT the
+frozen draw.io canvas we built** — it hand-rolled a bespoke static page.
+- The bad artifact: `https://claude.ai/code/artifact/8e797982-4851-4e63-b095-077e639b4538`
+  (fetched + inspected read-only). It has NO `GRAPH` object, NO
+  `systemmap.template.html`, NO pan/zoom, NO Fit/Width toolbar, NO
+  click-to-trace, NO emoji node markers. Its "map" is a fixed 6-box horizontal
+  flexbox strip (`min-width:940px`, `.map-scroll{overflow-x:auto}`) — i.e. the
+  exact cramped side-scroll thing this whole feature was meant to kill.
+- OUR canonical map (built + iterated all session): `https://claude.ai/code/artifact/cd5ee78d-4a66-4f76-9469-4e797efd070b`
+  — the real frozen-template canvas.
+- ROOT CAUSE: the run-book *describes* the template's qualities instead of
+  *commanding* the mechanical steps, so a capable agent builds an impressive
+  page from scratch that superficially matches ("dark theme, severity colors,
+  a flow of boxes") and never opens the template. "Use the frozen engine" is
+  advisory, not mandatory/mechanical. Same disease as the resume gap, one layer
+  deeper.
+
+**NEXT SESSION SHOULD DO (owner approved the direction, deferred to next session):**
+Harden `skills/coderv/architecture-review.md` (the Canvas-standard / interactive-
+runs region, ~lines 317-335) so drawing the map is an unambiguous mechanical
+procedure that FORBIDS hand-authoring:
+1. State literal steps: "1) copy `skills/coderv/systemmap.template.html` to
+   scratch; 2) replace ONLY the `GRAPH = {...}` block (meta/nodes/edges/
+   findings); 3) publish THAT file. Do NOT author your own HTML/CSS/SVG — if you
+   are writing a `<style>` block or hand-drawing SVG, STOP, you're doing it
+   wrong, use the template."
+2. Add a pre-publish self-check: "confirm the file contains the `GRAPH` object
+   AND the pan/zoom engine (`elementFromPoint` / Fit toolbar); if not, you did
+   not use the template — redo."
+Do it via the normal flow: `/before` → edit → `/ship` (fresh-context reviewer +
+Codex gate) → `./install.sh --force` to reinstall to the VPS. Toolkit-only,
+docs-region edit; low risk. (Owner said: don't touch the Al-Rafiq artifact —
+that's their live test; only fix the toolkit so future audits use the real map.)
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+4eff5ea Fire the system-map offer on resume, not just after a fresh audit
+e348428 Strip stray NUL byte from session handoff so SESSIONS.md stays plain text
+189ff1e Add session handoff: system-map draw.io canvas shipped as v0.12.0 content
+$ git status --short
+$ cat VERSION
+0.12.0
+$ git status -sb | head -1
+## main...origin/main
+```
+(tree clean, pushed; installed skills match repo — architecture-review.md +
+systemmap.template.html byte-identical, SKILL.md files differ only by the
+`<!-- claude-docs-toolkit -->` install marker.)
+
+**Gotchas:**
+- Pre-existing SAME awk bug (P0-only anchor) still lives in `session/SKILL.md`
+  ~line 129 (the NEW-handoff path, not the resume path). Left untouched this
+  session (out of scope). Worth the same one-line fix on a future pass.
+- `grep`/Edit string-matching in a fresh shell keeps failing on lines with awk
+  regex / special chars even when Read shows the content — use Python exact-byte
+  match to verify (bit me repeatedly).
+- The map feature is still v0.12.0 content — NOT yet released. `./release.sh`
+  when the owner wants v0.12.0 tagged/out (VERSION+CHANGELOG already moved).
+
+---
+
 ## 2026-07-20 (later) — System map is now a draw.io-style interactive canvas (v0.12.0 content), SHIPPED to main; owner requests fully delivered
 
 Long session, all committed + pushed. Two things shipped: the earlier
