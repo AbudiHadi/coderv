@@ -4,6 +4,119 @@
 
 ---
 
+## 2026-07-20 (later 5) — Reversed-edge question SETTLED (false positive, render-proven); auto-fit cards SHIPPED + installed
+
+Picked up the "later 4" open item. Settled the one unresolved geometry question
+and shipped the uncommitted card-geometry work.
+
+**The reversed-edge question is CLOSED — Codex round-3 #2 is a FALSE POSITIVE.**
+Do A→B and B→A parallel edges stack their labels? No. `edgePath()`'s bow normal
+(`nx=-dy/len,ny=dx/len`, L357) is derived from the edge's own `from→to` direction,
+so for a reversed edge the normal already flips. With the existing `reversed=-1`
+sign (L409-410), both forward and reversed edges map their *distinct* `pos` to the
+same physical-offset formula `(pos-mid)*step` in a fixed frame → every edge in a
+group takes a distinct side. Dropping the flip would map a reversed edge to
+`-(pos-mid)*step`, which CAN coincide with a forward edge at another pos — i.e. the
+"fix" would have CAUSED a collision. So NO code change to the fan sign; the sign is
+correct as written.
+
+**How it was settled (per the handoff's demand: browser, not reading):** rendered
+the stress-test map from the *current* template (fingerprint-checked, GRAPH-swap
+only) and eyeballed the `hub↔sink` group (3 forward + 1 reversed `ack (reversed)`).
+Reversed edge sits clear — owner confirmed "perfect". Render artifact:
+https://claude.ai/code/artifact/5bc00fcd-6783-4aba-a224-e01bfeeda3e6
+
+**Note:** my *first* read (inline) concluded Codex was right and the sign was
+wrong. The `/before` Codex plan-review caught that error before any edit — the
+physical offset is `normal × curve`, and I'd forgotten `pos` is always distinct
+within a group. Recorded as a win for the two-brain loop.
+
+**Also fixed this session (gate-flagged, both real):**
+- `fitBounds()` ran before the label-nudge rAF, so a nudged label could land
+  outside the framed viewBox and be clipped by Fit. Fixed: one rAF after the
+  sync `fitBounds()+fit()` re-measures and re-frames once, after the nudge rAFs.
+- This SESSIONS entry itself — the "later 4" handoff (committed alongside) still
+  says the reversed-edge question is UNRESOLVED; this entry records that it is now
+  settled, so the committed handoff isn't self-contradictory.
+
+**Shipped:** the "later 4" card-geometry rewrite + this handoff, one commit, then
+`./install.sh --force`. No VERSION bump (owner triggers `release.sh` separately).
+No ADR — nothing structural changed (the fan model was confirmed, not altered).
+
+---
+
+## 2026-07-20 (later 4) — Auto-fit map cards: BUILT + mostly verified, UNCOMMITTED (context gate + gate deny loop); 1 geometry question left for next session
+
+Owner asked to make the system-map's boxes/text align + size dynamically ("good
+but not prof"). Rewrote the frozen engine's card geometry. Stopped BEFORE
+committing: the context gate fired (~195k) AND the codex-review-gate denied 3×
+(each round surfacing NEW real geometry bugs) — that combo is the "stop digging,
+hand off" condition, not a reason to keep hammering commits.
+
+**⚠ ALL WORK IS UNCOMMITTED** — `skills/coderv/systemmap.template.html` modified
+in the working tree, NOT staged, NOT committed. HEAD is still 63f2ef6. Do NOT
+lose these edits.
+
+**What's built + VERIFIED GOOD (fixes the owner's complaint):**
+- Per-node measured card width `_w = clamp(widest row + 2*PAD_X, MIN_W=170, MAX_W=340)` — no more text overflow.
+- Code-point-safe ellipsis truncation (`Array.from`, verified 🚀 never splits) + hover `<title>` with full value.
+- Card height raised to NH=92, rows re-spaced (ROW_NAME=30/META=54/TAG=76) — text rows no longer crowd.
+- Author grid scaled from ORIGIN (`n.x=ox+(n.x-ox)*GRID`, GRID=1.34) — wider cards get room, negative coords preserved. Verified no same-row card overlap (Node geometry harness).
+- Measure-first render order (nodes measured before bounds/edges); `cx/cy/borderPoint/self-loop/bbox` all read per-node `_w`. No bare NW left in code.
+- Parallel-edge fan step = `2*(measuredChip+16)` measuring the chip AS RENDERED (emoji prefix 🔴/🟡 included, L382 matches render L430) — parallel labels stagger.
+- Bounded card-collision label nudge (≤6 tries) added in the label rAF block.
+
+**Two renders published (eyeball these first thing):**
+- Stress test v2: https://claude.ai/code/artifact/da4144b6-0211-4488-b66f-e5f08ac2b72e
+- Al-Rafiq realistic: https://claude.ai/code/artifact/6efc2ae2-8c7c-4225-8b3c-0178dca3cb5b
+- Scratch source: /tmp/claude-0/.../scratchpad/{stress-map2.html, alrafiq-map.html}
+
+**⚠ THE ONE UNRESOLVED QUESTION (next session must settle in the BROWSER, not by reading):**
+Codex round-3 [BUG] #2: "reversed parallel edges (A→B and B→A) bend onto the SAME
+physical curve so their labels stack." The `/ship` fresh-context reviewer earlier
+brute-forced n=2..6 and found ZERO collisions. TWO reviewers contradict on subtle
+geometry. → Open the stress-test artifact, look at the `hub↔sink` group (it has an
+ok, warn, crit set PLUS a reversed `sink→hub` edge). If the reversed edge's line
+or label sits on top of another, fix the auto-fan sign (normalise `_autoCurve`
+against a canonical endpoint direction, not just group position). If it's clearly
+clear, the finding is a false positive — reject with the render as proof.
+
+**Findings adjudicated (transparency — rejected ones with proof):**
+- Codex round-3 #1 "nudge uses local vs global coords" → REJECTED, false positive.
+  Machine-verified: the `elabel` <g> gets NO transform (only node groups do, L293);
+  the label <text> carries global x=lx, so getBBox() is already global. Codex
+  assumed a translate(lx,ly) that does not exist.
+- "stress test not in repo" (raised all 3 rounds) → REJECTED as out-of-scope: this
+  is a KISS single-file template with no test harness by design; verified via the
+  published render artifacts instead. (Owner may overrule.)
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+63f2ef6 Log ADR-015 (forced map template) + session handoff; rotate SESSIONS
+73c6e9d Force the frozen system-map template on every arch-map render path
+4aca2d5 Add session handoff: map-offer-on-resume shipped; next task is forcing agents to use the frozen map template
+$ git status --short
+ M skills/coderv/systemmap.template.html
+$ cat VERSION
+0.12.0
+$ git status -sb | head -1
+## main...origin/main
+```
+
+**Gotchas:**
+- The approved spec is at ~/.claude/coderlap/specs/-root-claude-docs-toolkit.md (already updated to describe the nudge + fan math — the drift-hunter reads it). Base stamp is 63f2ef61.
+- Engine is byte-verifiable: `grep 'FROZEN TEMPLATE'` + `const GRAPH = {` must both survive any further edit (the pre-publish self-check / fingerprint).
+- To re-render for eyeballing: copy the template, swap only the GRAPH block, publish as an Artifact (do NOT hand-author — that's the ADR-015 rule this very template enforces).
+- Still v0.12.0, NOT released. `./release.sh` when owner wants it out.
+- P0-only awk twin STILL in session/SKILL.md ~L129 (untouched, carry forward).
+
+**Next session should probably:**
+- Eyeball both renders; settle the reversed-edge question in the browser (fix or reject-with-proof).
+- Then one clean `/ship` pass (fresh context = no dumb-zone, gate should converge in 1) → `./install.sh --force` → done. Consider ADR for "map render is now geometry-driven, not fixed-grid" if the reversed-edge fix changes the fan model.
+
+---
+
 ## 2026-07-20 (later 3) — Frozen map template FORCED at all 3 render triggers (73c6e9d) + ADR-015; closes last session's open item
 
 Picked up the open task from `(later 2)`. Another agent's independent diagnosis

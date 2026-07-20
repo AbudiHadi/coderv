@@ -167,7 +167,22 @@ const GRAPH = {
 
 const SVGNS="http://www.w3.org/2000/svg";
 const reduceMotion=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const NW=210, NH=78, PAD=80;
+// Card geometry. Width is now PER-NODE (measured from the rendered text, see the
+// measure pass below) — MIN_W/MAX_W clamp it so a short label still reads as a
+// card and one very long path can't balloon into a giant box (it truncates with
+// ellipsis + a hover title instead). NH is uniform; PAD_X is the left/right text
+// inset; PAD is the bounding-box margin for arrowheads/label chips.
+const MIN_W=170, MAX_W=340, PAD_X=20, NH=92, PAD=80;
+// Row baselines inside a card (y offsets from the card top), spaced so the three
+// text lines — name / meta / tag — never crowd each other at NH tall.
+const ROW_NAME=30, ROW_META=54, ROW_TAG=76;
+// Author x/y in GRAPH data sit on a hand-tuned grid. Widening cards needs more
+// room between them, so we scale the grid — but as DELTAS FROM THE GRID ORIGIN
+// (min coord, which may be negative), never by multiplying absolute coords
+// (that would translate the whole map and distort a negative origin). GRID is
+// chosen with MAX_W so a maxed card can't reach its neighbour: the smallest
+// author column pitch (~360) times GRID must exceed MAX_W + a min gap.
+const GRID=1.34;
 const KIND_EMOJI={live:"🟢",ext:"🌐",parked:"⏸"};
 const KIND_COLOR={live:"var(--ok)",ext:"#3A4150",parked:"var(--warn)"};
 /* Safety model: EVERY repo-controlled value — node/edge/finding strings AND the
@@ -188,7 +203,22 @@ setText("base", META.base||"");
 if(META.project) document.title=META.project+" — System Map";
 ["p0","p1","p2","p3"].forEach(k=>setText("score-"+k, (META.scores&&META.scores[k]!=null)?META.scores[k]:"0"));
 const N=Object.fromEntries(NODES.map(n=>[n.id,n]));
-const cx=n=>n.x+NW/2, cy=n=>n.y+NH/2;
+// Scale the author grid so wider cards + their connectors have breathing room,
+// without re-laying-out anything: each node keeps its relative position. Scale
+// DELTAS from the grid origin (the min author coord — can be negative) so the
+// map isn't translated and a negative origin isn't distorted. Do this ONCE,
+// up front, so every downstream calc (bounds, edges, node transforms) sees the
+// final coords.
+(function scaleGrid(){
+  if(!NODES.length) return;
+  const ox=Math.min(...NODES.map(n=>n.x)), oy=Math.min(...NODES.map(n=>n.y));
+  NODES.forEach(n=>{ n.x=ox+(n.x-ox)*GRID; n.y=oy+(n.y-oy)*GRID; });
+})();
+// Per-node card width (_w) is measured in the measure pass below; until then it
+// falls back to MIN_W. Height is uniform (NH). cx/cy read _w so an edge always
+// targets the TRUE centre of a variable-width card.
+const nodeW=n=>n._w||MIN_W;
+const cx=n=>n.x+nodeW(n)/2, cy=n=>n.y+NH/2;
 
 // Guard the empty-graph case: Math.max(...[]) is -Infinity, which would poison
 // every dimension/transform. Fall back to a small usable canvas.
@@ -197,42 +227,105 @@ const cx=n=>n.x+NW/2, cy=n=>n.y+NH/2;
 // on that curve). Includes negative coordinates. PAD leaves room for arrowheads
 // and label chips. `minX/minY` can be < 0, so the viewBox is offset accordingly
 // and Fit frames the whole extent, not just the positive quadrant.
+// The SVG + its two layers exist up front so node text can be MEASURED from the
+// live DOM before any geometry that depends on card width runs. Edges are drawn
+// into gEdges AFTER nodes are measured (see below), so gEdges is appended first
+// only to keep edges visually beneath nodes.
+const svg=document.createElementNS(SVGNS,"svg");
+svg.innerHTML=`<defs>${["ok","crit","warn"].map(k=>`<marker id="ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${k})"/></marker>`).join("")}</defs>`;
+const gEdges=document.createElementNS(SVGNS,"g"), gNodes=document.createElementNS(SVGNS,"g");
+svg.append(gEdges,gNodes);
+document.getElementById("stage").appendChild(svg);   // in the DOM now so getBBox/getComputedTextLength work
+
+// Build DOM + textContent — never innerHTML — so a name / meta / path containing
+// angle brackets or ampersands is drawn as literal text, never markup/script.
+function svgEl(tag, attrs, text){
+  const el=document.createElementNS(SVGNS,tag);
+  for(const k in attrs) el.setAttribute(k, attrs[k]);
+  if(text!=null) el.textContent=text;
+  return el;
+}
+// Trim a live <text> element to fit `max` px using its OWN rendered metric
+// (getComputedTextLength honours the actual font, kerning, emoji & RTL glyphs —
+// a char count can't). Appends an ellipsis and, when trimmed, an SVG <title> so
+// the full untruncated value is available on hover. Returns the final width.
+function fitText(el, full, max){
+  el.textContent=full;
+  let w=el.getComputedTextLength();
+  if(w<=max) return w;
+  // Binary-search the longest prefix that fits with an ellipsis. Cut on
+  // CODE POINTS (Array.from splits by Unicode scalar, not UTF-16 units) so an
+  // emoji / wide-glyph is never sliced mid-surrogate into a replacement glyph.
+  const cp=Array.from(full);
+  let lo=0, hi=cp.length;
+  while(lo<hi){
+    const mid=Math.ceil((lo+hi)/2);
+    el.textContent=cp.slice(0,mid).join("")+"…";
+    (el.getComputedTextLength()<=max) ? (lo=mid) : (hi=mid-1);
+  }
+  el.textContent=cp.slice(0,lo).join("")+"…";
+  el.appendChild(svgEl("title",{},full));   // full value on hover
+  return el.getComputedTextLength();
+}
+
+/* -------- NODE build + MEASURE pass (must run before bounds & edges) -------- */
+const nodeEls={};
+NODES.forEach(n=>{
+  const stripe=KIND_COLOR[n.kind]||"var(--line-2)";
+  const emoji=KIND_EMOJI[n.kind]||"";
+  const g=svgEl("g",{class:`node ${n.kind==="ext"?"ext":""}`});   // transform set after width is known
+  const card=svgEl("rect",{class:"card", height:NH, rx:12});
+  const bar =svgEl("rect",{x:0, y:0, width:4, height:NH, rx:2, fill:stripe});
+  const name=svgEl("text",{class:"name", x:PAD_X, y:ROW_NAME});
+  const meta=svgEl("text",{class:"meta", x:PAD_X, y:ROW_META});
+  const tag =svgEl("text",{class:"tag",  x:PAD_X, y:ROW_TAG, fill:stripe});
+  g.append(card,bar,name,meta,tag);
+  gNodes.appendChild(g);   // in DOM so getComputedTextLength works
+  // Measure each row against the max text width; the card grows to the widest
+  // row (+ padding), clamped to [MIN_W, MAX_W]. Rows longer than the cap are
+  // ellipsis-truncated in place with a hover title.
+  const maxTextW=MAX_W-PAD_X*2;
+  const wName=fitText(name, `${emoji} ${n.name}`, maxTextW);
+  const wMeta=fitText(meta, n.meta||"", maxTextW);
+  const wTag =fitText(tag,  (n.kind||"").toUpperCase(), maxTextW);
+  n._w=Math.max(MIN_W, Math.min(MAX_W, Math.ceil(Math.max(wName,wMeta,wTag))+PAD_X*2));
+  card.setAttribute("width", n._w);
+  g.setAttribute("transform",`translate(${n.x},${n.y})`);
+  nodeEls[n.id]=g;
+});
+
+// Bounds now read the MEASURED per-node width (_w), so Fit frames the real
+// cards. Edge geometry (incl. curved control points & self-loops) is folded in.
+// minX/minY can be < 0 (negative author coords) — the viewBox is offset so Fit
+// frames the whole extent, not just the positive quadrant.
 const xs=[], ys=[];
-NODES.forEach(n=>{ xs.push(n.x, n.x+NW); ys.push(n.y, n.y+NH); });
+NODES.forEach(n=>{ xs.push(n.x, n.x+nodeW(n)); ys.push(n.y, n.y+NH); });
 EDGES.forEach(e=>{
   const a=N[e.from], b=N[e.to]; if(!a||!b) return;   // dangling edge — dropped at render
   if(e.from===e.to){ // self-loop arc bows up-right of the node; include its reach
-    xs.push(a.x, a.x+NW+50); ys.push(a.y-50, a.y+NH); return;
+    xs.push(a.x, a.x+nodeW(a)+50); ys.push(a.y-50, a.y+NH); return;
   }
   const x1=cx(a),y1=cy(a),x2=cx(b),y2=cy(b);
   xs.push(x1,x2); ys.push(y1,y2);
   if(e.curve){ const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy)||1, nx=-dy/len,ny=dx/len;
     xs.push((x1+x2)/2+nx*e.curve); ys.push((y1+y2)/2+ny*e.curve); }
 });
-// Initial (coordinate-based) bounds — a sane viewBox for first paint. The TRUE
-// extent (incl. rendered text widths, label chips) is measured from the DOM via
-// getBBox() once the content is appended, in fitBounds() below — so Fit frames
-// long labels/names that overflow the fixed card width, not just the cards.
+// Coordinate bounds for first paint; fitBounds() below refines from the true
+// rendered getBBox() (label chips, stroke) once everything is drawn.
 const hasContent=xs.length>0;
 let minX=hasContent?Math.min(...xs)-PAD:0, minY=hasContent?Math.min(...ys)-PAD:0;
 let maxX=hasContent?Math.max(...xs)+PAD:400, maxY=hasContent?Math.max(...ys)+PAD:300;
 let vbW=maxX-minX, vbH=maxY-minY;
-const svg=document.createElementNS(SVGNS,"svg");
 svg.setAttribute("width",vbW);svg.setAttribute("height",vbH);svg.setAttribute("viewBox",`${minX} ${minY} ${vbW} ${vbH}`);
-svg.innerHTML=`<defs>${["ok","crit","warn"].map(k=>`<marker id="ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${k})"/></marker>`).join("")}</defs>`;
-const gEdges=document.createElementNS(SVGNS,"g"), gNodes=document.createElementNS(SVGNS,"g");
-svg.append(gEdges,gNodes);
 
-// Where a ray from a card's centre (dir dx,dy) exits the card rectangle. Uses
-// BOTH half-width and half-height, so a vertical/steep edge exits the top/bottom
-// edge (at NH/2), not a phantom NW/2 offset — no more edges starting beyond the
-// card or reversing on short vertical links. `pad` extends past the border
-// (e.g. to sit an arrowhead clear of the card).
 // Where a ray from a card's centre (dir dx,dy) meets the card border, offset by
 // `pad` ALONG the ray: pad>0 sits the point OUTSIDE the card (clear of it),
-// pad<0 pulls it inside. hw/hh use both axes so vertical edges exit top/bottom.
-function borderPoint(cxp,cyp,dx,dy,pad){
-  const hw=NW/2, hh=NH/2;
+// pad<0 pulls it inside. `hw` is THIS card's half-width (cards are variable
+// width now) and hh is the uniform half-height, so a vertical/steep edge exits
+// the top/bottom edge (at NH/2) — no edges starting beyond the card or reversing
+// on short vertical links. `pad` extends past the border to clear an arrowhead.
+function borderPoint(cxp,cyp,dx,dy,pad,hw){
+  hw=hw||MIN_W/2; const hh=NH/2;
   const adx=Math.abs(dx), ady=Math.abs(dy);
   const t=Math.min(adx>1e-6?hw/adx:Infinity, ady>1e-6?hh/ady:Infinity);
   const len=Math.hypot(dx,dy)||1;
@@ -245,18 +338,20 @@ function edgePath(e){
   // small arc off the node's top-right so it's visible on the map, matching the
   // mermaid fallback's self-edge (identical topology, nothing dropped).
   if(e.from===e.to){
-    const rx=a.x+NW, ry=a.y+NH*0.28;             // start on the right edge
-    const tx2=a.x+NW*0.72, ty2=a.y;              // return to the top edge
+    const aw=nodeW(a);
+    const rx=a.x+aw, ry=a.y+NH*0.28;             // start on the right edge
+    const tx2=a.x+aw*0.72, ty2=a.y;              // return to the top edge
     const loop=44;
     return {d:`M${rx},${ry} C${rx+loop},${ry-loop} ${tx2+loop},${ty2-loop} ${tx2},${ty2}`,
-            lx:a.x+NW+loop*0.5, ly:a.y-loop*0.2};
+            lx:a.x+aw+loop*0.5, ly:a.y-loop*0.2};
   }
   const dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy);
   if(len<1e-6) return null;   // coincident (distinct-id) nodes: no valid direction (caller skips)
   // Start AT the source border; end just OUTSIDE the target border so the
-  // arrowhead sits clear of the card (nodes render above edges).
-  const [x1,y1]=borderPoint(ax,ay,dx,dy,0);
-  const [x2,y2]=borderPoint(bx,by,-dx,-dy,4);
+  // arrowhead sits clear of the card (nodes render above edges). Pass each
+  // card's OWN half-width so the ray exits the true (variable-width) border.
+  const [x1,y1]=borderPoint(ax,ay,dx,dy,0,nodeW(a)/2);
+  const [x2,y2]=borderPoint(bx,by,-dx,-dy,4,nodeW(b)/2);
   const mx=(x1+x2)/2,my=(y1+y2)/2;
   const curve=e.curve!=null?e.curve:e._autoCurve;   // explicit curve wins; else auto-fan offset
   if(curve){const nx=-dy/len,ny=dx/len;
@@ -282,9 +377,29 @@ const kindOK=k=>k==="ok"||k==="crit"||k==="warn";   // unknown kind → treat as
     const key=[e.from,e.to].sort().join("\u0001");   // \u0001 delimiter (cannot appear in an id) so ["ab","c"] and ["a","bc"] never collide
     (groups[key]||(groups[key]=[])).push(i);
   });
+  // The emoji a rendered label prepends, by edge kind — MUST match the render
+  // path below (const em=…) so the measured chip width equals what's drawn.
+  const labelEmoji=k=>k==="crit"?"🔴 ":k==="warn"?"🟡 ":"";
+  // Measure a label's rendered pixel width so the fan step can clear the widest
+  // chip in the group — a fixed 46px let long labels stack. Measures the SAME
+  // string that gets drawn (emoji prefix + label), via a throwaway <text> in the
+  // live SVG (getComputedTextLength honours font/emoji/RTL).
+  const measureLabel=e=>{
+    if(!e.label) return 0;
+    const s=labelEmoji(kindOK(e.kind)?e.kind:"ok")+e.label;
+    const t=svgEl("text",{class:"elabel"}, s); gEdges.appendChild(t);
+    const w=t.getComputedTextLength(); gEdges.removeChild(t); return w;
+  };
   Object.values(groups).forEach(idxs=>{
     if(idxs.length<2) return;                          // single edge → leave straight
-    const step=46, mid=(idxs.length-1)/2;
+    // Fan spacing is driven by the WIDEST label chip so parallel labels stagger
+    // clear of one another instead of stacking. A label sits at HALF the curve
+    // offset (edgePath places it at curve*0.5 along the normal), so adjacent
+    // labels are separated by only step*0.5 — to clear a full chip width + gap
+    // between chip CENTRES, step must be >= 2*(chipWidth + gap). Floor at 60 so
+    // unlabelled/short groups still separate visibly.
+    const maxLabelW=Math.max(0,...idxs.map(i=>measureLabel(EDGES[i])));
+    const step=Math.max(60, 2*(maxLabelW+16)), mid=(idxs.length-1)/2;
     idxs.forEach((i,pos)=>{
       const e=EDGES[i];
       if(e.curve!=null) return;                        // author curve wins
@@ -317,31 +432,35 @@ EDGES.forEach((e,i)=>{
     const bg=document.createElementNS(SVGNS,"rect");bg.setAttribute("class","bg");
     g.append(bg,t);gEdges.appendChild(g);
     rec.label=g;   // tie the label group to its edge so trace can dim/highlight it too
-    requestAnimationFrame(()=>{const bb=t.getBBox();bg.setAttribute("x",bb.x-4);bg.setAttribute("y",bb.y-1);bg.setAttribute("width",bb.width+8);bg.setAttribute("height",bb.height+2);bg.setAttribute("rx",3);});
+    requestAnimationFrame(()=>{
+      let bb=t.getBBox();
+      // Card-collision nudge: if the label chip overlaps any node card, shift
+      // the whole label group vertically (the shorter way out) so the chip sits
+      // clear of the card — labels never buried under a box. Bounded to a few
+      // tries; if nothing clears it (dense centre), leave it rather than fling
+      // it far. Only cards are checked (the thing a label must not hide).
+      const chip=()=>({x:bb.x-4,y:bb.y-1,w:bb.width+8,h:bb.height+2});
+      const hits=c=>NODES.some(n=>{const nw=nodeW(n);
+        return c.x<n.x+nw && c.x+c.w>n.x && c.y<n.y+NH && c.y+c.h>n.y;});
+      let dy=0, tries=0;
+      while(tries<6 && hits(chip())){
+        // find the overlapping card, push out past its nearer horizontal edge
+        const c=chip(), n=NODES.find(n=>{const nw=nodeW(n);
+          return c.x<n.x+nw && c.x+c.w>n.x && c.y<n.y+NH && c.y+c.h>n.y;});
+        if(!n) break;
+        const cyMid=c.y+c.h/2, nMid=n.y+NH/2;
+        const shift=(cyMid<nMid ? (n.y-(c.y+c.h)-4) : (n.y+NH-c.y+4));
+        dy+=shift; t.setAttribute("y",(ly-2)+dy); bb=t.getBBox(); tries++;
+      }
+      bg.setAttribute("x",bb.x-4);bg.setAttribute("y",bb.y-1);bg.setAttribute("width",bb.width+8);bg.setAttribute("height",bb.height+2);bg.setAttribute("rx",3);
+    });
   }
 });
-// Build nodes with DOM + textContent — never innerHTML — so a name / meta /
-// path containing angle brackets or ampersands is drawn as literal text, never
-// interpreted as markup or script (repo-controlled values are untrusted input).
-function svgEl(tag, attrs, text){
-  const el=document.createElementNS(SVGNS,tag);
-  for(const k in attrs) el.setAttribute(k, attrs[k]);
-  if(text!=null) el.textContent=text;
-  return el;
-}
-const nodeEls={};
+// Node cards + text were built and measured in the pass above (so edges could
+// use real widths). Here we wire each node's INTERACTIVITY — findings trace,
+// click, and keyboard — onto the group already in nodeEls.
 NODES.forEach(n=>{
-  const stripe=KIND_COLOR[n.kind]||"var(--line-2)";
-  const g=svgEl("g",{class:`node ${n.kind==="ext"?"ext":""}`, transform:`translate(${n.x},${n.y})`});
-  const emoji=KIND_EMOJI[n.kind]||"";
-  g.append(
-    svgEl("rect",{class:"card", width:NW, height:NH, rx:12}),
-    svgEl("rect",{x:0, y:0, width:4, height:NH, rx:2, fill:stripe}),
-    svgEl("text",{class:"name", x:20, y:31}, `${emoji} ${n.name}`),
-    svgEl("text",{class:"meta", x:20, y:52}, n.meta),
-    svgEl("text",{class:"tag", x:20, y:68, fill:stripe}, (n.kind||"").toUpperCase())
-  );
-  nodeEls[n.id]=g; gNodes.appendChild(g);
+  const g=nodeEls[n.id];
   // A node can appear in several findings — activating it cycles through ALL of
   // them (each activation advances to the next), so none is unreachable.
   const nodeFindings=FINDINGS.filter(f=>f.nodes.includes(n.id));
@@ -364,7 +483,6 @@ NODES.forEach(n=>{
     g.addEventListener("keydown",ev=>{if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();ev.stopPropagation();activate();}});
   }
 });
-document.getElementById("stage").appendChild(svg);
 
 /* findings list */
 const flist=document.getElementById("findings");
@@ -539,5 +657,11 @@ function fitBounds(){
 window.addEventListener("resize",()=>fit(false));
 fitBounds();      // adopt real rendered extent…
 fit(false);       // …then frame it
+// The label-collision nudge (above) shifts chips inside their own rAF, which
+// runs AFTER this synchronous pass — so a nudged label can land outside the
+// bounds just framed and get clipped by Fit. Those nudge rAFs were queued
+// earlier in the build pass, so a single rAF scheduled HERE fires after them:
+// re-measure the true extent (now including moved labels) and re-frame once.
+requestAnimationFrame(()=>{ fitBounds(); fit(false); });
 
 </script>
