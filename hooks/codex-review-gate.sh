@@ -15,6 +15,19 @@
 # outcome states "drift NOT checked" — a drift review that never read a plan
 # must never be claimed.
 #
+# Round cap (two-brain-convergence.md "CAP-STOPPED", enforced by the machine,
+# not prose): every reviewed-with-findings round for the same (repo, HEAD) is
+# counted in a flock-guarded state file; each deny prints the round number and
+# the finding-count trajectory. The reviewer must tag every finding with an
+# IMPACT severity — MATERIAL = [data-loss]/[security]/[correctness]/untagged,
+# MARGINAL = [edge]/[theoretical]. At round >= cap (default 3, override
+# CODERV_GATE_ROUND_CAP) a review whose findings are ALL marginal is ALLOWED
+# with a loud CAP-STOPPED caveat instead of denied; material findings keep
+# denying, but the deny becomes an explicit owner-visible escalation and every
+# later material deny at that (repo, HEAD) stays escalated (durable state).
+# The counter has NO delete path — a landed commit moves HEAD (new key) and
+# the 24h sweep reaps orphans — so there is no delete/append race to lose.
+#
 # Detects: commit / merge / cherry-pick / revert / rebase, including
 # `git -C <dir>` and other global flags, at command position (quoted
 # mentions like `echo "git commit"` do not trigger). Reviews the working-
@@ -80,6 +93,7 @@ log_event() {
         # hook — the gate's pure-side-effect contract outranks log ordering.
         # On timeout (or no flock binary) fall through to a plain append; a
         # rare interleave is preferable to the gate blocking on its own log.
+        # shellcheck disable=SC2016  # single quotes intentional: $1/$2 are bash -c positionals
         if command -v flock >/dev/null 2>&1 &&
            flock -w 1 "$LOOP_LOG.lock" bash -c 'printf "%s\n" "$1" >> "$2"' _ "$line" "$LOOP_LOG"; then
             :
@@ -208,7 +222,34 @@ BASE=$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo unborn)
 HASH=$(sha256sum <<<"${REPO_ID}@${BASE}${NL}${DIFF}" | cut -d' ' -f1)
 CACHE="$HOME/.claude/coderlap/codex-reviewed"
 mkdir -p "$CACHE"
-find "$CACHE" -type f -mmin +1440 -delete 2>/dev/null
+# Sweep expired cache state. .lock files are NEVER deleted: flock does not
+# bump mtime on acquisition, so a held lock could be unlinked and a second
+# gate would lock a fresh inode — two "exclusive" critical sections at once
+# (locks are empty; leaving them costs bytes, reaping them costs atomicity).
+# rounds-* DATA files are deleted only WHILE HOLDING their lock, with the age
+# re-checked inside the critical section — an unlocked delete could race a
+# concurrent locked append and lose rounds.
+find "$CACHE" -maxdepth 1 -type f ! -name '*.lock' -mmin +1440 2>/dev/null |
+while IFS= read -r swept; do
+    case "$swept" in
+        */rounds-*)
+            command -v flock >/dev/null 2>&1 || continue
+            # shellcheck disable=SC2016  # single quotes intentional: $1 is a bash -c positional
+            flock -w 1 "$swept.lock" bash -c \
+                '[ -n "$(find "$1" -maxdepth 0 -mmin +1440 2>/dev/null)" ] && rm -f "$1"' \
+                _ "$swept" 2>/dev/null || true
+            ;;
+        *) rm -f "$swept" 2>/dev/null ;;
+    esac
+done
+# Round-cap parameters + state location (two-brain-convergence.md CAP-STOPPED)
+# are computed HERE, before the cache fast-path, because both paths need them:
+# the fresh-review decision below, and the cached retry — which must stay LOUD
+# when it rides over an unresolved cap escalation.
+CAP="${CODERV_GATE_ROUND_CAP:-3}"
+[[ "$CAP" =~ ^[1-9][0-9]*$ ]] || CAP=3
+CANON_REPO=$(readlink -f "$REPO_ID" 2>/dev/null) || CANON_REPO="$REPO_ID"
+ROUNDS_FILE="$CACHE/rounds-$(sha256sum <<<"${CANON_REPO}@${BASE}" | cut -d' ' -f1)"
 # Already reviewed once (the adjudicate-then-retry of an IDENTICAL diff): the
 # commit is allowed to proceed. Log the successful retry so the dashboard
 # shows the loop closing — without it, the viewer would freeze on the denial
@@ -222,6 +263,62 @@ if [[ -f "$CACHE/$HASH" ]]; then
     log_event claude commit_attempt "$(jq -cn \
         --arg sub "$SUBCMD" --argjson bytes "${#DIFF}" \
         '{subcmd:$sub, diff_bytes:$bytes, cached:true}')"
+    # The cached decision is read from the marker's OWN recorded outcome —
+    # never inferred from the repo/HEAD-wide round state, which may describe
+    # a DIFFERENT diff (an LGTM'd diff must not be denied because an earlier
+    # diff at this HEAD escalated, and a CAP-STOPPED allow must keep its
+    # caveat on retry). Markers are written per terminal path:
+    #   "lgtm" | "cap_stopped round=N findings=M" | "denied round=N material=M"
+    # An empty/legacy marker reads as a plain reviewed-ok pass.
+    MARKER_STATE=$(cat "$CACHE/$HASH" 2>/dev/null)
+    CAP_RIDE=0; R_UNVERIFIED=0; R_ROUND=0; R_MAT=0
+    case "$MARKER_STATE" in
+        cap_stopped*)
+            log_event system outcome "$(jq -cn '{result:"passed", cached:true, cap_stopped:true}')"
+            allow_with_warning \
+                "⚠ codex-review-gate: retry of a CAP-STOPPED diff ALLOWED — its marginal findings still stand" \
+                "This identical diff was previously allowed at the round cap with MARGINAL findings open ($MARKER_STATE). The retry does not resolve them: surface those findings to the owner alongside this commit (transparency rule — never silently dropped)."
+            ;;
+        denied*)
+            R_ROUND=$(sed -n 's/.*round=\([0-9][0-9]*\).*/\1/p' <<<"$MARKER_STATE")
+            R_MAT=$(sed -n 's/.*material=\([0-9][0-9]*\).*/\1/p' <<<"$MARKER_STATE")
+            if [[ "$R_ROUND" =~ ^[0-9]+$ && "$R_MAT" =~ ^[0-9]+$ ]]; then
+                (( R_ROUND >= CAP && R_MAT > 0 )) && CAP_RIDE=1
+            else
+                # a denied marker we cannot parse = treated as an open
+                # escalation: deny unless the owner explicitly overrides
+                CAP_RIDE=1; R_UNVERIFIED=1
+            fi
+            ;;
+    esac
+    if (( CAP_RIDE )); then
+        # An open (or unverifiable) CAP-REACHED escalation is NOT cleared by
+        # an identical retry. The ONLY in-band pass is the owner's explicit
+        # override signal — an agent must never set it on its own judgment.
+        # This is the owner-override mechanism the durable escalation state
+        # requires: machine-checkable, loud, and attributable to the human.
+        if [[ "${CODERV_GATE_OWNER_OVERRIDE:-0}" == "1" ]]; then
+            log_event system outcome "$(jq -cn --argjson unv "$R_UNVERIFIED" \
+                '{result:"passed", cached:true, over_cap_escalation:true, owner_override:true, state_unverified:($unv==1)}')"
+            allow_with_warning \
+                "⚠ codex-review-gate: OWNER OVERRIDE (CODERV_GATE_OWNER_OVERRIDE=1) — commit allowed over a CAP-REACHED escalation ($R_MAT material finding(s) open at round $R_ROUND$( ((R_UNVERIFIED)) && printf '%s' '; state unverified' ))" \
+                "The owner explicitly overrode an open CAP-REACHED escalation for this identical diff. The material findings remain unresolved by this commit and must be surfaced alongside it (transparency rule — never silently dropped)."
+        fi
+        log_event system outcome "$(jq -cn --argjson unv "$R_UNVERIFIED" \
+            '{result:"denied", cached:true, over_cap_escalation:true, state_unverified:($unv==1)}')"
+        R_WHY="$R_MAT material finding(s) open at round $R_ROUND"
+        (( R_UNVERIFIED )) && R_WHY="this diff's denial record could not be parsed — treated as an open escalation (conservative)"
+        jq -n --arg r "CAP-REACHED escalation is still OPEN for this repo@HEAD ($R_WHY). An identical-diff retry does NOT clear it. Options: fix the material findings (a changed diff gets a fresh review), or the OWNER explicitly overrides by re-running this exact commit with CODERV_GATE_OWNER_OVERRIDE=1 — the override is the owner's in-band decision signal; never set it on your own judgment." \
+              --arg msg "⛔ codex-review-gate: identical retry DENIED — CAP-REACHED escalation open ($R_WHY); owner override: CODERV_GATE_OWNER_OVERRIDE=1" '{
+            systemMessage: $msg,
+            hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: $r
+            }
+        }'
+        exit 0
+    fi
     log_event system outcome "$(jq -cn '{result:"passed", cached:true}')"
     exit 0
 fi
@@ -289,6 +386,35 @@ else
     DRIFT_NOTE="⚠ no approved plan on file (no /before spec for this repo) — drift NOT checked (reviewed for correctness only)."
 fi
 
+# Severity contract, shared by both prompt branches. The tags are defined by
+# IMPACT, not likelihood — the cap below only ever auto-allows marginal-tagged
+# findings, so a tag that lets a serious failure read as marginal would be a
+# hole in the gate. The wording (incl. the "never tag as [edge]" rule) was
+# co-designed with the reviewer model itself.
+SEVERITY_RULES='Tag EVERY finding with exactly ONE impact severity in square
+brackets, chosen by IMPACT, not likelihood:
+  [data-loss]   = loss or corruption of user data.
+  [security]    = confidentiality, integrity, authorization, or any other
+                  security-guarantee failure.
+  [correctness] = any reachable wrong user-visible or externally observable
+                  result not covered by the two above.
+  [edge]        = bounded, recoverable misbehavior on unlikely input.
+  [theoretical] = proven unreachable under supported real-world execution
+                  (not merely unlikely).
+Never tag a reachable security, data-integrity, or wrong-result failure as
+[edge], regardless of rarity, recoverability, or blast radius. A finding with
+no severity tag is treated as material.
+Place the severity tag at the VERY START of the finding, in the leading
+bracket cluster (immediately after [BUG]/[DRIFT]) — a tag appearing only in
+the body text does not count, and more than one severity tag on a finding is
+treated as untagged.
+The two groups and their consequences: MATERIAL = [data-loss] | [security] |
+[correctness] | untagged — always blocks the commit, and escalates to the
+owner once the round cap is reached. MARGINAL = [edge] | [theoretical] — may
+be allowed-with-caveat once the round cap is reached.
+Output ONLY the findings list — no preamble, no closing summary. Any prose
+outside a list item is treated as one additional MATERIAL finding.'
+
 if [[ -n "$SPEC" ]]; then
     PROMPT="You are the independent adversarial reviewer in a two-model workflow.
 An approved plan was written by the other AI (Claude) BEFORE this diff. Review
@@ -301,6 +427,7 @@ Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, tagging each
 later round — surfacing one finding per recommit wastes a converged retry and
 lets real bugs hide behind cosmetic ones. If you can find it, report it now.
 For each finding give file:line, the concrete failure scenario, and the fix.
+$SEVERITY_RULES
 If the diff faithfully implements the plan with no significant issue, reply
 exactly: LGTM
 
@@ -308,7 +435,7 @@ exactly: LGTM
 $SPEC
 --- END PLAN ---"
 else
-    PROMPT='You are the independent adversarial reviewer in a two-model workflow.
+    PROMPT="You are the independent adversarial reviewer in a two-model workflow.
 Review this outgoing git diff for correctness bugs, edge cases, security,
 and data integrity. Style nits do not count.
 
@@ -316,8 +443,9 @@ Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe
 first. Do NOT hold a deeper issue back for a later round — surfacing one
 finding per recommit wastes a converged retry and lets real bugs hide behind
 cosmetic ones. If you can find it, report it now. For each finding give
-file:line, the concrete failure scenario, and the fix. If nothing significant,
-reply exactly: LGTM'
+file:line, the concrete failure scenario, and the fix.
+$SEVERITY_RULES
+If nothing significant, reply exactly: LGTM"
 fi
 
 # Live-loop: Claude has produced a diff and is attempting a commit; the
@@ -369,9 +497,14 @@ if [[ $RC -ne 0 || -z "$REVIEW" ]]; then
         "CODEX REVIEW FAILED (exit $RC, possibly a timeout). Tell the owner explicitly; per the AI workflow rules a skipped review must never stay silent."
 fi
 
-touch "$CACHE/$HASH"
+# NOTE: the review-cache marker is published PER TERMINAL PATH (in the LGTM
+# branch below, and after the rounds append for the findings paths) — never
+# up front. Publishing it before the rounds append opens a window where a
+# concurrent identical attempt takes the cached fast path against stale
+# round state and passes without the mandatory escalation caveat.
 
 if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
+    printf 'lgtm' > "$CACHE/$HASH"
     log_event codex verdict "$(jq -cn "${DUR_ARG[@]}" '{verdict:"lgtm", findings:0, duration_ms:$dur}')"
     log_event system outcome "$(jq -cn '{result:"passed"}')"
     MSG="✓ Codex review: LGTM"
@@ -397,13 +530,12 @@ if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
     exit 0
 fi
 
-# Live-loop: the reviewer found problems and is about to block the commit
-# once. Emit the verdict plus one event per COMPLETE finding so the dashboard
-# can card each one. A finding starts at a numbered/bulleted marker and owns
-# every following line until the next marker — so wrapped evidence/remediation
-# lines stay with their finding (not truncated to the first line). Each finding
-# is emitted NUL-delimited to survive its own embedded newlines. Parsing is
-# best-effort and log-only — it never gates.
+# The reviewer found problems. Findings are parsed BEFORE the allow/deny
+# decision because the round cap below reads their severities. The failure
+# direction of parsing is DENY: the cap is only ever unlocked by successfully
+# parsed, all-marginal findings — a parse failure just leaves the gate as
+# strict as it was before the cap existed. The dashboard events stay pure
+# side-effects.
 # A finding STARTS at a top-level marker: a number (`N.`/`N)`, any indent) or
 # a bullet (`-`/`*`) at COLUMN 0. An INDENTED `-`/`*` is a nested evidence
 # bullet and folds into its parent finding, not a new one (else nested bullets
@@ -412,12 +544,121 @@ fi
 TOPMARK='^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]'
 FINDING_COUNT=$(grep -cE "$TOPMARK" <<<"$REVIEW" 2>/dev/null)
 [[ "$FINDING_COUNT" =~ ^[0-9]+$ ]] || FINDING_COUNT=0
-log_event codex verdict "$(jq -cn --argjson n "$FINDING_COUNT" "${DUR_ARG[@]}" '{verdict:"findings", findings:$n, duration_ms:$dur}')"
-# NUL-delimited findings are piped STRAIGHT into the read loop — never captured
+# NUL-delimited findings are read STRAIGHT into the array — never captured
 # in $(...), which strips NUL bytes and would merge every finding into one.
+FINDINGS=()
 if (( FINDING_COUNT > 0 )); then
     while IFS= read -r -d '' fitem; do
         [[ -z "${fitem//[[:space:]$'\n']/}" ]] && continue
+        FINDINGS+=("$fitem")
+    done < <(awk '
+        /^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]/ {
+            if (buf != "") printf "%s\0", buf
+            sub(/^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]+/, "")
+            buf = $0; next
+        }
+        { if (buf != "") buf = buf "\n" $0 }
+        END { if (buf != "") printf "%s\0", buf }
+    ' <<<"$REVIEW" 2>/dev/null)
+fi
+
+# Severity per finding — the IMPACT tags the prompt demands. MATERIAL =
+# data-loss | security | correctness | untagged/unrecognized (a reviewer that
+# forgets the tag must never unlock the cap). MARGINAL = edge | theoretical.
+# Only the LEADING bracket-tag cluster of the finding's first line counts —
+# a finding whose EVIDENCE quotes a literal "[edge]" further along must stay
+# untagged/material, and per the prompt exactly ONE severity is legal: zero
+# or multiple severities in the cluster classify material too.
+sev_label() {
+    local first t sev="" n=0
+    first=${1%%$'\n'*}
+    first=$(tr '[:upper:]' '[:lower:]' <<<"$first")
+    first=${first#"${first%%[![:space:]]*}"}   # ltrim
+    first=${first#\*\*}                        # tolerate a leading bold marker
+    while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
+        t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
+        case "$t" in
+            data-loss|security|correctness|edge|theoretical)
+                sev="$t"; n=$(( n + 1 )) ;;
+            *) ;;   # non-severity tags ([bug]/[drift]/…) just pass through
+        esac
+    done
+    if (( n == 1 )); then printf '%s' "$sev"; else printf 'untagged'; fi
+}
+MATERIAL_COUNT=0; SEV_SUMMARY=""
+for fitem in "${FINDINGS[@]}"; do
+    lbl=$(sev_label "$fitem")
+    case "$lbl" in
+        edge|theoretical) ;;
+        *) MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
+    esac
+    SEV_SUMMARY+="${SEV_SUMMARY:+,}$lbl"
+done
+# A prose reply with no parseable list is ONE unclassifiable finding: material.
+if (( ${#FINDINGS[@]} == 0 )); then
+    FINDING_COUNT=1; MATERIAL_COUNT=1; SEV_SUMMARY="prose-unparsed"
+else
+    # Prose BEFORE the first list marker escapes the splitter — and would
+    # otherwise escape severity classification too, letting a material
+    # finding written as preamble slip past the cap unlock. The prompt
+    # forbids preambles; a violation classifies MATERIAL (the conservative
+    # direction — here the failure direction of loose parsing would be
+    # ALLOW, so unparsed prose must always count against the cap).
+    PREAMBLE=$(awk '/^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]/{exit} {print}' <<<"$REVIEW")
+    if [[ -n "${PREAMBLE//[[:space:]$'\n']/}" ]]; then
+        # Counted in BOTH totals — logs, trajectory, and owner messages must
+        # report the real number of open findings, unparsed prose included.
+        FINDING_COUNT=$(( FINDING_COUNT + 1 ))
+        MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+        SEV_SUMMARY+="${SEV_SUMMARY:+,}preamble-unparsed"
+    fi
+fi
+
+# --- Round cap state append (CAP/CANON_REPO/ROUNDS_FILE set above, before
+# the cache fast-path). One line per reviewed-with-findings round for this
+# (repo, HEAD): "<finding_count> <material_count> <severity summary>". Key is
+# the CANONICAL repo path + HEAD — per-session keys would let a fresh session
+# reset the cap (a bypass), and distinct worktrees already resolve to
+# distinct toplevels. Read + append happen inside ONE bounded flock critical
+# section: per-append locking alone would let two concurrent reviews compute
+# the same round number. Lock/flock failure leaves ROUND empty → the strict
+# pre-cap behaviour (deny with findings), never a cap unlock. No delete path:
+# HEAD movement orphans the file and the 24h sweep above reaps it.
+ROUND=""; TRAJECTORY=""
+if command -v flock >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # single quotes intentional: $1/$2 are bash -c positionals
+    # Round number and trajectory are computed from SCHEMA-VALID lines only
+    # ("<count> <material> <summary>") — a corrupt or torn record can neither
+    # inflate the round toward the cap nor smuggle text into the trajectory.
+    ROUNDS_OUT=$(flock -w 2 "$ROUNDS_FILE.lock" bash -c '
+        f="$1"; line="$2"
+        prior=0
+        [ -f "$f" ] && prior=$(grep -cE "^[0-9]+ [0-9]+ " "$f" 2>/dev/null)
+        case "$prior" in ""|*[!0-9]*) prior=0 ;; esac
+        printf "%s\n" "$line" >> "$f"
+        traj=$(awk "/^[0-9]+ [0-9]+ /{printf \"%s%s\", sep, \$1; sep=\"->\"}" "$f" 2>/dev/null)
+        printf "%s|%s" "$(( prior + 1 ))" "$traj"
+    ' _ "$ROUNDS_FILE" "$FINDING_COUNT $MATERIAL_COUNT $SEV_SUMMARY" 2>/dev/null)
+    if [[ "$ROUNDS_OUT" == *"|"* ]]; then
+        ROUND="${ROUNDS_OUT%%|*}"; TRAJECTORY="${ROUNDS_OUT#*|}"
+        [[ "$ROUND" =~ ^[0-9]+$ ]] || { ROUND=""; TRAJECTORY=""; }
+    fi
+fi
+# The cache marker for a findings verdict is written at each TERMINAL path
+# below (cap-allow / deny), carrying that outcome — and only when the round
+# append succeeded. A failed append publishes nothing: an identical retry
+# must earn a fresh review rather than pass silently past state the gate
+# never wrote.
+
+log_event codex verdict "$(jq -cn --argjson n "$FINDING_COUNT" \
+    --argjson mat "$MATERIAL_COUNT" --argjson round "${ROUND:-null}" \
+    --arg traj "$TRAJECTORY" "${DUR_ARG[@]}" \
+    '{verdict:"findings", findings:$n, material:$mat, round:$round, trajectory:$traj, duration_ms:$dur}')"
+# Emit one event per finding so the dashboard can card each one. Wrapped
+# evidence/remediation lines stay with their finding (the splitter above owns
+# everything until the next top-level marker).
+if (( ${#FINDINGS[@]} > 0 )); then
+    for fitem in "${FINDINGS[@]}"; do
         ftag="note"
         [[ "$fitem" == *"[DRIFT]"* ]] && ftag="drift"
         [[ "$fitem" == *"[BUG]"* ]] && ftag="bug"
@@ -446,22 +687,88 @@ if (( FINDING_COUNT > 0 )); then
         log_event codex finding "$(jq -cn --arg tag "$ftag" --arg text "$fitem" \
             --arg file "$ffile" "${LINE_ARG[@]}" \
             '{tag:$tag, text:$text, file:(if $file=="" then null else $file end), line:$line}')"
-    done < <(awk '
-        /^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]/ {
-            if (buf != "") printf "%s\0", buf
-            sub(/^([[:space:]]*[0-9]+[.)]|[-*])[[:space:]]+/, "")
-            buf = $0; next
-        }
-        { if (buf != "") buf = buf "\n" $0 }
-        END { if (buf != "") printf "%s\0", buf }
-    ' <<<"$REVIEW" 2>/dev/null)
+    done
 else
     # Codex replied in prose without a list — log the raw review so nothing is lost.
     log_event codex finding "$(jq -cn --arg tag "note" --arg text "$REVIEW" '{tag:$tag, text:$text}')"
 fi
-log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" '{result:"denied", findings:$n}')"
 
-REASON="CODEX ADVERSARIAL REVIEW (commit paused once, per the AI workflow rules):
+# --- CAP-STOPPED allow: round cap reached and EVERY finding is marginal ----
+# The findings are not dismissed — they go to the owner verbatim, loudly; the
+# commit just stops being hostage to edge/theoretical-only residue. Material
+# findings never take this path, nor do unparsed/untagged ones (both count as
+# material above), nor a failed round counter (ROUND empty).
+if [[ -n "$ROUND" ]] && (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )) && (( ${#FINDINGS[@]} > 0 )); then
+    printf 'cap_stopped round=%s findings=%s' "$ROUND" "$FINDING_COUNT" > "$CACHE/$HASH"
+    log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
+        --argjson n "$FINDING_COUNT" --arg traj "$TRAJECTORY" \
+        '{round:$round, findings:$n, trajectory:$traj}')"
+    log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
+        --argjson round "$ROUND" --arg traj "$TRAJECTORY" \
+        '{result:"passed", cap_stopped:true, findings:$n, round:$round, trajectory:$traj}')"
+    CTX="CAP-STOPPED (round cap, enforced by the gate): review round
+$ROUND reached the cap ($CAP) and EVERY open finding is MARGINAL
+([edge]/[theoretical]) — the commit is ALLOWED with this caveat instead of
+blocked. Findings trajectory: $TRAJECTORY. Surface ALL findings below to the
+owner VERBATIM alongside the commit (transparency rule — never silently
+dropped); the owner remains the arbiter and may still demand fixes.
+
+$REVIEW"
+    [[ -n "$TRUNC_NOTE" ]] && CTX+=$'\n\n'"$TRUNC_NOTE"
+    [[ -n "$HIST_NOTE" ]] && CTX+=$'\n\n'"$HIST_NOTE"
+    [[ -n "$DRIFT_NOTE" ]] && CTX+=$'\n\n'"$DRIFT_NOTE"
+    allow_with_warning \
+        "⚠ CAP-STOPPED: round $ROUND/$CAP — all $FINDING_COUNT open findings marginal; commit ALLOWED with caveat (findings go to the owner)" \
+        "$CTX"
+fi
+
+# --- Deny. At round >= cap with material findings open, the deny becomes an
+# explicit owner escalation (durable: the counter never resets at this HEAD,
+# so every later material deny here stays escalated). Below the cap it is the
+# normal adjudicate-and-retry message. Changed diffs always get fresh reviews
+# — a genuinely fixed diff must be able to reach LGTM; the gate never
+# hard-locks the owner's work.
+CAP_ESCALATED=0
+[[ -n "$ROUND" ]] && (( ROUND >= CAP )) && CAP_ESCALATED=1
+# Record this diff's own outcome in its marker so a cached retry acts on
+# THIS verdict (below-cap deny retries pass per the adjudicate-then-retry
+# contract; at-cap material denies stay escalated). No round recorded → no
+# marker → the retry re-reviews.
+[[ -n "$ROUND" ]] && printf 'denied round=%s material=%s' "$ROUND" "$MATERIAL_COUNT" > "$CACHE/$HASH"
+if [[ -n "$ROUND" ]]; then
+    ROUND_NOTE=" — round $ROUND of cap $CAP for this repo@HEAD; findings trajectory: $TRAJECTORY"
+else
+    # flock missing or lock timed out: no round was recorded, so the cap is
+    # not applied this run — say so instead of silently degrading to the
+    # pre-cap behaviour.
+    ROUND_NOTE=" — round tracking unavailable this run (flock missing or lock timeout); the round cap was NOT applied"
+fi
+if (( CAP_ESCALATED )); then
+    log_event system cap_escalated "$(jq -cn --argjson round "$ROUND" \
+        --argjson mat "$MATERIAL_COUNT" --arg traj "$TRAJECTORY" \
+        '{round:$round, material:$mat, trajectory:$traj}')"
+fi
+log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
+    --argjson mat "$MATERIAL_COUNT" --argjson round "${ROUND:-null}" \
+    --arg traj "$TRAJECTORY" --argjson esc "$CAP_ESCALATED" \
+    '{result:"denied", findings:$n, material:$mat, round:$round, trajectory:$traj, cap_escalated:($esc==1)}')"
+
+if (( CAP_ESCALATED )); then
+    REASON="CAP-REACHED — ESCALATE TO THE OWNER (round $ROUND >= cap $CAP; findings trajectory: $TRAJECTORY).
+$MATERIAL_COUNT of $FINDING_COUNT open finding(s) are MATERIAL
+(data-loss/security/correctness/untagged), so this attempt is DENIED — and
+the review loop is OVER. Do NOT fix-and-recommit again on your own judgment:
+STOP and present the owner the findings below VERBATIM, plus the options (fix
+the material findings / owner overrides the gate / park the work). The owner
+decides; you do not spend another round. (After the owner decides: either the
+material findings get fixed — a changed diff earns a fresh review — or the
+OWNER re-runs this exact commit with CODERV_GATE_OWNER_OVERRIDE=1; the
+explicit override passes with a loud caveat and is never yours to set.)
+(two-brain-convergence.md: CAP-STOPPED.)
+
+$REVIEW"
+else
+    REASON="CODEX ADVERSARIAL REVIEW (commit paused once, per the AI workflow rules)$ROUND_NOTE:
 
 $REVIEW
 
@@ -477,14 +784,30 @@ STOP and surface to the owner when the SAME unresolved finding has been rejected
 twice on substantially the same rationale (same underlying claim, same cited
 evidence, no materially new code or facts) — that is a loop, not convergence; the
 owner decides, you do not keep re-committing."
+fi
 [[ -n "$TRUNC_NOTE" ]] && REASON+=$'\n\n'"$TRUNC_NOTE"
 [[ -n "$HIST_NOTE" ]] && REASON+=$'\n\n'"$HIST_NOTE"
 [[ -n "$DRIFT_NOTE" ]] && REASON+=$'\n\n'"$DRIFT_NOTE"
-jq -n --arg r "$REASON" '{
-    hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: $r
-    }
-}'
+if (( CAP_ESCALATED )); then
+    # The escalation must be OWNER-visible, not only agent-context: a
+    # systemMessage rides alongside the deny so the human sees the cap state
+    # in the transcript without relying on the agent to relay it.
+    jq -n --arg r "$REASON" \
+        --arg msg "⛔ codex-review-gate CAP-REACHED: round $ROUND/$CAP, $MATERIAL_COUNT material finding(s) still open — owner decision required (trajectory: $TRAJECTORY)" '{
+        systemMessage: $msg,
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $r
+        }
+    }'
+else
+    jq -n --arg r "$REASON" '{
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $r
+        }
+    }'
+fi
 exit 0

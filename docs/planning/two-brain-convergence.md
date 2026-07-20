@@ -45,3 +45,22 @@ final authority above both models.
 ## Never forces agreement
 Documented disagreement is legal. "100%" := empty VERIFIED unresolved-material
 set — not consensus on opinions.
+
+## Commit-phase enforcement (codex-review-gate.sh, 2026-07-20)
+The cap is enforced BY THE MACHINE at the commit gate, not by prose:
+- The reviewer must impact-tag every finding. MATERIAL = [data-loss] |
+  [security] | [correctness] | untagged/unparsed. MARGINAL = [edge] |
+  [theoretical].
+- Round counter per (canonical repo, HEAD): flock-atomic read+append, no
+  delete path (HEAD movement + the 24h sweep reset it). Default cap 3,
+  override CODERV_GATE_ROUND_CAP.
+- round >= cap AND >=1 material open -> DENY = THIS DOC's CAP-STOPPED end
+  state: the loop is over, the owner decides. An identical-diff retry stays
+  DENIED until the owner asserts the explicit in-band override
+  (CODERV_GATE_OWNER_OVERRIDE=1 on the retried commit), which passes WITH a
+  loud caveat — the override is the owner's decision signal, never the
+  agent's, and it keeps the gate from ever hard-locking the owner out.
+- round >= cap AND all findings marginal -> ALLOW with a loud caveat, the
+  findings surfaced to the owner verbatim. This is a commit-phase refinement,
+  NOT auto-CONVERGED: adjudication of the marginal residue passes to the
+  owner instead of holding the commit hostage.
