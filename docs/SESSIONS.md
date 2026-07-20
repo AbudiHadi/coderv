@@ -38,6 +38,81 @@ sudo -u appuser bash -c 'export NVM_DIR=/home/appuser/.nvm; . $NVM_DIR/nvm.sh; c
 
 ---
 
+## 2026-07-20 — System map is now a standard audit deliverable — BUILT + REVIEWED, UNCOMMITTED (context gate); toolkit reinstalled to v0.11.0
+
+Morning session. Two things happened, one still in flight:
+
+**1. Installed toolkit was STALE — fixed.** The 7 skills in `~/.claude/skills/`
+predated v0.10/v0.11 (old context-gate too). Ran `./install.sh --force` after
+verifying no local-only hook fixes would be lost (only diff vs repo: the
+install marker). Any project now gets bare-`/coderv`, the 🏛 audit shape,
+verify step, plan-phase review.
+
+**2. The 🏛 audit now ALWAYS delivers a system map (in flight, uncommitted).**
+Owner asked for it after a live Al-Rafiq session promised an architecture
+drawing and died before rendering it. Full /before flow ran:
+- Spec at `~/.claude/coderlap/specs/-root-claude-docs-toolkit.md` (round-3,
+  Base `1aa9938`). Codex plan review: **CONVERGED, 3 rounds, 7 findings, all
+  accepted** (granularity pinned to scout level; severity overlay uses
+  post-Codex findings; Mermaid ID/aggregation rules; healthy code edges from
+  the `edges` inventories dims 1+6 already compute; map assembled AFTER
+  carry-forward merge; dim-6 split inventory-always/validation-gated;
+  topology findings carry source_node/target_node/relationship).
+- Implemented in `skills/coderv/architecture-review.md` (+`## System map`
+  report section, assembly rules, gating/flowchart consistency edits),
+  `skills/coderv/SKILL.md` (🏛 row), `docs/skills.md` (matching update).
+- Fresh-context reviewer audited diff vs spec: 9/10 pass; its 4 real findings
+  ALL fixed (carried rows keep their `map:` line; stale "Dimensions 6–7 read
+  the scout's map" sentence; registry-validated edge-label gap;
+  docs/skills.md drift; SKILL.md "every node/edge" overclaim). Quotes were
+  machine-verified before acting.
+- **NOT committed — awaiting owner "approve" at the /ship pause** (the gate
+  will skip this diff as docs-only; the reviewer pass above was the real
+  review). Commit message drafted: "Make the system map a standard
+  deliverable of the architecture audit".
+
+**Also delivered (outside this repo):** the Al-Rafiq system-map Artifact the
+dead session owed the owner — https://claude.ai/code/artifact/cd5ee78d-4a66-4f76-9469-4e797efd070b
+— grounded in `/home/appuser/apps/alrafiq/docs/ARCH-REVIEW-2026-07-20-061412.md`
+(P1 push tap-routing + 10 more findings overlaid on the full service graph).
+Style matches the v0.11.0 workflow-flowchart artifact the owner likes.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+1aa9938 Add later-13 session handoff: rotation done, all release pages backfilled
+d6b3170 Mark release-page backfill done in the SESSIONS resume block
+5c4865b Rotate SESSIONS.md: move 8 older entries to SESSIONS-ARCHIVE.md
+$ git status --short
+ M docs/skills.md
+ M skills/coderv/SKILL.md
+ M skills/coderv/architecture-review.md
+$ cat VERSION
+0.11.0
+$ ls -la ~/.claude/coderlap/specs/-root-claude-docs-toolkit.md
+-rw-r--r-- 1 root root 2930 Jul 20 06:10 /root/.claude/coderlap/specs/-root-claude-docs-toolkit.md
+```
+
+**Gotchas the next session should know:**
+- The spec's `Base:` stamp is `1aa9938` = current HEAD, <24h old → drift-hunter
+  armed if the diff grows; but the diff is docs-only so the commit gate will
+  wave it through — the fresh-context review already done IS the review.
+- `mmdc` (mermaid-cli 11.16.0) can't render here (no Chrome in sandbox, exit
+  2) — fence balance was verified manually; don't re-burn time on it.
+- The report template's outer fence is now FOUR backticks (````markdown) to
+  nest the ```mermaid block — /lint and template-copying code must not
+  "normalize" it back to three.
+- This session ALSO committed earlier (1aa9938 and below, all pushed): the
+  later-13 handoff, release-page backfill bookkeeping, SESSIONS rotation.
+
+**Next session should probably:**
+1. Get owner's "approve" → commit the 3 files with the drafted message, push.
+2. Then this is a releasable feature: VERSION 0.11.0 → 0.12.0 + CHANGELOG
+   entry + `./release.sh` when the owner wants it out.
+3. Parked (unchanged): fold router/context installers into `install_gate_hook`.
+
+---
+
 ## 2026-07-19 (later 13) — Housekeeping cleared: SESSIONS rotated + ALL release pages backfilled; queue is EMPTY
 
 Short session that closed both items queued by later-12. Owner added

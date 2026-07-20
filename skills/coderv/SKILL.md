@@ -62,7 +62,7 @@ Read the argument and pick ONE shape:
 | ❓ **Question** | "how does", "why is", "what happens", "explain" | answer from docs + code — no pipeline, no edits |
 | 👋 **Wrap-up** | "done", "wrapping up", "stopping", "end of day" | /session |
 | 🧹 **Docs health** | "are docs fresh", "audit docs" | /lint alone |
-| 🏛 **Architecture / system audit** | "review architecture", "audit the system", "check all integrations", "is anything left running", "server left alone", "tech debt", "is this well-structured", "tight coupling" | **architecture-review.md** run-book → findings → (on yes) /before → work → verify → /ship |
+| 🏛 **Architecture / system audit** | "review architecture", "audit the system", "check all integrations", "is anything left running", "server left alone", "tech debt", "is this well-structured", "tight coupling" | **architecture-review.md** run-book → findings + system map (all services/modules at integration granularity, gaps highlighted) → (on yes) /before → work → verify → /ship |
 
 The 🏛 shape is driven by the `architecture-review.md` run-book beside this
 file: a read-only scout, then a **parallel fan-out** over seven dimensions

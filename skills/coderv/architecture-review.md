@@ -26,11 +26,11 @@ flowchart TD
     C -->|live runtime| D["7 dimensions"]
     C -->|partial runtime| DP["dims 6–7 gated<br/>per source that ran"]
     C -->|registry only| D1["6 dimensions<br/>(wiring vs registry;<br/>liveness NOT observed)"]
-    C -->|none| D2["5 code dimensions only"]
+    C -->|none| D2["5 code dims + dim-6 inventory<br/>(targets NOT validated)"]
     D --> E
     DP --> E
     D1 -->|dim 7 skipped| E
-    D2 -->|dims 1–5 only, 6–7 skipped| E
+    D2 -->|dim-6 validation + dim 7 skipped| E
 
     subgraph E ["Step 1 · FAN-OUT — parallel dimension agents"]
       direction LR
@@ -45,7 +45,7 @@ flowchart TD
 
     E --> F["Step 2 · DEDUP<br/>merge by file:line + principle<br/>(plain code, not an agent)"]
     F --> G["Step 3 · CODEX VERIFY<br/>each finding sent adversarially<br/>same stdin channel as codex-review-gate.sh<br/>refuted → dropped"]
-    G --> H["Step 4 · REPORT<br/>docs/ARCH-REVIEW-&lt;date&gt;.md<br/>scored P0–P3, file:line, principle, fix"]
+    G --> H["Step 4 · REPORT<br/>docs/ARCH-REVIEW-&lt;date&gt;.md<br/>scored P0–P3, file:line, principle, fix<br/>+ system map (topology + open findings)"]
     H --> I{"Findings to act on?"}
     I -->|yes, one yes| J["hand off to fix pipeline<br/>/before → work → verify → /ship"]
     I -->|no| K["report stands; /session surfaces open P0/P1"]
@@ -115,13 +115,22 @@ as the gate's "drift NOT checked"):
   (`ss ✓ · pm2 ✗ (daemon unreachable) · nginx ✓`); each of dimensions 6–7
   runs only the checks whose needed sources ran, and reports the rest as
   evidence gaps for that dimension.
-- `registry-only` → dimension 6 (integration wiring) runs **against the
-  registry only**; dimension 7 (service liveness) does NOT run. The report
-  states *"wiring checked against SERVER-MAP.md only; service liveness NOT
-  checked (runtime not observed)"*.
-- `none` → dimensions 6–7 do NOT run — the report states *"no live-service
-  context available → code-only audit; integration wiring and service
-  liveness NOT checked"*.
+- `registry-only` → dimension 6's code-side inventory runs from source as
+  always; its target **validation** runs **against the registry only**;
+  dimension 7 (service liveness) does NOT run. The report states *"wiring
+  validated against SERVER-MAP.md only; service liveness NOT checked
+  (runtime not observed)"*.
+- `none` → dimension 6 runs its code-side **inventory only** (edges labeled
+  code-inferred, targets NOT validated); dimension 7 does NOT run — the
+  report states *"no live-service context available → code-only audit;
+  integration targets NOT validated; service liveness NOT checked"*.
+
+The liveness gate applies to **validation claims, never to collection**:
+dimension 6 is split into an *inventory* half (enumerate every API call, DB
+ref, `proxy_pass`, env target from source — runs in every context, including
+`none`) and a *validation* half (does the target exist / listen — gated as
+above). This split is what lets the Step 4 system map draw code-inferred
+edges even in a code-only audit, honestly labeled.
 
 ## Step 1 — Fan-out: the seven dimensions
 
@@ -130,6 +139,20 @@ Each dimension is one agent, all in parallel. Every agent returns findings as
 `principle` names the violated rule so the advice is specific (e.g.
 *"tight coupling / low cohesion"*, not *"could be cleaner"*).
 
+Two additive pieces of the return contract feed the Step 4 system map:
+
+- **Dimensions 1 and 6 also return `edges`** — the inventories they already
+  compute to do their jobs (dim 1's module-import graph, dim 6's
+  integration-point list), as `{source_node, target_node, relationship}`
+  rows. Inventory only, no judgment, sanitized to operational fields exactly
+  like the scout map. No new collection pass — the map reuses work the
+  dimensions do anyway (DRY).
+- **Topology findings (dims 1, 6, 7) carry optional
+  `source_node` / `target_node` / `relationship` fields** (slug-matched to
+  map node IDs) so Step 4 can overlay them on the map structurally. Findings
+  without these fields (duplication, boundaries, dead code…) are report-only
+  — the map never guesses topology from prose.
+
 | # | Dimension | What it hunts | Names the principle |
 |---|---|---|---|
 | 1 | **Layering** | UI reaching into the DB, a lower layer importing an upper one, cycles | layer inversion / dependency cycle |
@@ -137,10 +160,11 @@ Each dimension is one agent, all in parallel. Every agent returns findings as
 | 3 | **Duplication** | The same logic in ≥2 places that should be one source of truth | DRY |
 | 4 | **Module boundaries** | Leaky abstractions, a public surface that exposes internals | SR / encapsulation |
 | 5 | **Dead code** | Exports nothing imports; routes nothing calls; feature-flagged-off branches left forever | dead code / YAGNI residue |
-| 6 | **Integration wiring** *(needs live context)* | An API call / DB ref / `proxy_pass` / env var pointing at a target that isn't in the registry or isn't a live listener | dangling integration |
+| 6 | **Integration wiring** *(inventory always runs; target validation needs live context)* | An API call / DB ref / `proxy_pass` / env var pointing at a target that isn't in the registry or isn't a live listener | dangling integration |
 | 7 | **Service liveness** *(needs live context)* | A PM2 app or port in the registry with no owner; a retired project's port re-bound; an nginx site whose upstream is dead ("a server left alone") | orphaned service / recycled-port hazard |
 
-Dimensions 6–7 read the scout's live-service map directly. On the owner's VPS
+Dimension 7 and dimension 6's *validation* half read the scout's live-service
+map directly (the inventory half reads source). On the owner's VPS
 they cross-check against `SERVER-MAP.md` §rules (decade-block port ownership,
 appuser-only PM2, one-nginx-file-per-domain) — the exact hazards the global
 CLAUDE.md warns about (recycled ports silently routing dead domains into live
@@ -227,7 +251,7 @@ basename>` — exactly one report ever holds a finding's open copy, so
 closing it in the newest report closes it everywhere. An open finding
 never silently vanishes between reports. Structure:
 
-```markdown
+````markdown
 # Architecture & integration audit — <YYYY-MM-DD>
 > Codex-verified. Advice only — no code was changed.
 > Base commit: <git rev-parse HEAD — full SHA (short hashes go ambiguous as history grows; abbreviate only for display); what this audit reviewed. Prefer auditing a CLEAN tree so the stamp truly describes the audited code; if dirty, append `+dirty:` + each changed file with its `git hash-object` blob SHA (deleted files as `path (deleted)` — there is no blob to hash) — those exact contents are what the audit saw; a later edit changes the hash, so staleness checks compare content, not filenames>
@@ -235,9 +259,26 @@ never silently vanishes between reports. Structure:
 
 ## Score:  P0 <n> · P1 <n> · P2 <n> · P3 <n>   ( <n> refuted by Codex )
 
+## System map
+> Granularity: deployable/runtime units (PM2 apps, listeners, nginx sites,
+> DBs) + top-level code modules; edges are integration-level relationships
+> (HTTP call, DB ref, proxy_pass, env target, module import) — never
+> function-level. Code-internal call exhaustiveness is NOT claimed.
+> Edge honesty: each edge class below is labeled **observed** (runtime seen),
+> **registry** (declared in or validated against SERVER-MAP.md — runtime not
+> observed), or **code-inferred** (read from source, target not validated) —
+> same liveness-context gating as dims 6–7.
+
+```mermaid
+flowchart LR
+    %% every node and edge from the assembled map — healthy edges plain,
+    %% gap edges/orphan nodes styled by severity (see assembly rules)
+```
+
 ## P0 — must fix (breaks or endangers production)
 - **<title>** — `path:line` · principle: <name> · Status: **open**
   <evidence>. **Fix:** <concrete step>.  ✓ Codex CONFIRMED
+  map: <source_node> —<relationship>→ <target_node>   <!-- topology findings only (dims 1/6/7); this line is what the system map draws — a carried row keeps it verbatim, or the gap silently vanishes from the next map -->
 
 ## P1 — high
   <same row format>
@@ -253,7 +294,29 @@ never silently vanishes between reports. Structure:
 
 ## Next
 👉 <the single highest-value fix>. Act on it? (hands into /before → work → verify → /ship)
-```
+````
+
+**System-map assembly (end of Step 4, after the carry-forward merge):**
+
+- **Topology** = the scout's sanitized map (runtime/registry nodes + edges)
+  merged with the `edges` inventories dims 1 and 6 returned. Operational
+  fields only — the sanitize-at-collection rule means no secret can reach
+  the diagram.
+- **Overlay** = the report's **complete open set** (fresh + carried rows —
+  assembling after the carry-forward merge is what keeps a gap from a prior
+  audit visible on the map). Only findings carrying
+  `source_node`/`target_node`/`relationship` are drawn: P0/P1 as red dashed
+  edges (or red orphan nodes), P2/P3 amber. Codex-refuted findings are never
+  drawn; `⚠ unverified` findings are drawn with the ⚠ marker in their label.
+  Healthy edges are drawn plain.
+- **Mermaid usability:** node IDs are deterministic slugs (lowercase,
+  `[^a-z0-9]` → `_`) with the display name in a quoted label; edges are
+  aggregated to ONE per relationship type per node pair (never one per call
+  site); past ~40 nodes, group nodes into per-subsystem `subgraph` blocks so
+  the diagram stays readable.
+- **Interactive runs:** after writing the report, OFFER to render the map as
+  an Artifact (same as the run-book's own flowchart) — offer, never
+  auto-run.
 
 **A finding is "open" until `/ship` closes it.** Every row starts at
 `Status: **open**`. When a commit fixes one, `/ship`'s hot-spot check (on the
