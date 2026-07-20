@@ -38,6 +38,33 @@ If missing, create it with this header:
 
 Read the file, return the topmost `## YYYY-MM-DD — ...` section verbatim. That's the last handoff.
 
+**Then offer the system map if an audit is waiting to be drawn.** A resume is
+exactly when an audit from a *previous* session gets picked up — and the map
+offer must not be lost across that boundary. After returning the handoff, check
+for the newest architecture review and whether its map was ever drawn:
+
+```bash
+REVIEW=$(ls docs/ARCH-REVIEW-*.md 2>/dev/null | sort | tail -1)   # newest by filename
+if [ -n "$REVIEW" ]; then
+  # open P0/P1 present?  (title rows still marked open in the P0/P1 sections)
+  # Scan the P0 AND P1 sections (a report with zero P0 findings OMITS the `## P0`
+  # header, so anchoring on P0 alone would miss every P1-only report). Turn ON at
+  # either header; turn OFF at any other `## ` section (P2/P3 or a named section).
+  OPEN=$(awk '/^## P0/||/^## P1/{on=1; next} /^## /{on=0} on && /^- / && /Status: \*\*open\*\*/' "$REVIEW")
+  # map already drawn?  ABSENT marker == not drawn (legacy reports have no line)
+  grep -q '^<!-- Map: drawn ' "$REVIEW" 2>/dev/null || grep -q '^Map: drawn ' "$REVIEW" 2>/dev/null
+  DRAWN=$?   # 0 = drawn, 1 = not drawn
+fi
+```
+
+If `$REVIEW` exists, has open findings, and is **not** drawn (`DRAWN` ≠ 0 / no
+`Map: drawn` line), OFFER the interactive map with the run-book's exact wording:
+*"This project has an open architecture review whose interactive map hasn't been
+drawn yet. Want the full interactive system map — draw.io-style pan/zoom canvas,
+🟢/🌐/⏸ node markers + 🔴 P0-P1 / 🟡 P2-P3 gap markers, click-to-trace? [y/N]"*.
+On **yes**, render it (per `architecture-review.md`'s canvas standard) and stamp
+the review `Map: drawn <date>`. Offer, never auto-draw.
+
 ### Otherwise (new handoff)
 
 Gather context before asking the user:

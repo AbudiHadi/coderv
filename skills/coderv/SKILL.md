@@ -29,11 +29,22 @@ Scan the project's state first (Step 2's commands), then **propose the single
 most likely next task** and get one yes. The tools look for everything; the
 human just confirms.
 
+The scan reads the newest architecture review too — its `ls` discovery is NOT
+covered by the KNOWN-ISSUES/*-GAPS "open items" grep, so add it explicitly:
+
+```bash
+REVIEW=$(ls docs/ARCH-REVIEW-*.md 2>/dev/null | sort | tail -1)   # newest by filename
+# open P0/P1 present, and has the map NOT been drawn? (absent marker == not drawn)
+[ -n "$REVIEW" ] && awk '/^## P0/||/^## P1/{on=1; next} /^## /{on=0} on&&/^- /&&/Status: \*\*open\*\*/' "$REVIEW" | grep -q . \
+  && ! grep -qE '^(<!-- )?Map: drawn ' "$REVIEW" && echo "audit open + map not drawn: $REVIEW"
+```
+
 ```markdown
 🔍 Scanning state…
   • Last session: <newest SESSIONS.md handoff, or "none">
   • Dirty git: <N uncommitted files, or "clean">
   • Open items: <top KNOWN-ISSUES / *-GAPS entry, or "none">
+  • Open audit: <newest ARCH-REVIEW with open P0/P1 + map not yet drawn, or "none">
   • Docs: linted <N> days ago <✅ / ⚠ stale>
 
 👉 **Most likely: <the one obvious next move>.**
@@ -46,6 +57,14 @@ Pick the proposal by this precedence — first hit wins:
 3. **Open gap / known-issue** flagged as next → propose tackling it.
 4. **Stale docs** (lint >14 days) and nothing else pending → propose `/lint`.
 5. Nothing pending → ask the one-liner: "Clean slate — what are we building?"
+
+**Independent of the pick above:** if the scan found an open ARCH-REVIEW whose
+map is not yet drawn, **also offer to draw it** in the proposal (a one-liner
+alongside the main move) — *"…and this project's open architecture review has no
+interactive map yet; want me to draw it? [y/N]"*. This is the resume path the
+live-session gap slipped through; the offer must not depend on which finding you
+pick. It stays an offer (never auto-draws); on yes, render per
+`architecture-review.md` and stamp the review `Map: drawn <date>`.
 
 Once the user confirms (or redirects), treat their answer as the request and
 fall through to Step 1. If they gave words in the first place, skip Step 0

@@ -260,6 +260,11 @@ never silently vanishes between reports. Structure:
 ## Score:  P0 <n> · P1 <n> · P2 <n> · P3 <n>   ( <n> refuted by Codex )
 
 ## System map
+<!-- Map: drawn <YYYY-MM-DD>   ← stamp this line ONLY when the interactive Artifact
+     has actually been rendered (fresh run or resume). If the line is ABSENT or
+     says anything other than `Map: drawn <date>`, the map is treated as NOT drawn
+     and every resume re-offers it — so legacy reports (no marker) still get the
+     offer. Stamping it is what stops a resume from nagging after the map exists. -->
 > Granularity: deployable/runtime units (PM2 apps, listeners, nginx sites,
 > DBs) + top-level code modules; edges are integration-level relationships
 > (HTTP call, DB ref, proxy_pass, env target, module import) — never
@@ -314,11 +319,20 @@ flowchart LR
   aggregated to ONE per relationship type per node pair (never one per call
   site); past ~40 nodes, group nodes into per-subsystem `subgraph` blocks so
   the diagram stays readable.
-- **Interactive runs — always OFFER the full flowchart.** After writing the
-  report, ask once, verbatim intent: *"Want the full interactive system map —
-  draw.io-style pan/zoom canvas, 🟢/🌐/⏸ node markers + 🔴 P0-P1 / 🟡 P2-P3 gap
-  markers, click-to-trace? [y/N]"*. On **yes**, render it; on no, the report's
-  `mermaid` fence is the deliverable. Offer, never auto-run.
+- **Always OFFER the full flowchart — on a fresh run AND on resume.** Ask once,
+  verbatim intent: *"Want the full interactive system map — draw.io-style
+  pan/zoom canvas, 🟢/🌐/⏸ node markers + 🔴 P0-P1 / 🟡 P2-P3 gap markers,
+  click-to-trace? [y/N]"*. The offer fires in **two** situations, so a map is
+  never silently skipped:
+  1. **After writing the report** (a fresh audit run), and
+  2. **When a session resumes** onto an existing review that still has open
+     findings and is **not** marked drawn — i.e. its System-map section has no
+     `Map: drawn <date>` line (absent counts as not-drawn). `/session last` and
+     `/coderv` Step 0 make this offer; see those skills.
+
+  On **yes**, render it AND stamp the report's System-map section
+  `Map: drawn <YYYY-MM-DD>` (so later resumes don't re-offer). On **no**, the
+  report's `mermaid` fence is the deliverable. Offer, never auto-run.
 
 **Canvas standard — one frozen engine, same map for every project.** A correct,
 readable diagram beats one squeezed onto a page: the map is an instrument
