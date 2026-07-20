@@ -5,6 +5,22 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.12.0] — 2026-07-20
+
+### Added
+- **The architecture-audit system map is now a draw.io-style interactive canvas, standardised across every project** (builds on ADR-014). A new frozen template `skills/coderv/systemmap.template.html` is the single rendering engine: each audit fills one data block (the `GRAPH` object — `meta` header, `nodes`, `edges`, `findings`), and the engine — canvas, styling, pan/zoom, emoji markers, click-to-trace — is never edited per project, so every project's map looks identical.
+  - **Draw.io feel:** the stage grows to the graph's natural extent (arbitrarily tall/wide) inside a pan-and-zoom viewport — never scaled down to cram it onto a page. Drag-to-pan + wheel-zoom for pointer users; a toolbar (**Fit** / **Width** / **+ / −**), arrow-key panning, and `Esc`-to-clear for keyboard/non-pointer users (a11y). Loads at Fit.
+  - **Emoji markers so state reads at a glance:** 🟢 live · 🌐 external · ⏸ parked/not-firing on nodes; 🔴 P0/P1 · 🟡 P2/P3 on gap edges. State is encoded in form (a coloured stripe) as well as colour, never colour alone.
+  - **One canonical payload — authored once, rendered twice:** the assembled node/edge/finding set is the single source; the audit writes the report's `mermaid` fence and the Artifact's `GRAPH` from that one set in the same step, so they stay identical. The `mermaid` fence is the durable static fallback (renders anywhere, diffs cleanly, no browser needed) — pan/zoom and click-to-trace are interactive-Artifact-only.
+  - **The map and the findings list are two views of one open set:** clicking (or keyboard-activating) a node highlights its gap, traces the path on the map, and spotlights + scrolls the matching finding into view in the rail; clicking a finding highlights its nodes and edges. A node in several findings cycles through them on repeated activations.
+  - **Interactive runs always OFFER the full map** with an explicit yes/no prompt after the report is written; on no, the `mermaid` fence is the deliverable.
+
+### Fixed
+- **System-map canvas: dragging to pan no longer flash-highlights the whole diagram or selects text.** A drag-release is no longer treated as a click (only a genuine click on blank canvas clears a trace), and the canvas sets `user-select: none` so panning never triggers native text selection.
+- **System-map canvas: every repo-controlled value is now rendered safely.** All node/edge/finding strings **and the header** (project, context, base, scores) live in the `GRAPH` data and are written via DOM `textContent` — never HTML substitution — so `<`, `&`, and quotes display as literal characters and can never inject markup. A `<` that must appear inside a string is written with its unicode escape so a closing `script` sequence can't break out; values render losslessly (a name `<worker>` shows as `<worker>`).
+- **System-map canvas: large graphs load fully fitted, and empty graphs don't crash.** The Fit action can now shrink below the interactive zoom floor so a very large map loads fully visible instead of cropped, and an empty node set falls back to a usable blank canvas instead of `-Infinity` dimensions.
+- **System-map canvas: edges between the same node pair no longer collide.** Each edge is keyed by a unique index, so multiple relationships between the same two nodes (even of the same severity) all render and click-to-trace highlights the right one; a finding references an edge by node pair (`from->to`) or a specific relationship (`from->to#rel`).
+
 ## [0.11.0] — 2026-07-19
 
 ### Added

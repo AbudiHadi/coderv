@@ -314,9 +314,80 @@ flowchart LR
   aggregated to ONE per relationship type per node pair (never one per call
   site); past ~40 nodes, group nodes into per-subsystem `subgraph` blocks so
   the diagram stays readable.
-- **Interactive runs:** after writing the report, OFFER to render the map as
-  an Artifact (same as the run-book's own flowchart) — offer, never
-  auto-run.
+- **Interactive runs — always OFFER the full flowchart.** After writing the
+  report, ask once, verbatim intent: *"Want the full interactive system map —
+  draw.io-style pan/zoom canvas, 🟢/🌐/⏸ node markers + 🔴 P0-P1 / 🟡 P2-P3 gap
+  markers, click-to-trace? [y/N]"*. On **yes**, render it; on no, the report's
+  `mermaid` fence is the deliverable. Offer, never auto-run.
+
+**Canvas standard — one frozen engine, same map for every project.** A correct,
+readable diagram beats one squeezed onto a page: the map is an instrument
+engineers pan around, not a picture. To guarantee *identical* style across every
+project, the interactive map is NOT hand-drawn per audit — it is rendered from a
+**frozen template shipped beside this run-book**: `systemmap.template.html`. The
+audit fills ONE data block — the `GRAPH` object: `meta` (project, context, base,
+scores), `nodes`, `edges`, `findings`. The engine (canvas, styling, pan/zoom,
+emoji, click-fix) is frozen and never edited per project, and the header is data
+in `GRAPH.meta` (rendered via `textContent`), NOT HTML tokens — so nothing
+repo-controlled is ever substituted into the page markup. Render by copying the
+template into the session scratchpad, replacing only the `GRAPH` object, and
+publishing that file as the Artifact.
+
+- **One canonical payload — author it once, render it twice.** The assembled
+  node/edge/finding set (topology + overlay, from the assembly rules above) is
+  the single source of truth. Produce the `mermaid` fence for the `.md` report
+  and the `GRAPH` object for the Artifact **from that one set in the same step**
+  — same nodes, same edges, same severities — and never hand-edit one without
+  the other. (This is a discipline the audit follows, not a runtime check: the
+  two are kept identical because they are written together from one list, not
+  reconciled after the fact.)
+- **`mermaid` fence = the static fallback.** It renders anywhere (GitHub, a
+  diff, no browser) but is a still picture: **no** pan/zoom, **no** click-to-
+  trace. Those are interactive-Artifact-only capabilities — never claim the
+  fence is interactive. The fence is what survives when the Artifact viewer
+  isn't there.
+- **Grows to the graph, never scaled to fit.** The stage is sized to the
+  diagram's natural extent — arbitrarily tall/wide — inside a pan/zoom viewport;
+  nothing is shrunk to cram it into a fixed box. Large-graph *legibility* is
+  handled by the `~40-node → per-subsystem subgraph` rule above (don't
+  re-specify it here) — this rule only governs how the canvas is navigated.
+- **Navigation, incl. a non-pointer path (a11y).** Pointer users get drag-pan +
+  wheel-zoom; keyboard/non-pointer users get the toolbar (**Fit** / **Width** /
+  **+ / −**) AND arrow-key panning + `Esc` to clear a trace — so every region is
+  reachable without a mouse. Visible focus on all controls;
+  `prefers-reduced-motion` honoured. Load at **Fit** (whole map visible).
+- **Legibility + the click-fix.** Node = a card: name, its integration
+  coordinate (`:port` / `lib/x.ts` / PM2 name), a kind tag, and a coloured
+  stripe — state in *form* as well as colour (never colour alone). Edge labels
+  ride a solid chip so they stay readable over other lines. The findings list
+  cross-links the map (click a finding → trace its nodes/edges, dim the rest;
+  click a node → its finding). **A drag never counts as a click** — releasing a
+  pan must not flash-highlight the whole diagram (only a genuine click on blank
+  canvas clears the trace). Severity colour (🔴/🟡) is its own scale, distinct
+  from the blue interactive accent.
+- **Self-contained.** One file, no external assets (Artifact CSP) — the frozen
+  template already satisfies this; keep it that way.
+- **Filling the data safely.** EVERY repo-controlled value — node/edge/finding
+  strings **and the header** (project, context, base, scores) — goes in the
+  `GRAPH` object (`GRAPH.meta` holds the header) and is written to the page via
+  DOM `textContent`, never by HTML substitution. So `<`, `&`, and quotes always
+  render as literal characters and can never inject markup — no HTML escaping is
+  needed for the values themselves. The one parse-time hazard is a literal
+  closing-`script` sequence sitting inside a `GRAPH` string: it would end the
+  script element before any JS runs. So a `<` inside any string must be written
+  as its JS unicode escape — the six characters **backslash-u-0-0-3-C** (i.e.
+  `\` followed by `u003C`) — NOT a raw `<` and NOT the HTML entity `&lt;`. In a
+  JS string literal that escape *is* the character `<`, so `textContent` renders
+  it back as a literal `<` losslessly (a name written `<worker>` displays as
+  the text `<worker>`), while the raw bytes on disk never form a closing-script
+  sequence. Do **not** hand-substitute values into the HTML.
+- **Referencing edges from a finding:** by **node pair** (`"from->to"`, = every
+  edge on that pair) or, to single out one of several relationships on a pair, by
+  **`"from->to#rel"`** where `rel` is that edge's explicit stable `rel` id (set it
+  on the edge; it is NOT the visible label, so two same-pair edges stay
+  addressable even with identical labels). The engine keys edges by a unique
+  index, so same-pair edges never collide, and a dangling edge (endpoint node
+  missing) is skipped rather than crashing the render.
 
 **A finding is "open" until `/ship` closes it.** Every row starts at
 `Status: **open**`. When a commit fixes one, `/ship`'s hot-spot check (on the
