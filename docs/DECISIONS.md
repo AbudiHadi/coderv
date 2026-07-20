@@ -33,6 +33,32 @@ What did we decide?
 
 ---
 
+## ADR-015: The interactive system map is rendered by a forced mechanical procedure, not described as a design goal
+
+**Date:** 2026-07-20
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+Follows ADR-014 (the 🏛 audit shape) — this hardens *how* that shape's system map gets drawn.
+
+### Context
+The audit ships a frozen HTML canvas (`skills/coderv/systemmap.template.html`) so every project's map looks and behaves identically (draw.io-style pan/zoom, click-to-trace, textContent injection-safety). But in a live Al-Rafiq session an agent, asked to "draw the map," treated it as a generic design task: it loaded the `artifact-design` skill (which actively invites bespoke palette/type/layout), hand-authored a completely custom HTML page, and never opened the run-book or the template — producing a cramped side-scroll strip with none of the frozen engine's guarantees. Root cause: the run-book *described the template's qualities* ("dark theme, severity colours, a flow of boxes") instead of *commanding the mechanical steps*, and the three render triggers (`/coderv` Step 0, `/session last` resume, the run-book's own Canvas standard) were soft one-file-hop pointers — nothing forced the template to be read before rendering. "Use the frozen engine" was advisory; the pull of a generic design skill won. This is the same disease as the resume-gap fix (offer anchored to the wrong event), one layer deeper: a capable agent builds an impressive lookalike that superficially matches and silently skips the guarantees.
+
+### Decision
+Make drawing the map an unambiguous mechanical procedure that FORBIDS hand-authoring, inlined at **all three** trigger sites (no more one-file-hop pointer). Every site now states the literal steps — (1) copy `systemmap.template.html` to scratch, (2) replace **only** the `GRAPH = {…}` block, (3) publish that file — plus an explicit prohibition: do **not** hand-author HTML/CSS/SVG and do **not** load `artifact-design` (or any bespoke-design skill) for the map; "if you are writing a `<style>` block or drawing SVG, STOP — you are doing it wrong." The run-book adds a **pre-publish self-check** keyed to an *immutable template fingerprint* — `grep -q 'FROZEN TEMPLATE' && grep -q 'const GRAPH = {'` — not weak engine strings (`elementFromPoint`, "Fit") a lookalike could coincidentally contain; if the fingerprint is absent the agent authored a bespoke page and must redo from step 1.
+
+### Alternatives considered
+- **Forced mechanical steps + fingerprint self-check** (chosen) — turns "use the template" from advice into a procedure with a machine-checkable gate; catches the exact failure mode observed.
+- **Keep the descriptive Canvas standard, just make the pointer louder** — rejected: the failure proves description loses to a capable agent + a generic design skill's pull; louder prose is still prose.
+- **A `PreToolUse(Artifact)` hook that blocks publishing a non-template arch-map** — considered, deferred: a real belt-and-suspenders option, but it needs a reliable way to tell an arch-map Artifact from any other and lives in harness config, not the run-book; the inlined mandate + self-check covers the observed case now. Revisit if a lookalike still slips through.
+
+### Consequences
+- Positive: identical, guaranteed-correct maps across every project; the fingerprint self-check rejects a bespoke lookalike before it publishes; the mandate is self-contained at each trigger, so an agent never has to open a second file to know the rule.
+- Negative / trade-off: the self-check is a convention the agent runs, not a runtime-enforced gate (no hook yet) — a determined agent could still skip it; the fingerprint depends on the `FROZEN TEMPLATE` banner staying in the template (a comment strip would silently disarm it).
+- Revisit if: a hand-authored map slips through again despite the mandate — then the deferred `PreToolUse(Artifact)` hook earns its place.
+
+---
+
 ## ADR-014: The architecture & integration audit is a `/coderv` shape woven through all seven commands — not an eighth command
 
 **Date:** 2026-07-19

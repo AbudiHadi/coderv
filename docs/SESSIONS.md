@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-07-20 (later 3) — Frozen map template FORCED at all 3 render triggers (73c6e9d) + ADR-015; closes last session's open item
+
+Picked up the open task from `(later 2)`. Another agent's independent diagnosis
+(surfaced by the owner) was verified correct AND sharper than the handoff — it
+found a **second** soft-pointer site the handoff missed, and named the real pull
+(`artifact-design`). Turned out to be **three** sites, not one.
+
+**What shipped (`73c6e9d`, pushed):**
+- The frozen-template mandate is now **inlined mechanically** at all three map
+  render triggers (previously soft one-file-hop pointers):
+  1. `skills/coderv/SKILL.md` (Step 0 on-yes),
+  2. `skills/session/SKILL.md` (resume on-yes — the site the last handoff missed),
+  3. `skills/coderv/architecture-review.md` (Canvas standard).
+  Each states literal steps — copy `systemmap.template.html` → replace ONLY the
+  `GRAPH = {…}` block → publish THAT file — and explicitly forbids hand-authoring
+  HTML/CSS/SVG and loading `artifact-design` for the map ("if you're writing a
+  `<style>` block or drawing SVG, STOP").
+- Added a **pre-publish self-check** in the run-book keyed to an *immutable
+  fingerprint*: `grep -q 'FROZEN TEMPLATE' && grep -q 'const GRAPH = {'`. This is
+  Codex's design-review finding (a weak `elementFromPoint`/"Fit" check could pass
+  a lookalike). Verified the grep passes on the genuine template (banner line 4 +
+  `const GRAPH = {` line 146) — a true gate, not a false one.
+- Reinstalled via `./install.sh --force`; live `~/.claude` copies match repo
+  (SKILL.md files differ only by the install marker; template + run-book identical).
+- **ADR-015** logged (map render = forced mechanical procedure, not a design goal;
+  deferred a `PreToolUse(Artifact)` hook as the belt-and-suspenders option).
+
+**Two-brain + fresh-context review:** Codex design review CONVERGED (2 findings,
+both adjudicated — the fingerprint one adopted). `/ship` fresh-context reviewer
+returned PASS / no findings, independently confirming the self-check is a true
+gate. codex-review-gate passed the commit diff (no deny).
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+73c6e9d Force the frozen system-map template on every arch-map render path
+4aca2d5 Add session handoff: map-offer-on-resume shipped; next task is forcing agents to use the frozen map template
+4eff5ea Fire the system-map offer on resume, not just after a fresh audit
+$ git status -sb | head -1
+## main...origin/main
+$ cat VERSION
+0.12.0
+```
+(this handoff + ADR-015 commit lands right after; tree otherwise clean, pushed.)
+
+**Gotchas:**
+- Same P0-only awk twin STILL lives in `session/SKILL.md` ~line 129 (new-handoff
+  path). Untouched again (out of scope) — carry forward, still worth a one-liner.
+- Map feature is STILL v0.12.0 content, **not yet released**. `./release.sh`
+  when the owner wants v0.12.0 tagged/out (VERSION + CHANGELOG already moved).
+- Owner's standing rule: do NOT touch the Al-Rafiq bespoke-map artifact — it's
+  their live test. This fix only changes the toolkit so future audits use the
+  real template.
+
+**Next session should probably:**
+- Release v0.12.0 (`./release.sh`) if the owner wants the map feature tagged/out.
+- Optionally fix the P0-only awk twin in `session/SKILL.md` new-handoff path.
+
+---
+
 ## 2026-07-20 (later 2) — Map-offer-on-resume SHIPPED (4eff5ea); NEXT: agents hand-roll a simple map instead of using the frozen template — run-book must FORCE the template
 
 Short session, one fix shipped + VPS reinstalled. Then the owner surfaced a
@@ -691,199 +751,5 @@ LISTEN 0 511 127.0.0.1:3130 ... users:(("node /home/appu",pid=1716022,...))
 
 ---
 
-## 2026-07-19 (later 7) — SHIPPED later-6's work: 3 commits, gate caught 6 real bugs en route
 
-Resumed the "later 6" handoff and ran `/ship`. The three changes landed as three
-commits by concern — but the codex-review-gate did serious work first, denying
-repeatedly and each time surfacing a **new, distinct, real** defect (never the
-same finding twice — this was convergence, not a loop):
-
-1. **`cada876`** — `install.sh` gate-roster fold (LGTM first try on its own diff).
-2. **`e86b853`** — `/coderv` autonomy. Gate-caught & fixed before it landed:
-   - **/verify skill gap** — the pipeline referenced a `/verify` skill the toolkit
-     doesn't ship → reworded to an inline **verify** step (drive the flow, observe).
-   - **config-not-exempt** — "skip verify for docs/config-only" was too broad;
-     config (hooks/CI/manifests) usually has a validation path → only pure
-     docs/prose diffs skip now.
-   - **handoff scan too shallow** — `grep -m1 '^## '` returned only the heading, not
-     the "next session should…" body → replaced with an **awk that extracts the
-     whole newest DATED entry**, then hardened twice more: **fence-aware** (a `##`
-     pasted inside a ``` code block no longer miscounts) and **no truncating cap**
-     (an earlier `head -40` clipped the actionable tail at offset 43 — now `head
-     -300` runaway-guard only).
-3. **this commit** — `codex-review-gate.sh` duration_ms + file/line emit
-   (committed together with this SESSIONS entry). Gate-caught & fixed:
-   - **leading-zero line** (`foo.js:08`) is invalid JSON for `--argjson` on jq 1.6
-     → base-10 normalise `$((10#…))` before jq (jq 1.7 tolerates it; downloaders on
-     1.6 wouldn't).
-   - **endpoint false-match** — the file:line regex matched `127.0.0.1:3000` and
-     `example.com:8080` as source anchors → require a **known source extension**
-     (SRC_EXT allowlist), not just any dotted token.
-
-One gate finding was **rejected with proof** (transparency rule): "the date
-fallback breaks under `set -e`" — the script has no `set -e` (only `set -o
-pipefail`, line 52); simulated a failing `date`, hook reached the end with
-`duration_ms=null`. The gate also flagged "SESSIONS.md is protected
-source-of-truth documentation" — that rule IS real (`~/.codex/AGENTS.md` #2) but
-it binds **Codex the reviewer**, not the conductor: the same rule says "writing
-them is the conductor's job." Claude (the writer) editing this handoff is exactly
-what it prescribes — role confusion, not a violation. Both findings were the gate
-reviewing the whole working tree, not the staged subset.
-
-**Still deferred (owner's call — changes live behaviour):**
-- **Re-install the gate hook** (`install.sh` re-run, or copy `hooks/codex-review-gate.sh`
-  → `/root/.claude/hooks/`) so the live gate emits the new duration/anchor fields.
-- **`sudo -u appuser pm2 restart coderv-loop`** so PROD (:3130) serves the new viewer.
-- ~~Log /coderv autonomy as an ADR~~ — **DONE this session: ADR-013** (extends
-  ADR-007; records bare-scan-propose + scout-when-confused + always-verify, and
-  the six gate-caught defects as evidence the reviewer earns its latency).
-
----
-
-## 2026-07-19 (later 6) — 3 features built, ALL VERIFIED, ALL UNCOMMITTED (context gate)
-
-**What was built this session (nothing committed — see evidence block):**
-
-1. **install.sh gate-roster dedup + fold** (`install.sh`) — the install & uninstall gate rosters were typed twice (orphaned-config bug). Now ONE `GATE_ROSTER` array both paths iterate; folded `install_router_hook`+`install_context_hook`+their uninstall twins into the generic `install_gate_hook`. **−197 net lines.** Delimiter is `^` (non-whitespace, so `read` keeps empty fields — a tab silently collapses them; I hit that bug and fixed it). VERIFIED: install→settings.json byte-identical to a captured baseline, uninstall→`{}`, idempotent, foreign-hook survival all pass. shellcheck clean.
-
-2. **/coderv autonomy** (`skills/coderv/SKILL.md`) — bare `coderv` (no args) now auto-scans state (Step 0) and PROPOSES the single most likely next task; ambiguous requests spawn a read-only `Explore` scout to find the real target (Step 1) instead of guessing; an inline verify step (drive the flow, observe it works) is now mandatory on code changes before `/ship` (Steps 3–4). Worded as plain **verify**, not a `/verify` skill invocation — the toolkit ships no verify skill, so a skill reference would dangle on a clean install (codex-review-gate caught this during /ship). Description block + argument-hint updated. TRIGGER/SKIP intact, frontmatter valid. **This is an ADR candidate (see follow-up).**
-
-3. **coderv-loop two-brain viewer upgrade** (`/home/appuser/apps/coderv-loop/` — NOT git) — the page on 9130→3130. Added: project chip (which repo), session summary bar (commits/passed/denied/findings), relative "2m ago" timestamps (live-tick), "took 8.2s" review duration, structured findings with `file:line` anchor chip (click=copy) + collapsible "see details", liveness heartbeat, expand/collapse-all, favicon 204. Gate (`hooks/codex-review-gate.sh`) extended to EMIT the new fields: `duration_ms` on verdict + `file`/`line` on findings — both pure side-effects, never touch allow/deny. VERIFIED end-to-end with Playwright headless against a synthetic log: project followed saadk, counts 2·1·1·2, `server.mjs:62` anchor, durations 8.2s/13s, collapse toggle, heartbeat stale, live-append streamed non-replay. Zero console errors.
-
-**In flight (not shipped):**
-- **Nothing mid-edit** — all three are at rest and verified. Blocker is only the context gate.
-- **coderv-loop PROD (PM2 on 3130) still runs OLD code** — edits are on disk only. To see the new viewer: `sudo -u appuser pm2 restart coderv-loop` then tunnel 9130→3130.
-- **Gate edit is in the TOOLKIT SOURCE only** — the installed live hook `/root/.claude/hooks/codex-review-gate.sh` is the OLD copy. New fields won't populate the real log until `install.sh` is re-run (or the hook copied). Left uninstalled deliberately (owner's call — changes live behavior).
-
-**State evidence (verbatim):**
-```
-$ git -C /root/claude-docs-toolkit status --short
- M docs/SESSIONS.md
- M hooks/codex-review-gate.sh
- M install.sh
- M skills/coderv/SKILL.md
-
-$ git -C /root/claude-docs-toolkit log --oneline -3
-b1816dc Release 0.10.1: sharper session handoff + doc-lint cleanup
-f8a0314 Release 0.10.0: live-loop event log + coderv-loop dashboard
-260ec4c Complete the live-loop event log: terminal outcomes + bounded flock
-
-$ cat /root/claude-docs-toolkit/VERSION
-0.10.1
-
-$ git -C /home/appuser/apps/coderv-loop rev-parse --is-inside-work-tree
-fatal: not a git repository (or any of the parent directories): .git
-  (coderv-loop is NOT under version control — server.mjs + public/index.html edited on disk, 12:28–12:31)
-```
-
-**Gotchas the next session should know:**
-- `coderv-loop` has **no git** — you can't `git diff` it; the disk IS the source of truth. Don't look for a commit.
-- The gate's new jq-arg injection uses bash **arrays** (`DUR_ARG=(...)`, `LINE_ARG=(...)`), NOT `$(fn)` string-splitting — that was a deliberate shellcheck-clean refactor. Don't "simplify" it back.
-- `file:line` parse requires a **known source extension** (`SRC_EXT` allowlist — js/ts/py/sh/… `foo.mjs:62`), NOT just any dotted token, so prose times (`12:30`) AND host/IP:port endpoints (`127.0.0.1:3000`, `example.com:8080`) don't false-match. (Tightened from "any dotted extension" after the gate caught the endpoint case — see later 7.)
-- Playwright's bundled chromium isn't installed; drive headless via `executablePath: /usr/bin/chromium-browser` and wait on `domcontentloaded` + `.beat` (NOT `networkidle` — SSE keeps the connection open forever).
-
-**Next session should probably:**
-- **`/ship` the toolkit changes** (install.sh + coderv + gate) — suggest 3 separate commits by concern. Then decide on re-installing the gate hook + `pm2 restart coderv-loop` to make the viewer live.
-- Log the **/coderv autonomy** design as an ADR (`/decision`) — bare-scan-propose + scout-when-confused + always-verify, alongside ADR-007.
-
----
-
-## 2026-07-19 (later 5) — v0.10.1 shipped: session-handoff sharpening + doc-lint cleanup (gate denied TWICE, converged)
-
-**What shipped (v0.10.1, tag pushed, website synced):**
-- `skills/session/SKILL.md` — handoff close-out now prints the absolute repo path + queued items inline with the `/session last` pointer (owner's queued item from "later 3").
-- Doc-lint fixes: `architecture.md` "three gate hooks"→"four" (+ADR-008); three `/docify` provenance banners (overview/architecture/skills) note hand-maintained + last-verified-2026-07-19 vs `f8a0314`; `DECISIONS.md` ADR-008 "pending owner veto" trailer corrected.
-- `docs/SESSIONS.md` rotated 587→383 lines, 7 oldest entries → new `docs/SESSIONS-ARCHIVE.md` (byte-identical), and its stale HOW-TO-RESUME preamble refreshed to current reality.
-- `VERSION` 0.10.0→0.10.1, `CHANGELOG [0.10.1]` cut. `release.sh` tagged/pushed/website-synced.
-
-**State evidence (verbatim):**
-```
-$ git log --oneline -3
-b1816dc Release 0.10.1: sharper session handoff + doc-lint cleanup
-f8a0314 Release 0.10.0: live-loop event log + coderv-loop dashboard
-260ec4c Complete the live-loop event log: terminal outcomes + bounded flock
-$ git status --short
-(clean)
-$ cat VERSION
-0.10.1
-$ git tag --points-at HEAD
-v0.10.1
-$ git status -sb
-## main...origin/main   (in sync)
-```
-
-**Gotchas the next session should know:**
-- **The codex-review-gate denied this commit TWICE before LGTM — both times correctly.** Round 1: caught a REAL self-contradiction in the rotated HOW-TO-RESUME block ("no remote"/"shellcheck not installed" vs later entries proving the opposite) → fixed at root. Round 1 also raised 3 DRIFT findings that were FALSE — the drift-hunter was comparing against the **stale v0.10.0 spec** (base `260ec4c` = parent of the shipped v0.10.0). Rejected with proof + refreshed the `/before` spec to this task's base `f8a0314`. Round 2: caught a premature "v0.10.1 shipped" claim + my own stale self-report number — both fixed. Lesson: **a stale `~/.claude/coderlap/specs/` file makes the gate hunt drift against last release** — refresh or clear it at the start of a new release task.
-
-**Next session should probably:**
-- Tackle the parked `install.sh` cleanup — **start with #2** (gate roster typed twice, `install.sh:651-654` vs `675-678` — orphaned-config bug), **then #1** (fold router/context installers into generic `install_gate_hook`). Open with `/before` — it's the riskiest file (runs on every `git clone`).
-- Optional: `gh release create v0.10.1` (and v0.10.0) for GitHub Release pages — `release.sh` printed the exact command.
-
----
-
-## 2026-07-19 (later 4) — Doc lint: 5 findings, 4 fixed + SESSIONS rotated
-
-Ran `/lint` (subagent sweep, all quotes machine-verified, 0 dropped). Findings & resolution:
-- 🟠 #1 `architecture.md:28` — "three gate hooks" → **four** (+ADR-008). Fixed.
-- 🟠 #2 three `/docify` provenance banners stamped `fbb1954` (v0.3.8) but bodies describe v0.10.0 → added "hand-maintained since — last verified 2026-07-19 against f8a0314". Fixed (overview/architecture/skills).
-- 🟠 #3 `DECISIONS.md:255` ADR-008 marked `accepted` yet trailer said "pending owner veto" (self-contradiction; shipped in 0.9.0) → trailer replaced with "shipped in v0.9.0, no owner veto raised". Fixed.
-- 🟡 #4 SESSIONS.md 587 lines > ~500 threshold → **rotated** 7 oldest entries (2026-07-17 gap-scan back to 2026-04-24 docify) into new `SESSIONS-ARCHIVE.md`, byte-identical, pointer left at bottom, and the stale HOW-TO-RESUME preamble refreshed. SESSIONS now ~383 lines / 10 dated entries — back under the ~500 threshold.
-- 🟡 #5 KI-001 prevention rule "not landed" → **no change** — it's an owner-accepted *open* follow-up with documented fix path, not resolved-rot. Correctly declined.
-
-All uncommitted; folds into the pending `/ship` → v0.10.1.
-
----
-
-## 2026-07-19 (later 3) — Findings #4/#3/#5 fixed & released as v0.10.0; README now documents coderv-loop
-
-Closed out the three open findings from "later 2", released the toolkit, and ran an architecture review.
-
-**1. Fixed the 3 real Codex findings in one batched diff** (`hooks/codex-review-gate.sh`, commit `260ec4c`):
-- **#4** `review_failed` (fail-open) now emits a terminal `outcome` `{result:"passed", unreviewed:true}` — the dashboard no longer hangs on "reviewing…" forever. `unreviewed:true` keeps it from ever reading as a genuine pass.
-- **#3** cache-hit retry emits a `commit_attempt` beat BEFORE its cached `outcome` (writer wire-pulse visible on a same-diff retry).
-- **#5** `flock -w 1` (bounded) + fall-through to plain append on timeout — a hung lock holder can never stall the hook.
-- All three EXERCISED end-to-end (not just read): both paths emit a terminal outcome; every line valid JSON; flock proven to return in ~1019ms under a held lock instead of stalling 10s. Fresh-context reviewer clean, its quotes machine-verified 6/6.
-
-**2. Re-installed the fixed gate** (`/root/.claude/hooks/codex-review-gate.sh`, backup `.bak-findings-fix`, `log_event` count 12→14) and **restarted `coderv-loop`** (env `CODERV_LOOP_LOG` confirmed in `/proc/PID/environ`). The commit that shipped the fix produced a COMPLETE closed loop on the dashboard (`commit_attempt → outcome:passed` on the cache-hit retry — fix #3 firing live).
-
-**3. Released v0.10.0** (commit `f8a0314`, tag pushed): README gained a "Watch the two brains work (coderv-loop)" section (the dashboard was previously undocumented), CHANGELOG `[Unreleased]`→`[0.10.0]`, VERSION 0.9.0→0.10.0. Shipped via `./release.sh` (tag + push to `origin`/GitHub + website site.ts synced to 0.10.0).
-
-**4. Ran `/improve-codebase-architecture`** — report at `/tmp/architecture-review-20260719.html` (not in repo). 5 candidates; top = #2 (install/uninstall gate rosters typed twice → orphaned-config bug). PARKED, see RESUME block.
-
-**Gate live-fire note:** the freshly-installed gate denied 5× this session — all stale-spec / phased-work false positives (SESSIONS.md drift, "framework not implemented" when it was in the prior commit, jq-guard already upstream). Each rejected with machine proof and surfaced (transparency rule). The fix for the recurring stale-spec deny: **overwrite the `/before` spec to describe the CURRENT task** before committing a follow-up whose base moved — the drift-hunter hunts against whatever spec is on disk.
-
-**State evidence (verbatim):**
-```
-$ git log --oneline -4
-f8a0314 Release 0.10.0: live-loop event log + coderv-loop dashboard
-260ec4c Complete the live-loop event log: terminal outcomes + bounded flock
-9bd849c Gate on an absolute token budget, not a percentage of the window
-9ad03ae Smart install: detect Codex and complete the two-brain setup
-$ git status --short
- M docs/SESSIONS.md
-$ git ls-remote --tags origin v0.10.0
-d8e09d43707e21ad6f67801fec10c14c4a8c7e4b	refs/tags/v0.10.0
-$ cat VERSION
-0.10.0
-$ grep -c log_event /root/.claude/hooks/codex-review-gate.sh
-14
-```
-
-**Gotchas the next session should know:**
-- `docs/SESSIONS.md` is intentionally uncommitted (dual-state handoff — never rides a code commit; the gate skips docs-only anyway).
-- One human step the release printed and did NOT auto-run: `gh release create v0.10.0 …` — do it if you want a GitHub Release page (tag+push already done).
-- shellcheck 0.9.0 is now installed (was absent at session start) and the hooks came back clean — see the shellcheck section below.
-
-**shellcheck pass — DONE this session, result CLEAN.** Installed shellcheck 0.9.0 and ran it on all 6 hooks + install.sh + release.sh: **0 errors, 0 warnings**, 4 notes — all adjudicated as false-positives-in-context (codex-review-gate.sh:84 intentional `bash -c` single-quote; two SC2012 `ls`-counts of controlled dir names; release.sh:94 SC2015 with a non-failing middle command). **No fix needed → no v0.10.1.** The live-fire discipline held up under static analysis.
-
-**Next session should probably:**
-- **Path — `cd /root/claude-docs-toolkit` first** (this is the toolkit repo; branch `main`, remote `origin` = `git@github.com:AbudiHadi/coderv.git`). Everything below runs from there.
-- **UNCOMMITTED: `skills/session/SKILL.md`** — sign-off template changed (owner request) so every handoff closes with the project path: `👉 Next session: start fresh (your project path: <abs path>), run /session last…`. Edited in both source and installed copy. `/ship` it → gate review → cut **v0.10.1** (skill-description change).
-- Optional: `gh release create v0.10.0 …` for a GitHub Release page (tag+push already done). Then the parked arch candidates #2→#1 (see RESUME block), or `/lint` the docs (last ran 2026-07-15).
-- Housekeeping: `docs/SESSIONS.md` is now 582 lines (>~500 rotation threshold, 17 entries <20 count) — consider rotating older entries to `docs/SESSIONS-ARCHIVE.md` per /session Step 3.
-
----
-
-> **Older entries** (2026-07-19 later-2 back through 2026-04-24 docify) rotated to [`SESSIONS-ARCHIVE.md`](./SESSIONS-ARCHIVE.md) on 2026-07-19. Nothing is ever deleted.
-
-<!-- New sessions above this line, newest first -->
+> Older sessions: docs/SESSIONS-ARCHIVE.md (nothing is ever deleted)
