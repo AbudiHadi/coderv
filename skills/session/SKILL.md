@@ -62,8 +62,15 @@ If `$REVIEW` exists, has open findings, and is **not** drawn (`DRAWN` ≠ 0 / no
 *"This project has an open architecture review whose interactive map hasn't been
 drawn yet. Want the full interactive system map — draw.io-style pan/zoom canvas,
 🟢/🌐/⏸ node markers + 🔴 P0-P1 / 🟡 P2-P3 gap markers, click-to-trace? [y/N]"*.
-On **yes**, render it (per `architecture-review.md`'s canvas standard) and stamp
-the review `Map: drawn <date>`. Offer, never auto-draw.
+On **yes**, render the map by the frozen-template procedure — **NOT** as a free
+design task: (1) copy `skills/coderv/systemmap.template.html` into the session
+scratchpad, (2) replace **only** the `GRAPH = {…}` block (meta/nodes/edges/
+findings) — leave the canvas/styling/pan-zoom frozen, (3) publish **that file**
+as the Artifact, then stamp the review `Map: drawn <date>`. Do **NOT** hand-author
+your own HTML/CSS/SVG and do **NOT** load the `artifact-design` skill for the map;
+if you are writing a `<style>` block or drawing SVG, STOP — use the template. Full
+rules + the pre-publish self-check are in `architecture-review.md` ("Canvas
+standard"). Offer, never auto-draw.
 
 ### Otherwise (new handoff)
 

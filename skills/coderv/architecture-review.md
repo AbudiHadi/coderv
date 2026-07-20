@@ -343,9 +343,34 @@ audit fills ONE data block — the `GRAPH` object: `meta` (project, context, bas
 scores), `nodes`, `edges`, `findings`. The engine (canvas, styling, pan/zoom,
 emoji, click-fix) is frozen and never edited per project, and the header is data
 in `GRAPH.meta` (rendered via `textContent`), NOT HTML tokens — so nothing
-repo-controlled is ever substituted into the page markup. Render by copying the
-template into the session scratchpad, replacing only the `GRAPH` object, and
-publishing that file as the Artifact.
+repo-controlled is ever substituted into the page markup.
+
+**Render is a mechanical procedure, NOT a design task — do exactly this:**
+1. **Copy** `skills/coderv/systemmap.template.html` into the session scratchpad.
+2. **Replace only** the `GRAPH = {…}` block (`meta`/`nodes`/`edges`/`findings`).
+   Change nothing else — the canvas, CSS, pan/zoom engine, emoji and click-fix
+   are frozen and identical across every project.
+3. **Publish that file** as the Artifact.
+
+Do **NOT** hand-author your own HTML/CSS/SVG for the map, and do **NOT** load the
+`artifact-design` skill (or any bespoke-design skill) for it — this is filling
+one data block in a shipped template, not designing a page. **If you find
+yourself writing a `<style>` block, drawing SVG, or choosing a palette/layout,
+STOP — you are not using the template. Restart from step 1.**
+
+**Pre-publish self-check (mandatory).** Before publishing, confirm the file you
+are about to publish is the frozen template — grep it for the immutable
+fingerprint, not for engine strings a lookalike could coincidentally contain:
+
+```bash
+grep -q 'FROZEN TEMPLATE' "$FILE" && grep -q 'const GRAPH = {' "$FILE" \
+  && echo "OK: frozen template" || echo "FAIL: not the template — redo from step 1"
+```
+
+The `CoderLap 🏛 … FROZEN TEMPLATE` banner comment ships at the top of the
+template and a hand-authored page will not reproduce it. If either grep fails,
+you authored a bespoke page instead of filling the template — discard it and
+redo from step 1.
 
 - **One canonical payload — author it once, render it twice.** The assembled
   node/edge/finding set (topology + overlay, from the assembly rules above) is

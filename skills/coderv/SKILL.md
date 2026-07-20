@@ -63,8 +63,18 @@ map is not yet drawn, **also offer to draw it** in the proposal (a one-liner
 alongside the main move) — *"…and this project's open architecture review has no
 interactive map yet; want me to draw it? [y/N]"*. This is the resume path the
 live-session gap slipped through; the offer must not depend on which finding you
-pick. It stays an offer (never auto-draws); on yes, render per
-`architecture-review.md` and stamp the review `Map: drawn <date>`.
+pick. It stays an offer (never auto-draws); **on yes, render the map by the
+frozen-template procedure — NOT as a free design task:**
+1. Copy `skills/coderv/systemmap.template.html` into the session scratchpad.
+2. Replace **only** the `GRAPH = {…}` block (meta/nodes/edges/findings). Touch
+   nothing else — the canvas, styling, pan/zoom and click-fix are frozen.
+3. Publish **that file** as the Artifact, then stamp the review `Map: drawn <date>`.
+
+Do **NOT** hand-author your own HTML/CSS/SVG for the map, and do **NOT** load the
+`artifact-design` skill for it — this is not a bespoke-design task, it is filling
+one data block in a shipped template. If you are writing a `<style>` block or
+drawing SVG, STOP — you are doing it wrong; use the template. Full rules and the
+pre-publish self-check are in `architecture-review.md` ("Canvas standard").
 
 Once the user confirms (or redirects), treat their answer as the request and
 fall through to Step 1. If they gave words in the first place, skip Step 0
