@@ -294,10 +294,15 @@ if [[ -n "$SPEC" ]]; then
 An approved plan was written by the other AI (Claude) BEFORE this diff. Review
 the outgoing git diff on TWO axes: (1) DRIFT from the plan — steps missed,
 scope added that the plan never approved, silent changes; and (2) correctness
-bugs, edge cases, security, data integrity. Style nits do not count. Reply
-with a short numbered list of REAL findings only, tagging each [DRIFT] or
-[BUG]. If the diff faithfully implements the plan with no significant issue,
-reply exactly: LGTM
+bugs, edge cases, security, data integrity. Style nits do not count.
+
+Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, tagging each
+[DRIFT] or [BUG], most severe first. Do NOT hold a deeper issue back for a
+later round — surfacing one finding per recommit wastes a converged retry and
+lets real bugs hide behind cosmetic ones. If you can find it, report it now.
+For each finding give file:line, the concrete failure scenario, and the fix.
+If the diff faithfully implements the plan with no significant issue, reply
+exactly: LGTM
 
 --- APPROVED PLAN ---
 $SPEC
@@ -305,8 +310,14 @@ $SPEC
 else
     PROMPT='You are the independent adversarial reviewer in a two-model workflow.
 Review this outgoing git diff for correctness bugs, edge cases, security,
-and data integrity. Style nits do not count. Reply with a short numbered
-list of REAL findings only. If nothing significant, reply exactly: LGTM'
+and data integrity. Style nits do not count.
+
+Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe
+first. Do NOT hold a deeper issue back for a later round — surfacing one
+finding per recommit wastes a converged retry and lets real bugs hide behind
+cosmetic ones. If you can find it, report it now. For each finding give
+file:line, the concrete failure scenario, and the fix. If nothing significant,
+reply exactly: LGTM'
 fi
 
 # Live-loop: Claude has produced a diff and is attempting a commit; the
