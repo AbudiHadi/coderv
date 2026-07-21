@@ -81,6 +81,106 @@ current staged blob, which is correct as-is.
 
 ---
 
+## 2026-07-21 (later) — /ship pre-commit convergence loop built + CONVERGED, NOT committed (context gate)
+
+**The problem solved (owner's words):** every project was hitting the gate's
+commit→deny→fix→commit loop for hours — "why do the findings never run out?"
+Root cause: the codex-review-gate reviews a **cold diff every recommit** and has
+no memory of prior findings' *content* (only the diff HASH cache + round count),
+so a thorough reviewer trickles NEW findings each commit; the owner had to end
+every loop by hand. Owner's ask: make it work like the `/before` plan loop —
+Claude+Codex discuss until 100% agreed, THEN commit; all findings at once.
+
+**What was built (3 files, all UNSTAGED, NOT committed):**
+- `skills/ship/SKILL.md` — Step 4.5 rewritten into a **pre-commit convergence
+  loop**: assemble the diff EXACTLY as the gate does (incl. untracked), run one
+  Codex exhaustive pass (told: holding a finding back = failure), batch-fix/rebut
+  WITHOUT committing, bounded by a numeric round cap (3 / `CODERV_GATE_ROUND_CAP`),
+  with a **snapshot-hash guard**: CONVERGED requires BOTH an empty material set
+  AND reviewed-hash == current-hash. Fail-open on Codex outage. Step 7 rebuttal
+  snippet's `git diff HEAD` upgraded to the same assembly.
+- `docs/DECISIONS.md` — **ADR-018** (why the argument moves before the commit;
+  records the REJECTED "write the gate's lgtm marker from /ship" alternative +
+  its disarm reasoning; cross-refs ADR-010, ADR-016).
+- `docs/planning/two-brain-convergence.md` — "Three phases, one mechanism" +
+  "Pre-commit phase (/ship)" invariants.
+- **hooks/codex-review-gate.sh is UNCHANGED by this work** (out of scope — it
+  stays the backstop + sole author of its trust marker).
+
+**Convergence + verification done (this IS the deliverable's proof-of-concept):**
+- Plan review via `/before` Step 5.6 CONVERGED after **5 Codex rounds** (6
+  material findings, all resolved pre-code): r1 3 findings → r2 LGTM → seam audit
+  killed the marker-coupling idea → r3 2 findings (numeric cap + snapshot-hash) →
+  r4 1 finding (cap could approve unreviewed diff → CONVERGED now needs BOTH
+  conditions) → **r5 LGTM**.
+- A ship→gate seam audit (general-purpose agent) proved writing the gate's `lgtm`
+  marker from /ship is UNSAFE (silently disarms the backstop; races the monotonic
+  denied-marker). Design revised to never write it.
+- `/ship` fresh-context reviewer verdict: **SHIP** (11/11 spec items pass); 5/5
+  key quotes machine-verified; added bash snippets `bash -n` clean + SNAP_HASH
+  executes to a valid sha256. Scorecard: 100% (8/8 applicable gates).
+
+**⚠ THE ONE OPEN DECISION (why nothing is committed):** the working tree has TWO
+separate change-sets entangled in `docs/DECISIONS.md`:
+- **STAGED** = a *pre-existing* ADR-017 `mint_eid` gate change from a PRIOR
+  session (`hooks/codex-review-gate.sh` + `tests/mint-eid.sh` + the ADR-017 hunk).
+  This was already staged when THIS session started; NOT authored here.
+- **UNSTAGED** = THIS session's work (ADR-018 hunk + the two other files).
+
+They must become **two separate commits**. The owner was asked: commit the
+staged ADR-017 FIRST (so each DECISIONS.md commit is clean), then the ADR-018
+work — OR let them ride together. **Owner had not answered when the context gate
+fired.** Do NOT `git add docs/DECISIONS.md` before deciding: it would fold ADR-018
+on top of the already-staged ADR-017 into one commit.
+
+**State evidence (verbatim):**
+```
+$ git status
+On branch main
+Your branch is ahead of 'origin/main' by 4 commits.
+Changes to be committed:
+	modified:   docs/DECISIONS.md
+	modified:   hooks/codex-review-gate.sh
+	new file:   tests/mint-eid.sh
+Changes not staged for commit:
+	modified:   docs/DECISIONS.md
+	modified:   docs/planning/two-brain-convergence.md
+	modified:   skills/ship/SKILL.md
+
+$ git log --oneline -3
+d64fd0b Add 2026-07-21 session handoff; rotate older entries to archive
+ec46f9c Add docs/MASTER.md entry map; move coderv-brief into docs/reference/
+3199b71 Gate: severity-ranked marker precedence + concurrent-verdict downgrade protection
+
+$ git diff --stat            # UNSTAGED = this session
+ docs/DECISIONS.md                      |  33 +++++
+ docs/planning/two-brain-convergence.md |  38 ++++
+ skills/ship/SKILL.md                   | 128 ++++++++-
+$ git diff --cached --stat   # STAGED = prior ADR-017 work
+ docs/DECISIONS.md          | 28 ++
+ hooks/codex-review-gate.sh | 89 ++++++--
+ tests/mint-eid.sh          | 89 ++++++
+$ cat VERSION
+0.12.1
+$ grep '^## ADR-01[5-8]:' docs/DECISIONS.md
+36:## ADR-018 ...  69:## ADR-017 ...  97:## ADR-016 ...  125:## ADR-015 ...
+```
+
+**Next session should:**
+1. Ask/confirm the commit-order decision (recommended: commit STAGED ADR-017
+   first as its own commit, then `git add` the 3 ADR-018 files + commit). Spec is
+   at `~/.claude/coderlap/specs/-root-claude-docs-toolkit.md` (r5, CONVERGED).
+2. Both commits: my diff is all `.md` → the gate treats it docs-only and allows
+   without its own review (correct; the 5-round plan convergence + fresh-context
+   audit WAS the review). The ADR-017 commit touches the gate `.sh` — it WILL get
+   a real gate review; note the deployed hook `/root/.claude/hooks/codex-review-gate.sh`
+   may need re-sync after (per the prior handoff's deploy step).
+3. Draft commit message for the ADR-018 work is ready (in the ship scorecard
+   output this session).
+4. NO VERSION bump / release intended for this task (owner triggers separately).
+
+---
+
 ## 2026-07-21 — Gate hardening (finding-1 fix + ADR-016) + deployed hook sync; then a minimal docs reorg
 
 **What shipped:**

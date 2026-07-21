@@ -33,6 +33,35 @@ What did we decide?
 
 ---
 
+## ADR-018: The Claude↔Codex argument moves to a pre-commit convergence loop in `/ship`; the gate stays the sole author of its trust marker
+
+**Date:** 2026-07-21
+**Status:** accepted
+**Decider(s):** owner + Claude (plan converged over 5 Codex rounds via `/before` Step 5.6)
+
+### Context
+Every project was hitting the commit gate's `commit → deny → fix → commit` loop for hours. The owner's words: *"why do the findings never run out?"* Root cause: `codex-review-gate.sh` reviews a **cold diff on every recommit** and keeps no memory of prior findings' *content* (only the diff-HASH cache + a round counter), so a thorough reviewer trickles a **new** finding each commit and the owner had to end every loop by hand. The owner's ask: make it behave like the `/before` plan loop — Claude and Codex argue to 100% agreement **first**, all findings at once, and only **then** commit.
+
+### Decision
+- `/ship` gains **Step 4.5 — a pre-commit convergence loop**. Each round: (a) assemble the diff snapshot **exactly as the gate does** (`git diff HEAD`, `--cached` fallback, plus untracked via `git diff --no-index`) and hash it to `SNAP_HASH`; (b) run **one exhaustive Codex pass** on the same serialized-stdin channel the gate uses, the reviewer told that holding a finding back for a later round is a **failure**; (c) batch-fix or rebut every finding **without committing**; repeat.
+- The loop ends in exactly one of the three shared end-states (`docs/planning/two-brain-convergence.md`): **CONVERGED** (requires BOTH an empty unresolved-**material** set AND `SNAP_HASH` == a freshly re-assembled diff hash — an empty finding set alone is not convergence, because the fixes themselves changed the bytes and that new diff is unreviewed), **CAP-STOPPED** (numeric round cap, default 3 / `CODERV_GATE_ROUND_CAP`, reached with the current snapshot uncertifiable → surface every open finding, owner decides), or **REVIEW-UNAVAILABLE** (Codex down after one retry → fail open, never block, score the gate ✖, owner decides).
+- **`/ship` NEVER writes the gate's trust marker** (`~/.claude/coderlap/codex-reviewed/$HASH`). The commit-time gate runs its **own** independent review; a converged diff just makes that a fast LGTM instead of a fresh argument. The redundant second review **is** the safety property.
+
+### Alternatives
+- **Let `/ship` write the gate's `lgtm` marker after it converges** (chosen: rejected) — a seam audit proved this UNSAFE: a marker `/ship` writes is indistinguishable from a gate-written one, so any `/ship` failure would silently **disarm the backstop**, and a plain write can **race** the gate's monotonic `denied` marker. The gate stays the sole author of its marker.
+- **Keep only the commit-time gate, no pre-commit loop** — rejected: that IS the status quo that trickled findings and burned the owner's hours; phase 2 exists precisely so phase 3 is a fast confirmation of an already-agreed diff, not the place the argument happens.
+- **Converge on `git diff HEAD` alone (untracked omitted)** — rejected: `/ship` would converge on an incomplete diff and the gate would then find the untracked remainder cold. Same-bytes-as-the-gate is an invariant.
+- **Non-numeric "twice-rejected-identical" early-exit as the only bound** — rejected as the *sole* bound: new findings each round never trip the identical rule, so a numeric cap is the real termination guarantee; the identical-rejection rule sits on top of it.
+
+### Consequences
+- Positive: the Claude↔Codex argument resolves once, before the commit, so the commit-time gate is a fast confirmation rather than a fresh cold-diff review — the trickle that cost the owner hours stops at the source.
+- Positive: the backstop is untouched — the gate remains the sole author of its trust marker, so no `/ship` failure can disarm it and no write can race its `denied` marker.
+- Trade-off: `/ship` now spends Codex tokens on a pre-commit pass. That is the point (front-load the argument) but it is real cost; fail-open keeps it from ever blocking a commit when Codex is down.
+- Trade-off: this reduces the *frequency* of gate trickle but does not remove the gate's own memorylessness — a cold-diff gate can still raise a fresh finding at commit time. **ADR-019 is the permanent fix** (give the gate a findings ledger + project context + a convergence ceiling); ADR-018 is the pre-commit half that ships first.
+- Revisit if: ADR-019 lands and makes the commit-time gate itself converging — Step 4.5 then becomes belt-and-suspenders rather than the primary defense.
+
+---
+
 ## ADR-017: Every gate event carries a unique `eid` + an exchange `xid`; skips emit `gate_skipped`
 
 **Date:** 2026-07-21

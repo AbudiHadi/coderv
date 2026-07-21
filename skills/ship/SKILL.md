@@ -165,7 +165,99 @@ Offer to draft the entry yourself from the diff.
 
 - [ ] Update `CLAUDE.md` status section if the project tracks phases there.
 
-## Step 4.5 — Fresh-context reviewer (the independent audit)
+## Step 4.5 — Converge with Codex BEFORE the commit (the pre-commit loop)
+
+This is where the two brains reach agreement **before** anything is committed —
+so the commit lands clean on the first try. Historically the Claude↔Codex
+argument happened *reactively*, after the codex-review-gate denied a commit
+(Step 7). That path re-reviews a **cold diff every recommit**, so a thorough
+reviewer trickles new findings one commit at a time and the loop can run for
+hours (ADR-018). Moving the argument **here**, on a stable diff, before the
+commit, is what ends that — the reviewer dumps **every** finding at once, you
+fix the whole batch without committing, and only a converged diff proceeds.
+
+This step runs a **loop**. Each round: (a) assemble the diff snapshot, (b) run
+the fresh-context subagent audit below, (c) run one Codex pass, (d) adjudicate
+the whole batch and fix/rebut **without committing**, then re-arm and repeat.
+The loop reuses the loop-control already written in **Step 7** (batch-don't-
+trickle + the twice-rejected-identical escalation, ADR-010) and the three end-
+states in `docs/planning/two-brain-convergence.md` — it does not re-invent them.
+
+**The diff snapshot — assemble it EXACTLY as `codex-review-gate.sh` does**, so
+Codex here hashes the same bytes the gate will hash at commit time (a bare
+`git diff HEAD` misses untracked files and would let /ship converge on an
+incomplete diff — the gate would then find the rest cold):
+
+```bash
+DIR=$(pwd)   # or the repo you are committing in
+DIFF=$(git -C "$DIR" diff HEAD 2>/dev/null)
+[ -z "$DIFF" ] && DIFF=$(git -C "$DIR" diff --cached 2>/dev/null)   # unborn/all-reverted
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  UDIFF=$(git -C "$DIR" diff --no-index -- /dev/null "$f" 2>/dev/null)
+  [ -n "$UDIFF" ] && DIFF+=$'\n'"$UDIFF"
+done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
+SNAP_HASH=$(printf '%s' "$DIFF" | sha256sum | cut -d' ' -f1)   # the reviewed snapshot
+```
+
+**The Codex pass — same serialized-stdin channel the gate uses**, with the
+reviewer told to be exhaustive in ONE pass (this is what stops the trickle):
+
+```bash
+OUT=$(mktemp)
+SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done; [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd); printf '%s' "$ROOT" | tr '/' '-').md
+{ printf '%s\n' \
+    "You are the independent adversarial reviewer in a two-model workflow." \
+    "Review this outgoing git diff for correctness, edge cases, security, data" \
+    "integrity, and (if a plan is included) drift from it. Style nits do not count." \
+    "Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe" \
+    "first — holding one back for a later round is a FAILURE (it wastes a converged" \
+    "retry and lets real bugs hide behind cosmetic ones). file:line + the concrete" \
+    "failure + the fix, per finding. If nothing significant, reply exactly: LGTM"
+  [ -f "$SPEC" ] && { printf -- '--- APPROVED PLAN ---\n'; cat "$SPEC"; printf -- '--- END PLAN ---\n'; }
+  printf 'Diff below:\n%s' "$DIFF"; } | timeout 180 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
+RC=$?
+REVIEW=$(cat "$OUT"); rm -f "$OUT"
+```
+
+**Codex unavailable → FAIL OPEN, never block** (RC ≠ 0 or empty `REVIEW` after
+ONE retry): surface *"Codex unavailable — diff not peer-reviewed before commit"*
+verbatim, score the reviewer gate ✖ in the scorecard, and **proceed to the
+approval moment** — the owner decides. Never label this CONVERGED. This is not
+a coverage hole: the codex-review-gate still runs its own review at commit time.
+
+**The end of the loop — one of exactly three states** (same set as the plan
+phase and the gate; `docs/planning/two-brain-convergence.md`):
+
+- **CONVERGED — requires BOTH** (a) the unresolved-**material** set is empty
+  **AND** (b) the snapshot you just reviewed is the snapshot you are about to
+  commit: `SNAP_HASH` (the diff Codex saw) **equals** a freshly re-assembled
+  diff hash. A round can resolve every finding yet **change the bytes** (the fix
+  itself is an edit), and that new diff is UNREVIEWED — so an empty finding set
+  alone is **not** convergence. Re-assemble and re-review until the hash holds
+  steady with an empty material set.
+- **CAP-STOPPED** — the round cap is reached (default **3**, honouring
+  `CODERV_GATE_ROUND_CAP`) and the current snapshot still cannot be certified —
+  either ≥1 unresolved material finding remains, **or** the cap prevents
+  re-reviewing a snapshot that just changed. The cap stops the loop **whenever it
+  blocks reviewing the current diff**, not only when a finding is left open.
+  Surface every open finding to the owner verbatim; they decide (fix / accept /
+  park). Do **not** spend another round on your own judgment.
+- **REVIEW-UNAVAILABLE** — the fail-open case above.
+
+**The gate is still the backstop — and /ship must NOT try to shortcut it.** The
+codex-review-gate runs its **own** independent review when you commit; a
+converged diff just makes that a fast LGTM instead of a fresh argument. Never
+write the gate's cache marker (`~/.claude/coderlap/codex-reviewed/$HASH`) from
+/ship to skip that review: a marker /ship writes is indistinguishable from a
+gate-written one, so any /ship failure would silently disarm the backstop, and a
+plain write can race the gate's own `denied` marker (ADR-018, ADR-016). The gate
+is the sole author of its trust marker. The redundant second review **is** the
+safety property, not waste.
+
+---
+
+**The fresh-context subagent audit (run inside each loop round, above):**
 
 The session that wrote the code cannot be trusted to grade it — accumulated
 context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
@@ -235,6 +327,28 @@ it at every `/ship` — not left to memory. (This lives in the `/ship`
 checklist, not in `codex-review-gate.sh` — a commit made without `/ship`
 skips it, which is one more reason the repo rule "never commit without
 `/ship`" exists.)
+
+**Close the round — the snapshot-hash guard.** The audit just ran builds and
+tests, which can touch tracked or generated files, and any fix you applied
+edited bytes. So before you trust this round's result, **re-assemble the diff
+and re-hash it**, then compare to the `SNAP_HASH` you reviewed at the top of the
+round:
+
+```bash
+DIFF2=$(git -C "$DIR" diff HEAD 2>/dev/null); [ -z "$DIFF2" ] && DIFF2=$(git -C "$DIR" diff --cached 2>/dev/null)
+while IFS= read -r f; do [ -z "$f" ] && continue
+  U=$(git -C "$DIR" diff --no-index -- /dev/null "$f" 2>/dev/null); [ -n "$U" ] && DIFF2+=$'\n'"$U"
+done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
+NOW_HASH=$(printf '%s' "$DIFF2" | sha256sum | cut -d' ' -f1)
+```
+
+If `NOW_HASH` ≠ `SNAP_HASH`, the bytes moved since Codex saw them — the current
+diff is **unreviewed**. Re-arm: start a **new round** (re-run this whole Step
+4.5 loop on the new snapshot), unless the round cap is reached — then CAP-STOP
+and surface to the owner (never approve an unreviewed diff). Declare CONVERGED
+**only** when `NOW_HASH == SNAP_HASH` **and** the unresolved-material set is
+empty — so the scorecard, the CONVERGED verdict, and the diff the gate will
+review at commit time are all the identical bytes.
 
 ## Step 5 — Draft the commit message
 
@@ -347,6 +461,10 @@ commit the user runs in their own terminal would silently bypass that gate.
 
 **If the gate denies — it opens a discussion, not a verdict.** Codex is a
 peer reviewer, not a boss; Claude holds final authority and can push back.
+(With Step 4.5's pre-commit convergence done, a converged diff should reach the
+gate as a fast LGTM — a deny here means the gate's independent review, its
+proper backstop role, caught something Step 4.5's pass missed. Adjudicate it
+the same way, in one batch; it is a rare single event now, not the loop.)
 
 > **Converge in ONE retry — never loop.** A recommit is a *fresh* diff, so it
 > earns a *fresh* review; fixing findings one-at-a-time and recommitting after
@@ -387,7 +505,13 @@ peer reviewer, not a boss; Claude holds final authority and can push back.
        "Rebuttal: <why it is not a real issue — cite the code/convention>." \
        "Reconsider. If you still disagree, say so and why."
      [ -f "$SPEC" ] && { printf -- '--- APPROVED PLAN ---\n'; cat "$SPEC"; printf -- '--- END PLAN ---\n'; }
-     printf 'Diff below:\n'; git -C "$DIR" diff HEAD; } \
+     # Same diff assembly as the gate + Step 4.5 (untracked included) — a bare
+     # `git diff HEAD` would review different bytes than the gate hashes.
+     D=$(git -C "$DIR" diff HEAD 2>/dev/null); [ -z "$D" ] && D=$(git -C "$DIR" diff --cached 2>/dev/null)
+     while IFS= read -r f; do [ -z "$f" ] && continue
+       U=$(git -C "$DIR" diff --no-index -- /dev/null "$f" 2>/dev/null); [ -n "$U" ] && D+=$'\n'"$U"
+     done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
+     printf 'Diff below:\n%s' "$D"; } \
      | timeout 180 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
    VERDICT=$(cat "$OUT"); rm -f "$OUT"
    ```
