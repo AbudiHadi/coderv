@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-07-21 (later 2) — ADR-017 set verified+staged (awaiting owner override); ADR-018 stashed; ADR-019 permanent-fix DESIGNED (context gate)
+
+**THE ONE ACTION WAITING ON THE OWNER:** the ADR-017 change-set is staged, fully
+verified, and ready — but the memoryless gate has trickled tiny findings on its
+OWN output across 13 commit attempts (the exact loop ADR-019 fixes). Owner
+DECIDED to override. The owner must run this to land it (override is theirs to
+set, never Claude's):
+```
+cd /root/claude-docs-toolkit && CODERV_GATE_OWNER_OVERRIDE=1 git commit -F- <<'MSG'
+Gate: unique eid + exchange xid on every event; gate_skipped on skip decisions
+<body already drafted in the session — the "See ADR-017" message>
+MSG
+```
+The staged diff IS complete and current (re-staged after the last 2 fixes; staged==working tree, no MM/AM split). Verified: `bash tests/mint-eid.sh` → **21 passed, 0 failed**; `bash -n hooks/codex-review-gate.sh` clean; zero overstated claims left in the gate (`grep -c "collision-resistant\|strong kernel\|globally unique"` == 0); ADR-017 wording honest ("best-effort probabilistic"); Case 9 in the ADR inventory.
+
+**What the ADR-017 set contains (staged, verified):**
+- **Material bug FIXED** — `mint_eid`'s fully-degraded entropy fallback was bare `$RANDOM$RANDOM` (15-bit PRNG, could collide two events same-second under PID reuse → viewer de-dups a real event). Now: a token from a **successfully-created** `mktemp` file (removed immediately, pure side-effect), `$RANDOM$RANDOM` only if mktemp ALSO fails. Honest framing: best-effort probabilistic, NOT collision-resistant (fixed in code comments + ADR-017 text).
+- **tests/mint-eid.sh** (new, 342 lines, **21 assertions, all pass, PROVEN non-vacuous**): cases 1-4 isolate `mint_eid`; case 5 drives the whole hook through docs-only skip on a degraded host; case 6 regression-guards the mktemp fix (proven to FAIL if reverted to `$RANDOM$RANDOM`); case 7 empty-diff skip; case 8 pins the `$RANDOM$RANDOM` last-resort to its deterministic value (proven to FAIL on a fixed value); case 9 merge-incoming skip (allow-with-warning oracle: `jq -e` whole-stdout validate + systemMessage + no-deny + exit 0).
+- **docs/DECISIONS.md** — ADR-017 text (28 ins in the staged blob; the ADR-018 hunk is NOT in this staged version — it's in stash@{0}).
+
+**NEXT STEPS (in order) after the override lands ADR-017:**
+1. `git stash pop` stash@{0} (ADR-018 + handoff + SESSIONS + skills/ship/SKILL.md). It WILL conflict on docs/DECISIONS.md (both touch the top) — resolve to keep BOTH ADR-018 and ADR-017. Then commit ADR-018 (the /ship pre-commit convergence work — docs-only-ish + SKILL.md; may get a real gate review on SKILL.md — it had findings 3/4/5 from an earlier round about impact-tag definitions, the approval-template trust-marker disclosure, and the snapshot-hash recheck-before-commit; those were NOT yet applied to SKILL.md).
+2. **BUILD ADR-019 (the permanent token-bleed fix)** — full grounded design is in memory `[[project_codex_loop_fix.md]]` and was produced by a Plan agent this session. Four parts: (1) MEMORY — a per-(repo,HEAD) findings ledger sibling to ROUNDS_FILE so Codex stops re-raising resolved findings; (2) PROJECT CONTEXT — run `codex exec -s read-only` with `cd "$DIR"` + name changed files + tell it to READ the code (owner APPROVED sending project files to Codex); (3) CONVERGENCE PRESSURE — `[LATE]` tag + explicit converged definition; (4) CEILING — CODERV_GATE_ROUND_MAX default 5 + a bytes-budget; terminal state is GENUINE CONVERGENCE (owner: "I need result when you agree with Codex 100%, I don't want to decide for coding"), escalate-to-human reserved ONLY for unmitigated [security]/[data-loss] at the ceiling. Rules live once in docs/planning/two-brain-convergence.md (DRY); gate + /ship Step 4.5 + /before Step 5.6 inherit. Ship as ADR-019.
+
+**Deployed gate is STALE** — `/root/.claude/hooks/codex-review-gate.sh` == HEAD (the OLD gate, without the eid fix). It reviewed every commit attempt this session. After ADR-017 lands, re-sync the deployed hook (atomic temp→`bash -n`→chmod→`mv -f`) per the prior handoff's deploy step.
+
+**Memory written this session:** `[[feedback_codex_authority_model]]` (Claude decides / Codex advises / loop must self-terminate), `[[project_codex_loop_fix]]` (the ADR-019 design). MEMORY.md index updated.
+
+**RAW STATE (verbatim):**
+```
+$ git status
+On branch main
+Your branch is ahead of 'origin/main' by 4 commits.
+Changes to be committed:
+	modified:   docs/DECISIONS.md
+	modified:   hooks/codex-review-gate.sh
+	new file:   tests/mint-eid.sh
+
+$ git log --oneline -3
+d64fd0b Add 2026-07-21 session handoff; rotate older entries to archive
+ec46f9c Add docs/MASTER.md entry map; move coderv-brief into docs/reference/
+3199b71 Gate: severity-ranked marker precedence + concurrent-verdict downgrade protection
+
+$ git diff --cached --stat
+ docs/DECISIONS.md          |  28 ++++
+ hooks/codex-review-gate.sh | 108 ++++++++++++--
+ tests/mint-eid.sh          | 342 +++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 470 insertions(+), 8 deletions(-)
+
+$ git stash list
+stash@{0}: On main: ADR-018 + handoff + ship (isolate for ADR-017)
+stash@{1}: On main: slot-8 feature changeset (commit 2 material) — split for scoped gate review
+stash@{2}: On main: parked-later8-installer-fs-safety (package B)
+
+$ bash tests/mint-eid.sh   # tail
+21 passed, 0 failed
+
+$ cat VERSION
+0.12.1
+```
+**⚠ Do NOT `git add docs/DECISIONS.md` naively at any point** — the working tree
+has BOTH ADRs but the STAGED blob is ADR-017-only (rebuilt via hash-object).
+A naive add folds ADR-018 into the ADR-017 commit. The override commits the
+current staged blob, which is correct as-is.
+
+---
+
 ## 2026-07-21 — Gate hardening (finding-1 fix + ADR-016) + deployed hook sync; then a minimal docs reorg
 
 **What shipped:**
