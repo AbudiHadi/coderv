@@ -68,7 +68,7 @@ If the user says no, continue with the task using just what you can learn from t
 Read in this order:
 
 1. `CLAUDE.md` — rules, patterns, principles.
-2. `docs/MASTER-INDEX.md` if it exists — find the rows in "Task → Doc Map" that match.
+2. `docs/MASTER.md` (or `docs/MASTER-INDEX.md`) if it exists — the docs entry-point map. `MASTER.md` orients you to the top-level docs areas; `MASTER-INDEX.md` (when present) adds a "Task → Doc Map" — find the rows that match.
 3. Any docs named in that map, in order.
 4. If `docs/DECISIONS.md` exists — grep it for terms related to the task. If any ADR applies, read it.
 5. If `docs/KNOWN-ISSUES.md` exists — grep it. If there's a prior bug in this area, note the prevention rule.
