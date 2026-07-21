@@ -73,18 +73,70 @@ export LC_ALL=C
 # a failed write (full disk, bad perms) is swallowed — the gate outranks the
 # log. Honour the same kill switches as the gate itself: no gate run, no log.
 LOOP_LOG="${CODERV_LOOP_LOG:-$HOME/.claude/coderlap/loop-events.jsonl}"
+# eid = per-event identity: nanosecond epoch + PID + a random suffix. On a
+# healthy host this is strongly unique across concurrent gate processes; on a
+# degraded host it is best-effort probabilistic (see mint_eid). The viewer
+# de-dupes on eid alone, so
+# replayed history on reconnect can't double-count. NOT a sort key (ts + arrival
+# order orders the display); eid is identity only. Mirrors how the gate already
+# makes unique names via `mktemp XXXXXX`. A skip path mints one eid up front so
+# it can set BOTH the event's eid AND its xid="skip-<reason>-<eid>" from the same
+# token (the two stay correlated — spec contract), then passes the eid in.
+mint_eid() {
+    # Pure, error-swallowing: every subshell suppresses stderr and has a fallback,
+    # so a missing/broken `date` or unreadable /dev/urandom can never leak to hook
+    # stderr — the logging-is-invisible contract holds even on a degraded host.
+    # The three-part <time>-<pid>-<entropy> shape is preserved with NON-EMPTY time
+    # and entropy on every path (degraded time → $SECONDS-derived ns; degraded
+    # entropy → a mktemp-name token, then $RANDOM$RANDOM), so uniqueness never
+    # silently collapses to --$$--.
+    local ns pid rnd tmp
+    ns="$(date +%s%N 2>/dev/null)" || ns=""
+    [[ -n "$ns" ]] || ns="${SECONDS}000000000"
+    pid="$$"
+    rnd="$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' 2>/dev/null)" || rnd=""
+    if [[ -z "$rnd" ]]; then
+        # /dev/urandom unreadable. $RANDOM alone is a 15-bit PRNG whose seed can
+        # repeat, so under PID reuse / PID namespaces two events in the same
+        # second could collide and the viewer would de-dup a real event. Prefer a
+        # token from a SUCCESSFULLY-CREATED mktemp file, then remove the file so
+        # this stays a pure side-effect. This is BEST-EFFORT PROBABILISTIC only —
+        # stronger in practice than $RANDOM, but neither mktemp's entropy source
+        # nor its suffix strength is a portable contract, and once the file is
+        # removed the name could in theory be reissued. Everything is swallowed.
+        # If mktemp ALSO fails, fall back to $RANDOM$RANDOM so the eid is never
+        # empty (last resort).
+        tmp="$(mktemp "${TMPDIR:-/tmp}/eidXXXXXXXXXX" 2>/dev/null)" || tmp=""
+        [[ -n "$tmp" ]] && rm -f "$tmp" 2>/dev/null
+        rnd="${tmp##*/eid}"                       # keep only the XXXXXXXXXX tail
+        rnd="${rnd//[^0-9A-Za-z]/}"               # scrub to the eid alphabet
+        [[ -n "$rnd" ]] || rnd="$RANDOM$RANDOM"
+    fi
+    printf '%s-%s-%s' "$ns" "$pid" "$rnd"
+}
 log_event() {
-    # log_event <actor> <type> <json-payload-object>   (payload defaults to {})
+    # log_event <actor> <type> <json-payload-object> [xid] [eid]  (payload → {})
+    # xid = exchange id: all events of one review/skip share it, so the viewer
+    # can group + de-duplicate correctly even when repos interleave. Review path
+    # sets EVENT_XID once (the diff HASH); skip paths pass their synthetic xid.
+    # eid: explicit 5th arg (skip paths, so xid can be derived from it) else minted
+    # here. Empty xid is fine (legacy/unkeyed) — the viewer tolerates it.
     [[ "${CODERV_LOG_OFF:-0}" == "1" ]] && return 0
     command -v jq >/dev/null 2>&1 || return 0
-    local actor="$1" etype="$2" payload="${3:-{\}}"
+    # xid: explicit 4th arg wins; else fall back to EVENT_XID (the review path
+    # sets it once to the diff HASH, so every event of one review shares it
+    # without threading HASH through 18 call sites — DRY, and no call can miss).
+    local actor="$1" etype="$2" payload="${3:-{\}}" xid="${4:-${EVENT_XID:-}}"
+    local eid="${5:-$(mint_eid)}"
     local line
     line=$(jq -cn --argjson ts "$(date +%s)" \
                --arg repo "${REPO_ID:-${DIR:-}}" \
                --arg actor "$actor" \
                --arg type "$etype" \
+               --arg xid "$xid" \
+               --arg eid "$eid" \
                --argjson payload "$payload" \
-               '{ts:$ts, repo:$repo, actor:$actor, type:$type, payload:$payload}' 2>/dev/null) || return 0
+               '{ts:$ts, eid:$eid, xid:$xid, repo:$repo, actor:$actor, type:$type, payload:$payload}' 2>/dev/null) || return 0
     {
         mkdir -p "$(dirname "$LOOP_LOG")" 2>/dev/null || true
         # flock serialises concurrent gate runs so two large lines never
@@ -278,26 +330,54 @@ if [[ -n "$UNTRACKED" ]]; then
         [[ -n "$UDIFF" ]] && DIFF+=$'\n'"$UDIFF"
     done <<<"$UNTRACKED"
 fi
+# The viewer groups + de-dups by (xid, eid). A skip is a terminal one-event
+# exchange, so it needs its own xid. log_skip mints ONE eid, then emits the event
+# with that eid AND xid="skip-<reason>-<eid>" — the two stay correlated (spec
+# contract), and concurrent identical skips never collide. REPO_ID is set to the
+# canonical toplevel FIRST so a skip beat lands under the same project name the
+# review path uses (never a subdir/symlink spelling) — log_event reads REPO_ID
+# for the event's repo field.
+log_skip() {
+    # log_skip <reason> <payload-json>
+    local reason="$1" payload="$2" eid
+    eid="$(mint_eid)"
+    log_event system gate_skipped "$payload" "skip-${reason}-${eid}" "$eid"
+}
+REPO_ID=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
+REPO_ID=$(readlink -f "$REPO_ID" 2>/dev/null || printf '%s' "$REPO_ID")
+
 # Empty diff: a plain commit has nothing outgoing to review — silent
 # allow. But merge/cherry-pick/revert/rebase on a clean worktree are
 # about to CREATE commits from history the gate never sees; that must
 # be loud, never a silent skip.
 if [[ -z "${DIFF//[[:space:]]/}" ]]; then
-    [[ "$SUBCMD" == "commit" ]] && exit 0
+    if [[ "$SUBCMD" == "commit" ]]; then
+        log_skip empty_diff \
+            "$(jq -cn --arg sub "$SUBCMD" '{reason:"empty_diff", subcmd:$sub}')"
+        exit 0
+    fi
+    log_skip merge_incoming \
+        "$(jq -cn --arg sub "$SUBCMD" '{reason:"merge_incoming", subcmd:$sub}')"
     allow_with_warning \
         "⚠ codex-review-gate: git $SUBCMD NOT reviewed (no worktree diff — incoming commits unseen)" \
         "CODEX REVIEW SKIPPED: 'git $SUBCMD' integrates existing commits, and with a clean worktree the gate has no outgoing diff to review — the commits it brings in are NOT reviewed. Tell the owner explicitly; per the AI workflow rules a skipped review must never stay silent."
 fi
 
 # Docs-only commits flow freely (a SESSIONS.md handoff must never wait).
-DOCS_ONLY=1
+DOCS_ONLY=1; DOCS_FILES=0
 while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     [[ "$f" =~ \.(md|txt)$ ]] || { DOCS_ONLY=0; break; }
+    DOCS_FILES=$((DOCS_FILES+1))
 done < <({ git -C "$DIR" diff HEAD --name-only 2>/dev/null;
            git -C "$DIR" diff --cached --name-only 2>/dev/null;
            printf '%s\n' "$UNTRACKED"; } | sort -u)
-[[ "$DOCS_ONLY" == "1" ]] && exit 0
+if [[ "$DOCS_ONLY" == "1" ]]; then
+    log_skip docs_only \
+        "$(jq -cn --arg sub "$SUBCMD" --argjson files "$DOCS_FILES" \
+            '{reason:"docs_only", subcmd:$sub, files:$files}')"
+    exit 0
+fi
 
 # One review per unique (repo, HEAD, diff): the retry after adjudication
 # passes; any tree change, new commit, or DIFFERENT repo with an identical
@@ -305,6 +385,15 @@ done < <({ git -C "$DIR" diff HEAD --name-only 2>/dev/null;
 REPO_ID=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
 BASE=$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo unborn)
 HASH=$(sha256sum <<<"${REPO_ID}@${BASE}${NL}${DIFF}" | cut -d' ' -f1)
+# Every event of THIS review shares the diff HASH as its exchange id (xid), so
+# the viewer groups + de-dups the whole exchange correctly even when repos
+# interleave. Set here, once, after HASH exists; log_event falls back to it.
+# (Do NOT let this feed HASH above — HASH is the cache key and must stay stable.)
+EVENT_XID="$HASH"
+# Canonicalise the repo label to match the skip paths (readlink of toplevel) so
+# one repo never splits across two project names in the viewer. Purely the event
+# label — applied AFTER HASH so the cache key is untouched.
+REPO_ID=$(readlink -f "$REPO_ID" 2>/dev/null || printf '%s' "$REPO_ID")
 CACHE="$HOME/.claude/coderlap/codex-reviewed"
 mkdir -p "$CACHE"
 # Sweep expired cache state. .lock files are NEVER deleted: flock does not
@@ -338,10 +427,13 @@ ROUNDS_FILE="$CACHE/rounds-$(sha256sum <<<"${CANON_REPO}@${BASE}" | cut -d' ' -f
 # Already reviewed once (the adjudicate-then-retry of an IDENTICAL diff): the
 # commit is allowed to proceed. Log the successful retry so the dashboard
 # shows the loop closing — without it, the viewer would freeze on the denial
-# and never show the commit landing. REPO_ID isn't computed yet on this early
-# path, so stamp repo from DIR.
+# and never show the commit landing. REPO_ID is already resolved + canonicalised
+# above; keep it canonical here too so the cached-retry beat lands under the same
+# project name as the original review (never a subdir/symlink spelling). EVENT_XID
+# (=HASH) is likewise already set, so these cached events share the review's xid.
 if [[ -f "$CACHE/$HASH" ]]; then
     REPO_ID=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
+    REPO_ID=$(readlink -f "$REPO_ID" 2>/dev/null || printf '%s' "$REPO_ID")
     # Emit the writer's beat before the cached outcome so a same-diff retry
     # still shows a commit_attempt (wire-pulse) on the dashboard — without it
     # the retry would land with no visible writer turn, only a bare outcome.

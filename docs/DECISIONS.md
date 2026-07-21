@@ -33,6 +33,34 @@ What did we decide?
 
 ---
 
+## ADR-017: Every gate event carries a unique `eid` + an exchange `xid`; skips emit `gate_skipped`
+
+**Date:** 2026-07-21
+**Status:** accepted
+**Decider(s):** owner + Claude (plan hardened over 4 Codex rounds)
+
+### Context
+The owner wanted the `coderv-loop` viewer to show **all** gate activity across **all** projects — not just full reviews. Two gaps blocked that: (1) the three real skip *decisions* (docs-only, empty-diff, merge/rebase-incoming) exited before any `log_event`, so a skipped commit was invisible; (2) events carried no identity, so the viewer couldn't group an exchange under concurrent/interleaved commits, and SSE reconnect-replay double-counted every stat. A single per-user log already interleaves all repos (each event carries `repo`), so multi-project support needed no new plumbing — only correct identity + skip visibility.
+
+### Decision
+- `log_event` now stamps two fields on every event: `eid` (per-event identity) and `xid` (exchange id). `eid = <epoch_ns>-<pid>-<urandom-hex>` — on a healthy host (epoch-nanoseconds + pid + `/dev/urandom`) it is strongly unique across concurrent gate processes without a shared sequence; on a *degraded* host it degrades to **best-effort probabilistic** uniqueness (see the Hardening note), never an absolute guarantee. `xid` is the review's existing diff `HASH` (`sha256(repo@HEAD+diff)`), set once via `EVENT_XID` so all 18 review-path call sites inherit it (DRY, no call can miss). The viewer de-dupes on `eid` alone and groups by `xid`.
+- A new `gate_skipped` event (actor `system`, payload `{reason, subcmd, files?}`) fires on the three real skip *decisions* only. Each mints one `eid` and derives `xid = skip-<reason>-<eid>` from it (the two stay correlated). Repo label is canonicalised (`readlink -f` of the toplevel) on the skip, review, and cached-retry paths so one repo never splits across two project names.
+- Exchange status is the **latest terminal outcome** per `xid`: a denied-then-passed retry counts once as passed (recovered), never as both.
+
+### Alternatives
+- **Positional grouping ("until the next commit_attempt")** — rejected: Codex showed it misattributes late events under concurrent same-repo commits. A gate-stamped `xid` is interleave-proof.
+- **Dedup by `(xid,type,ts)`** — rejected: `ts` is 1-second resolution, so multiple findings / rapid skips in the same second would collapse. A unique `eid` is required.
+- **`eid = date +%s%N` alone** — rejected: not unique across concurrent processes or safe under clock adjustment; pid + urandom close it without a shared lock.
+- **Emit on every early exit (kill-switch / missing-jq / non-git)** — rejected: those are *gate-didn't-run* infrastructure exits, not skip *decisions*; firing on them spams the loop with noise unrelated to the two-brain exchange.
+
+### Consequences
+- Positive: every commit (reviewed, retried, or skipped) is now visible and correctly grouped in the viewer, across all projects; stats survive reconnect. The `log_event` contract (never influences allow/deny, swallows failures, honours `CODERV_LOG_OFF`) is preserved.
+- Trade-off: adds one `mint_eid` (a `date`+`od` call) per event, including on the docs-only handoff hot path — negligible, same order as the existing `commit_attempt` log.
+- Hardening: `mint_eid` swallows a missing/failing `date`, `od`, or `tr` (each subshell has `2>/dev/null` + a fallback: time → `$SECONDS`-derived ns; entropy → a token from a **successfully-created** `mktemp` file that is then removed, and only if `mktemp` *also* fails → `$RANDOM$RANDOM`), so the logging-is-invisible contract holds even on a degraded host and the eid never collapses to the empty `--$$--` shape. The degraded entropy is **best-effort probabilistic**, not a hard guarantee: `mktemp`'s pathname randomness is, in practice, far stronger than `$RANDOM`'s 15-bit PRNG (which under PID reuse / PID namespaces could otherwise collide two events in the same second and make the viewer de-dup a real event), but once the temp file is removed the name could in theory be reissued — neither `mktemp`'s entropy source nor its suffix strength is a portable contract. Guarded by `tests/mint-eid.sh`: cases 1–4 exercise `mint_eid` in isolation; case 5 drives the **whole hook** through a docs-only skip on a degraded host (asserting a silent allow, zero hook stderr, and exactly one correlated `gate_skipped` event); case 6 regression-protects the `mktemp` entropy fix (fails if it reverts to bare `$RANDOM$RANDOM`); case 7 covers the empty-diff skip path; case 8 pins the both-fail `$RANDOM$RANDOM` last-resort branch to its deterministic value; and case 9 drives the merge-incoming skip path (allow-with-warning: non-empty JSON with a `systemMessage`, no deny, exit 0, and exactly one correlated `gate_skipped/merge_incoming` event).
+- Revisit if: multi-writer workflows make the concurrent same-diff race in ADR-016 material — the `xid`/`eid` identity model is the substrate a real fix would build on.
+
+---
+
 ## ADR-016: The concurrent same-diff review race in codex-review-gate is an accepted, documented hardening opportunity — not a release-blocking defect
 
 **Date:** 2026-07-21
