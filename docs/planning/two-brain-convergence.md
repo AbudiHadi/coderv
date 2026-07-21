@@ -102,3 +102,68 @@ The cap is enforced BY THE MACHINE at the commit gate, not by prose:
   findings surfaced to the owner verbatim. This is a commit-phase refinement,
   NOT auto-CONVERGED: adjudication of the marginal residue passes to the
   owner instead of holding the commit hostage.
+
+## Why the loop bled tokens, and the permanent fix (ADR-019, 2026-07-21)
+The gate's cold-diff review is MEMORYLESS: each `codex exec` is a fresh session
+that sees only the diff, with no record of what it already raised and no access
+to the surrounding code. So a thorough reviewer (a) re-raises a finding Claude
+already resolved, because it never learns the disposition, and (b) invents false
+findings the real code disproves, because it can't read that code. Every such
+finding is a new deny -> another round -> the owner ends the loop by hand. The
+old cap only ESCALATED-TO-HUMAN, which made the human the loop's off-switch on
+every project — that is the bleed. ADR-019 makes GENUINE CONVERGENCE (Codex LGTM
+because it finally has full context) reachable, so escalate-to-human is reserved
+ONLY for a real unmitigated [security]/[data-loss] finding at the hard ceiling.
+
+Four inputs, added at the commit gate (and inherited by /ship Step 4.5 and
+/before Step 5.6 — DRY, defined here once):
+
+1. **Findings ledger (memory).** A per-(canonical repo, HEAD) ledger file sits
+   beside ROUNDS_FILE in `$CACHE` (`ledger-<sha of CANON_REPO@BASE>`), same
+   lifecycle: flock-guarded append, no delete path, reaped by the 24h sweep and
+   by HEAD movement. Each reviewed finding is fingerprinted (a hash of its
+   normalized text — lowercased, whitespace/line-number-stripped) and recorded.
+   The accumulated fingerprints + their finding text are fed into the next
+   round's prompt with an explicit instruction: *you already raised these; do
+   NOT raise one again unless the CURRENT code still exhibits it — cite the line
+   that still shows the problem.* This is what stops re-raising resolved
+   findings. The ledger is best-effort: a flock/IO failure just means an empty
+   prior-findings block (the pre-ADR-019 behavior), never a block on the commit.
+
+2. **Project context (read the real code).** The `codex exec` runs with the repo
+   as its cwd (`cd "$DIR"`) under `-s read-only`, is given the list of changed
+   files, and is told to READ the surrounding code before judging — so a finding
+   the code already disproves is never raised. The owner APPROVED sending
+   surrounding project files to OpenAI (same trust boundary as the diff, just
+   wider). This kills false findings at the source.
+
+3. **Convergence pressure.** A finding first appearing at round >= 2 (visible in
+   the ledger as absent from all prior rounds) is tagged [LATE] by the reviewer
+   and must justify why it could not have been seen at round 1. The prompt
+   carries an explicit definition: *converged = you reply LGTM because, with the
+   prior findings and the real code in front of you, nothing material remains* —
+   NOT "no NEW finding this round."
+
+4. **Ceiling (a rarely-hit safety net, not the normal exit).** Above the
+   existing soft cap (`CODERV_GATE_ROUND_CAP`, default 3) sits a hard
+   `CODERV_GATE_ROUND_MAX` (default 5) and a `CODERV_GATE_DIFF_BUDGET` (a
+   cumulative bytes-reviewed proxy, default 800000). If fixes 1-3 work the loop
+   converges around round 2-3 and the ceiling is never reached. At the ceiling,
+   ONLY a still-open [security] or [data-loss] finding may BLOCK — and that block
+   is the existing owner-escalation path (CODERV_GATE_OWNER_OVERRIDE=1), i.e. the
+   gate refusing to auto-merge a security hole, which is a safety decision, NOT a
+   human being asked to adjudicate ordinary code. Every non-security finding must
+   have converged by the ceiling; if any [correctness]/untagged remains open at
+   ROUND_MAX it is surfaced but the commit is ALLOWED-with-caveat (the loop
+   self-terminates rather than escalating routine code to the human).
+
+Invariants preserved (non-negotiable): fail-open when Codex is down (allow with a
+loud unreviewed warning); the kill switches (CODERV_GATES_OFF / CODEX_REVIEW_OFF)
+and the CODERV_LOG_OFF contract untouched; the gate stays the sole author of its
+trust marker (ADR-018). ADR-019 only ADDS context to the review and RAISES the
+ceiling above the cap — it never weakens a material block below the cap.
+
+**"Built" is not "live."** The fix reaches a project only after that project's
+user `git pull`s the toolkit and re-runs `install.sh` (which re-copies the hook).
+Until a reinstall, their deployed gate keeps the old trickle. The CHANGELOG/README
+must say so.

@@ -7,3 +7,6 @@ node_modules/
 
 # Internal scan/audit output — stays on the owner's machine, never shipped
 docs/GAP-SCAN-*.json
+
+# Session scratch — temp working files, never shipped
+scratchpad/

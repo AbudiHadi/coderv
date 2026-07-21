@@ -4,6 +4,113 @@
 
 ---
 
+## 2026-07-21 (later 3) — ADR-018 SHIPPED; ADR-019 BUILT+VERIFIED+release-ready, staged, blocked only on the owner override (context gate)
+
+**THE ONE ACTION WAITING ON THE OWNER:** the entire ADR-019 change-set (7 files)
+is staged, fully verified, and release-ready — but the STALE deployed old gate
+(the exact bug ADR-019 fixes) keeps CAP-escalating the commit. The owner lands it
+(the override is the owner's in-band decision signal, never the agent's — I did
+NOT set it). Exact one-step landing command + the full release/deploy chain are
+written verbatim in `scratchpad/LAND-ADR-019.txt`. Short version:
+```
+cd /root/claude-docs-toolkit && CODERV_GATE_OWNER_OVERRIDE=1 git commit -F- <<'MSG'
+Give the commit gate memory + project context + a convergence ceiling (ADR-019)
+<the body is drafted in LAND-ADR-019.txt>
+MSG
+```
+Then: `./release.sh` (machine gate, prints tag/push + website site.ts sync) →
+deploy the new hook locally (atomic temp→`bash -n`→chmod→`mv -f` into
+`~/.claude/hooks/codex-review-gate.sh`, then `diff` == source).
+
+**What SHIPPED this session:**
+- **ADR-018 landed — commit `61b0cd2`** (`/ship` pre-commit convergence loop; the
+  gate stays the sole author of its trust marker). Reconstructed the ADR-018
+  DECISIONS.md entry that had been LOST in the prior session's hash-object dance
+  (the stash only carried SESSIONS/two-brain/ship SKILL, never the DECISIONS hunk).
+  Resolved a stale-handoff SESSIONS.md merge conflict (kept "later 2" + preserved
+  "later" as an earlier entry). Gate treated it docs-only → allowed clean.
+
+**What is BUILT + VERIFIED but NOT yet committed (staged, 7 files):**
+- **ADR-019 gate** (`hooks/codex-review-gate.sh`, +719/-…): findings LEDGER
+  (memory, per repo@HEAD, flock/no-delete/24h-swept, fingerprint+text fed back);
+  PROJECT CONTEXT (review runs read-only from repo cwd + changed-file list; on cd
+  failure falls back to diff-only from a FRESH EMPTY temp dir, never `$HOME`);
+  `[LATE]` convergence pressure (round-aware, independent of ledger contents);
+  three-tier round machine — below CAP(3) ordinary deny, CAP..ROUND_MAX(5) middle
+  tier = ordinary retry-deny (NOT escalation, so the loop can reach the ceiling),
+  CEILING (ROUND_MAX or DIFF_BUDGET=800000 bytes, cap-gated) self-terminates:
+  only open [security]/[data-loss] BLOCKS (owner escalation), all other residue
+  ALLOW-with-caveat. Marker migrations: `denied … escalated={0,1}` (escalated=1 is
+  top precedence, never overwritten by a later allow; legacy no-flag inferred from
+  round vs CAP); `cap_stopped … ceiling=K` (K>0 → ceiling material residue, retry
+  message is accurate, never mislabels as "marginal"); ROUNDS_FILE 4th byte field
+  with legacy 3-field back-compat, cumulative bytes summed in the SAME flock txn.
+- **ADR-019 in DECISIONS.md**; rules (DRY) in `docs/planning/two-brain-convergence.md`.
+- **tests/gate-cap.sh** extended to **163 checks** (was 93): ceiling by ROUND_MAX
+  & DIFF_BUDGET, cap-gating absolute, security-blocks-vs-residue-allows, middle-tier
+  retry, marker escalated/ceiling distinctions, atomic budget under concurrency
+  (monotonic), ROUNDS_FILE migration matrix, ledger persist+prompt injection, cwd/
+  read-only/changed-file capture, [LATE] presence, no-flock + lock-TIMEOUT → diff-only
+  fallback (CTX_OK), invalid-env clamps, multibyte byte>char + UTF-8-safe ledger.
+- **Release prep**: `VERSION` 0.12.1→**0.13.0**; CHANGELOG 0.13.0 entry (ADR-018+019,
+  dated, with the "reinstall required" heads-up); README Update section notes hooks
+  are copied at install → reinstall needed for a new gate to take effect.
+
+**The plan review (/before Step 5.6) CONVERGED in 11 Codex rounds, 18 material
+findings, all resolved** (incl. 2 security bypasses + the escalation-defeats-ADR-019
+crux). THEN, committing through the OLD deployed gate, Codex caught **7 more real
+bugs in the built code** — ALL fixed + test-covered: cd-fallback-to-`$HOME` leak;
+`PIPESTATUS`-after-`$(...)` CTX_OK bug (rewrote to check flock's own status via a
+locked snapshot); TWO multibyte truncation splits (prompt head-c→head-n; ledger
+cut-c→iconv/ascii-strip); `[LATE]` wrongly tied to a non-empty ledger; cap_stopped
+marker reused for marginal AND ceiling-material (added ceiling=K). Two-brain working.
+
+**VERIFIED (verbatim):** `bash tests/gate-cap.sh` → **163 passed, 0 failed**
+(stable across 3 runs incl. concurrency); `bash tests/mint-eid.sh` → 21/0;
+`shellcheck -S warning` on the gate + gate-cap → **0 warnings**; `bash -n` clean.
+The live end-to-end kept getting intercepted by the stale deployed gate (which is
+itself the bug) — the 163-check deterministic suite IS the behavioral verification.
+
+**RAW STATE (verbatim):**
+```
+$ git log --oneline -4
+61b0cd2 Move the Claude/Codex argument into a /ship pre-commit loop (ADR-018)
+3411f57 Handoff: carry ADR-019 through build→release→deploy so the gate fix goes live on every project
+0666e64 Add 2026-07-21 (later 2) session handoff — ADR-017 landed, ADR-018 stashed, ADR-019 designed
+b972098 Gate: unique eid + exchange xid on every event; gate_skipped on skip decisions
+
+$ git status --short
+M  CHANGELOG.md
+M  README.md
+M  VERSION
+M  docs/DECISIONS.md
+M  docs/planning/two-brain-convergence.md
+M  hooks/codex-review-gate.sh
+M  tests/gate-cap.sh
+$ git diff --cached --stat   (all 7 staged)
+ 7 files changed, 1163 insertions(+), 165 deletions(-)
+$ cat VERSION
+0.13.0
+$ deployed gate == source?  DEPLOYED STALE (still the old trickling gate)
+```
+
+**Gotchas the next session should know:**
+- **The deployed gate blocks EVERY Bash call containing a git command** right now
+  (it's CAP-REACHED on the toolkit's own diff). That's why live e2e kept failing.
+  It CLEARS the moment ADR-019 lands + the new hook is deployed (chain above).
+- `env -u CODERV_GATE_OWNER_OVERRIDE bash tests/gate-cap.sh` — the override env var
+  leaks into the shell after an override commit and shows spurious FAILs otherwise.
+- Two stashes remain (`stash@{0}` slot-8 feature, `stash@{1}` installer-fs-safety) —
+  untouched, unrelated to this work.
+
+**Next session should probably:**
+- Land ADR-019 via the owner override (`scratchpad/LAND-ADR-019.txt`), then run
+  `./release.sh`, then atomically deploy the new hook to `~/.claude/hooks/` and
+  confirm `diff` == source. THAT is what stops the trickle on this machine; the
+  community gets it when each user pulls + reruns `install.sh`.
+
+---
+
 ## 2026-07-21 (later 2) — ADR-017 set verified+staged (awaiting owner override); ADR-018 stashed; ADR-019 permanent-fix DESIGNED (context gate)
 
 **THE ONE ACTION WAITING ON THE OWNER:** the ADR-017 change-set is staged, fully

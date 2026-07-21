@@ -5,6 +5,25 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.13.0] — 2026-07-21
+
+> **Heads-up — reinstall required.** The commit gate's behaviour changed. Your
+> currently *installed* hook keeps the old behaviour until you `git pull` this
+> toolkit and re-run `install.sh`, which re-copies the hook to
+> `~/.claude/hooks/`. Until you reinstall, ADR-019 is not live on your machine.
+
+### Added
+- **The commit gate now has memory, project context, and a convergence ceiling — so the Claude↔Codex review loop self-terminates on genuine agreement instead of escalating routine code to you (ADR-019).** The old gate reviewed a *cold diff* on every recommit through a fresh, memoryless `codex exec` that could see only the diff — so it re-raised findings you had already resolved and invented false ones the real code disproves, and the round cap only ever *escalated to the human*, making you the loop's off-switch on every project. That was the token bleed. Four inputs fix it:
+  - **Findings ledger (memory).** A per-(repo, HEAD) ledger beside the round-counter records each finding's fingerprint + text and feeds them back into the next round's prompt, so Codex stops re-raising a finding you already fixed unless the current code still shows it.
+  - **Project context.** The review runs read-only *from the repo directory* with the changed-file list, so Codex reads the real surrounding code and false findings die. On a directory-access failure it falls back to a diff-only review from a throwaway empty directory — never reading an unrelated tree.
+  - **Convergence pressure.** A finding first appearing in a later round is tagged `[LATE]`; "converged" is defined as an LGTM reached *with* the prior findings and real code in view, not merely "no new finding this round".
+  - **Ceiling.** Above the soft round cap (default 3, `CODERV_GATE_ROUND_CAP`) sits a hard ceiling: `CODERV_GATE_ROUND_MAX` (default 5) and `CODERV_GATE_DIFF_BUDGET` (default 800000 transmitted bytes). Below the cap every material finding blocks as before. Between the cap and the ceiling, material findings are ordinary retry-denies (no escalation) so the loop can actually reach the ceiling. At the ceiling, **only a still-open security or data-loss finding blocks** (the durable owner escalation — the gate refusing to auto-merge a security hole); every other residue self-terminates as an allow-with-caveat with the findings surfaced verbatim.
+- **The Claude↔Codex argument now happens *before* the commit, in `/ship` (ADR-018).** `/ship` gains a pre-commit convergence loop: it assembles the diff exactly as the gate does (including untracked files), runs one exhaustive Codex pass, and batch-fixes without committing — so by the time the commit-time gate runs, it is a fast confirmation of an already-agreed diff rather than the place the argument starts. `/ship` never writes the gate's trust marker (that would silently disarm the backstop); the gate stays the sole author of its own marker.
+
+### Changed
+- **The round-state file gained a 4th field** (transmitted bytes per round) for the ADR-019 byte-budget ceiling. Legacy 3-field records written by an older gate are still counted toward the round total (contributing zero bytes), so an in-place upgrade never miscounts.
+- **The gate's denied cache-marker gained an `escalated={0,1}` flag** so an ordinary/middle-tier deny retries per the adjudicate-then-retry contract while a ceiling security block stays escalated; an `escalated=1` marker is the top precedence key and can never be overwritten by a later allow of the same diff. Legacy flag-less markers are read conservatively (escalated when at/above the cap, ordinary below it).
+
 ## [0.12.1] — 2026-07-20
 
 ### Fixed

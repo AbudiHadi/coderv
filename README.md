@@ -98,6 +98,12 @@ All six hooks (`coderv-router`, `project-context`, and the four anti-dumb-zone g
 curl -fsSL https://coderv.dev/install.sh | bash -s -- --force
 ```
 
+The hooks are **copied** into `~/.claude/hooks/` at install time, so a `git pull`
+alone does not change how your gate behaves — you must re-run `install.sh` (or the
+one-liner above) for a new hook version to take effect. Behaviour changes to the
+commit gate (e.g. the ADR-019 convergence ceiling in 0.13.0) are only live on your
+machine after that reinstall.
+
 **Uninstall:**
 
 ```bash

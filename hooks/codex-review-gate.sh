@@ -15,18 +15,35 @@
 # outcome states "drift NOT checked" — a drift review that never read a plan
 # must never be claimed.
 #
-# Round cap (two-brain-convergence.md "CAP-STOPPED", enforced by the machine,
-# not prose): every reviewed-with-findings round for the same (repo, HEAD) is
-# counted in a flock-guarded state file; each deny prints the round number and
-# the finding-count trajectory. The reviewer must tag every finding with an
-# IMPACT severity — MATERIAL = [data-loss]/[security]/[correctness]/untagged,
-# MARGINAL = [edge]/[theoretical]. At round >= cap (default 3, override
-# CODERV_GATE_ROUND_CAP) a review whose findings are ALL marginal is ALLOWED
-# with a loud CAP-STOPPED caveat instead of denied; material findings keep
-# denying, but the deny becomes an explicit owner-visible escalation and every
-# later material deny at that (repo, HEAD) stays escalated (durable state).
-# The counter has NO delete path — a landed commit moves HEAD (new key) and
-# the 24h sweep reaps orphans — so there is no delete/append race to lose.
+# Convergence (two-brain-convergence.md, enforced by the machine, not prose):
+# every reviewed-with-findings round for the same (repo, HEAD) is counted in a
+# flock-guarded state file; each deny prints the round number + finding-count
+# trajectory. The reviewer tags every finding with an IMPACT severity — MATERIAL
+# = [data-loss]/[security]/[correctness]/untagged, MARGINAL = [edge]/[theoretical].
+#
+# ADR-019 makes the loop self-terminate on GENUINE CONVERGENCE instead of
+# escalating routine code to the human. Three inputs give Codex what a cold
+# memoryless review lacks: (1) a per-(repo,HEAD) findings LEDGER fed back into
+# the prompt so it stops re-raising resolved findings; (2) PROJECT CONTEXT — the
+# review runs read-only FROM the repo cwd with the changed-file list, so Codex
+# reads the real code and false findings die; (3) CONVERGENCE PRESSURE — a
+# late-appearing finding is tagged [LATE] and "converged" is defined as LGTM
+# with full context. Three round tiers:
+#   - ROUND < CAP (default 3, CODERV_GATE_ROUND_CAP): ordinary retry-deny.
+#   - CAP <= ROUND < ROUND_MAX (default 5, CODERV_GATE_ROUND_MAX) and cumulative
+#     transmitted bytes < CODERV_GATE_DIFF_BUDGET (default 800000): marginal-only
+#     ALLOWED-with-caveat; material still DENIES but WITHOUT owner escalation, so
+#     the loop keeps converging with memory+context.
+#   - CEILING (ROUND >= ROUND_MAX or byte budget exhausted, and >= CAP): the loop
+#     self-terminates. ONLY a still-open [security]/[data-loss] finding BLOCKS
+#     (a durable owner escalation — the gate refusing to auto-merge a security
+#     hole); every other residue is ALLOWED-with-caveat, findings surfaced
+#     verbatim. The denied marker carries an escalated={0,1} flag so an ordinary
+#     deny retries but a ceiling security block stays escalated.
+# The counter/ledger have NO delete path — a landed commit moves HEAD (new key)
+# and the 24h sweep reaps orphans — so there is no delete/append race to lose.
+# The ledger + project context are best-effort: any flock/IO failure degrades to
+# the pre-ADR-019 cold review (empty prior block, diff-only) and never blocks.
 #
 # Detects: commit / merge / cherry-pick / revert / rebase, including
 # `git -C <dir>` and other global flags, at command position (quoted
@@ -60,6 +77,11 @@
 #   repo+HEAD+diff cache key keeps a wrong-repo review from being reused).
 #
 # Kill switch: CODERV_GATES_OFF=1 (all gates) or CODEX_REVIEW_OFF=1
+# Tunables: CODERV_GATE_ROUND_CAP (soft cap, default 3), CODERV_GATE_ROUND_MAX
+#   (hard ceiling, default 5, always > cap), CODERV_GATE_DIFF_BUDGET (cumulative
+#   transmitted-byte ceiling, default 800000), CODERV_GATE_OWNER_OVERRIDE=1 (the
+#   owner's in-band pass over an open ceiling security escalation), CODERV_LOG_OFF=1
+#   (silence the live-loop event log).
 #
 # <!-- claude-docs-toolkit -->
 set -o pipefail
@@ -278,12 +300,20 @@ publish_round_marker() {
         cap_stopped\ round=*) newrank=1 ;;
         *)                    newrank=0 ;;   # lgtm / anything else
     esac
-    # shellcheck disable=SC2016  # single quotes intentional: $1..$4 are bash -c positionals
+    # ADR-019 finding 12: a CEILING security block (denied … escalated=1) is the
+    # top precedence key. It must outrank EVERY allowing marker (lgtm/cap_stopped)
+    # and every escalated=0 deny REGARDLESS of round, so a later-round allow of the
+    # same diff can never overwrite it and silently clear the required owner
+    # escalation. Signalled to the critical section as newesc.
+    local newesc=0
+    case "$content" in *" escalated=1") newesc=1 ;; esac
+    # shellcheck disable=SC2016  # single quotes intentional: $1..$5 are bash -c positionals
     flock -w 2 "$mf.lock" bash -c '
-        mf="$1"; content="$2"; this="$3"; newrank="$4"
-        cur=0; had_round=0; currank=0
+        mf="$1"; content="$2"; this="$3"; newrank="$4"; newesc="$5"
+        cur=0; had_round=0; currank=0; curesc=0
         if [ -f "$mf" ]; then
             m=$(cat "$mf" 2>/dev/null)
+            case "$m" in *" escalated=1") curesc=1 ;; esac
             case "$m" in
                 denied\ round=*|cap_stopped\ round=*)
                     had_round=1
@@ -302,6 +332,19 @@ publish_round_marker() {
                     esac ;;
             esac
         fi
+        # ADR-019 finding 12: escalated=1 is the TOP precedence key, above the
+        # (round, severity) ordering below.
+        #   - an existing escalated=1 marker is UNBEATABLE by anything except
+        #     another escalated=1 (a ceiling security stop is never cleared by a
+        #     later allow of the same diff, whatever its round);
+        #   - an incoming escalated=1 always wins (it must be able to overwrite an
+        #     earlier allow/ordinary-deny to record the security stop).
+        if [ "$curesc" -eq 1 ] && [ "$newesc" -ne 1 ]; then exit 0; fi
+        if [ "$newesc" -eq 1 ]; then
+            tmp=$(mktemp "$mf.tmp.XXXXXX") || exit 1
+            printf "%s" "$content" > "$tmp" && mv -f "$tmp" "$mf" || { rm -f "$tmp"; exit 1; }
+            exit 0
+        fi
         # Downgrade protection, ordered by (round, severity-rank):
         #   - a strictly-lower round never overwrites (incl. lgtm at round 0);
         #   - at EQUAL round, a lower-or-equal severity never overwrites, so a
@@ -314,7 +357,7 @@ publish_round_marker() {
         fi
         tmp=$(mktemp "$mf.tmp.XXXXXX") || exit 1
         printf "%s" "$content" > "$tmp" && mv -f "$tmp" "$mf" || { rm -f "$tmp"; exit 1; }
-    ' _ "$mf" "$content" "$this" "$newrank" 2>/dev/null
+    ' _ "$mf" "$content" "$this" "$newrank" "$newesc" 2>/dev/null
 }
 
 # What is about to be committed: PreToolUse fires before any `git add` in
@@ -406,7 +449,10 @@ mkdir -p "$CACHE"
 find "$CACHE" -maxdepth 1 -type f ! -name '*.lock' -mmin +1440 2>/dev/null |
 while IFS= read -r swept; do
     case "$swept" in
-        */rounds-*)
+        */rounds-*|*/ledger-*)
+            # rounds-* AND ledger-* (ADR-019) are flock-guarded DATA files: delete
+            # only WHILE HOLDING their lock, age re-checked inside the critical
+            # section, so an unlocked delete can't race a concurrent locked append.
             command -v flock >/dev/null 2>&1 || continue
             # shellcheck disable=SC2016  # single quotes intentional: $1 is a bash -c positional
             flock -w 1 "$swept.lock" bash -c \
@@ -420,10 +466,33 @@ done
 # are computed HERE, before the cache fast-path, because both paths need them:
 # the fresh-review decision below, and the cached retry — which must stay LOUD
 # when it rides over an unresolved cap escalation.
+# Env-tunable thresholds — each bounded to 1-9 digits (< 1e9, safely < 2^63) so
+# no oversized value can overflow the (( )) arithmetic below (ADR-019 finding 8).
+# The CAP guard is TIGHTENED from the historical `^[1-9][0-9]*$` (which accepted
+# an arbitrarily long digit string) to the same bounded form.
 CAP="${CODERV_GATE_ROUND_CAP:-3}"
-[[ "$CAP" =~ ^[1-9][0-9]*$ ]] || CAP=3
+[[ "$CAP" =~ ^[1-9][0-9]{0,8}$ ]] || CAP=3
+# ADR-019 hard ceiling: above the soft CAP (where marginal residue auto-allows)
+# sits ROUND_MAX — the round at/after which even non-security material residue
+# self-terminates (allow-with-caveat) instead of the loop escalating routine code
+# to the human. Default 5, must be > CAP; a MAX <= CAP would make the ceiling
+# meaningless (the middle tier would be empty), so clamp up to CAP+2.
+ROUND_MAX="${CODERV_GATE_ROUND_MAX:-5}"
+[[ "$ROUND_MAX" =~ ^[1-9][0-9]{0,8}$ ]] || ROUND_MAX=5
+(( ROUND_MAX <= CAP )) && ROUND_MAX=$(( CAP + 2 ))
+# ADR-019 cumulative transmitted-byte ceiling: a size-based hard stop parallel to
+# ROUND_MAX, in bytes ACTUALLY SENT to Codex (LC_ALL=C, see the accumulation in
+# the rounds transaction). Default 800000; same bounded-int guard.
+DIFF_BUDGET="${CODERV_GATE_DIFF_BUDGET:-800000}"
+[[ "$DIFF_BUDGET" =~ ^[1-9][0-9]{0,8}$ ]] || DIFF_BUDGET=800000
 CANON_REPO=$(readlink -f "$REPO_ID" 2>/dev/null) || CANON_REPO="$REPO_ID"
 ROUNDS_FILE="$CACHE/rounds-$(sha256sum <<<"${CANON_REPO}@${BASE}" | cut -d' ' -f1)"
+# ADR-019 findings ledger: sibling to ROUNDS_FILE, same (canonical repo, HEAD)
+# key, same lifecycle (flock append, no delete path, reaped by the 24h sweep and
+# by HEAD movement). One line per reviewed finding: "<fingerprint> <round> <text>"
+# where text is the finding newline-flattened + length-capped. Prior findings are
+# fed back into the review prompt so Codex stops re-raising resolved ones.
+LEDGER_FILE="$CACHE/ledger-$(sha256sum <<<"${CANON_REPO}@${BASE}" | cut -d' ' -f1)"
 # Already reviewed once (the adjudicate-then-retry of an IDENTICAL diff): the
 # commit is allowed to proceed. Log the successful retry so the dashboard
 # shows the loop closing — without it, the viewer would freeze on the denial
@@ -445,8 +514,11 @@ if [[ -f "$CACHE/$HASH" ]]; then
     # a DIFFERENT diff (an LGTM'd diff must not be denied because an earlier
     # diff at this HEAD escalated, and a CAP-STOPPED allow must keep its
     # caveat on retry). This is a CLOSED classifier: markers are written per
-    # terminal path in exactly these schemas —
-    #   "lgtm" | "cap_stopped round=N findings=M" | "denied round=N material=M"
+    # terminal path in exactly these schemas (ADR-019 added the trailing
+    # ceiling=/escalated= fields; the legacy field-less forms still parse) —
+    #   "lgtm"
+    #   "cap_stopped round=N findings=M [ceiling=K]"
+    #   "denied round=N material=M [escalated=E]"
     # An empty/legacy marker reads as a plain reviewed-ok pass. Anything ELSE —
     # a torn write, a truncated marker, an unrecognised token — is NOT allowed
     # to fall through to a pass: it is treated as an open escalation and DENIED
@@ -498,12 +570,28 @@ if [[ -f "$CACHE/$HASH" ]]; then
             # round=18446744073709551617 would WRAP under 64-bit arithmetic
             # (2^64+1 -> 1), making an above-cap denial look below-cap; a >9-digit
             # field fails this anchored match and falls to the deny below instead.
-            if [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]{1,9})\ findings=([0-9]{1,9})$ ]] \
-               && (( 10#${BASH_REMATCH[1]} >= CAP )) && (( 10#${BASH_REMATCH[2]} > 0 )); then
-                log_event system outcome "$(jq -cn '{result:"passed", cached:true, cap_stopped:true}')"
-                allow_with_warning \
-                    "⚠ codex-review-gate: retry of a CAP-STOPPED diff ALLOWED — its marginal findings still stand" \
-                    "This identical diff was previously allowed at the round cap with MARGINAL findings open ($MARKER_STATE). The retry does not resolve them: surface those findings to the owner alongside this commit (transparency rule — never silently dropped)."
+            # The ceiling field is OPTIONAL (ADR-019): a new marker is
+            # "cap_stopped round=N findings=M ceiling=K"; a legacy one omits it.
+            # ceiling=0 (or absent) → classic marginal-only stop; ceiling=K>0 →
+            # K non-security material findings self-terminated at the hard ceiling,
+            # so the retry caveat must NOT claim "only MARGINAL findings".
+            CS_CEIL=0; CS_MATCH=0
+            if [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]{1,9})\ findings=([0-9]{1,9})\ ceiling=([0-9]{1,9})$ ]]; then
+                CS_MATCH=1; CS_CEIL=$(( 10#${BASH_REMATCH[3]} ))
+            elif [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]{1,9})\ findings=([0-9]{1,9})$ ]]; then
+                CS_MATCH=1; CS_CEIL=0   # legacy marker: treat as marginal-only
+            fi
+            if (( CS_MATCH )) && (( 10#${BASH_REMATCH[1]} >= CAP )) && (( 10#${BASH_REMATCH[2]} > 0 )); then
+                log_event system outcome "$(jq -cn --argjson ceil "$CS_CEIL" '{result:"passed", cached:true, cap_stopped:true, ceiling_material:$ceil}')"
+                if (( CS_CEIL > 0 )); then
+                    allow_with_warning \
+                        "⚠ codex-review-gate: retry of a CEILING-STOPPED diff ALLOWED — $CS_CEIL non-security material finding(s) still stand" \
+                        "This identical diff self-terminated at the convergence ceiling with $CS_CEIL non-security material finding(s) still open ($MARKER_STATE) — the loop stopped rather than escalate routine code, but the findings are NOT resolved. Surface them to the owner alongside this commit (transparency rule — never silently dropped)."
+                else
+                    allow_with_warning \
+                        "⚠ codex-review-gate: retry of a CAP-STOPPED diff ALLOWED — its marginal findings still stand" \
+                        "This identical diff was previously allowed at the round cap with MARGINAL findings open ($MARKER_STATE). The retry does not resolve them: surface those findings to the owner alongside this commit (transparency rule — never silently dropped)."
+                fi
             else
                 # cap_stopped prefix but malformed tail OR invariant-violating
                 # counts: do NOT auto-allow a garbled/impossible allow-marker —
@@ -512,23 +600,39 @@ if [[ -f "$CACHE/$HASH" ]]; then
             fi
             ;;
         "denied round="*" material="*)
-            # Fields bounded to 1-9 digits (< 2^63): an oversized round such as
-            # 18446744073709551617 (2^64+1) would WRAP to 1 under 64-bit
-            # arithmetic, making an above-cap denial look below-cap and clearing
-            # the escalation. A >9-digit field fails this anchored match and
-            # routes to the unverified-escalation deny below.
-            if [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]{1,9})\ material=([0-9]{1,9})$ ]]; then
-                # 10# forces base-10 so a leading-zero field (round=08) is not
-                # parsed as octal — a bare (( 08 >= CAP )) is an arithmetic error
-                # that would leave CAP_RIDE=0 and wrongly allow the retry.
+            # ADR-019: the denied marker now carries an explicit escalation flag
+            # "denied round=N material=M escalated=E" (E in {0,1}). Only
+            # escalated=1 (a CEILING [security]/[data-loss] block) is an OPEN
+            # escalation that an identical retry cannot clear. escalated=0 (an
+            # ordinary below-cap or middle-tier deny) retries per the
+            # adjudicate-then-retry contract — so the loop can reach ROUND_MAX
+            # instead of the first middle-tier deny locking it (finding 9).
+            # Fields bounded to 1-9 digits (< 2^63): an oversized round would WRAP
+            # under 64-bit arithmetic; a >9-digit field fails the anchored match
+            # and routes to the unverified-escalation deny below.
+            if [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]{1,9})\ material=([0-9]{1,9})\ escalated=([01])$ ]]; then
+                # 10# forces base-10 (round=08 must not parse as octal).
                 R_ROUND=$(( 10#${BASH_REMATCH[1]} )); R_MAT=$(( 10#${BASH_REMATCH[2]} ))
-                # Validate the denial INVARIANTS, not just the shape: a real
-                # denied marker always has round >= 1, and a denial recorded at
-                # or above the cap always has material > 0 (an at-cap deny is by
-                # definition a material escalation). An impossible combination
-                # (round=0, or round>=CAP with material=0) is a torn/forged
-                # record — route it to the unverified deny, never a fall-through
-                # allow that would skip the mandatory escalation.
+                R_ESC="${BASH_REMATCH[3]}"
+                # Invariant: a real denied marker has round >= 1, and an
+                # escalated=1 marker (a ceiling security stop) is only ever
+                # written at/above the cap. An escalated=1 recorded below the cap
+                # is impossible → torn/forged, route to the unverified deny.
+                if (( R_ROUND < 1 )) || { [[ "$R_ESC" == 1 ]] && (( R_ROUND < CAP )); }; then
+                    CAP_RIDE=1; R_UNVERIFIED=1
+                elif [[ "$R_ESC" == 1 ]]; then
+                    CAP_RIDE=1
+                fi
+                # R_ESC=0 → ordinary deny: leave CAP_RIDE=0 so the identical
+                # retry falls through to the plain reviewed-ok pass below.
+            elif [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]{1,9})\ material=([0-9]{1,9})$ ]]; then
+                # LEGACY marker (pre-ADR-019, no escalated flag). Infer the flag
+                # from the round vs CAP (finding 15): a legacy deny AT/ABOVE the
+                # cap was an escalation under the old semantics → treat as
+                # escalated (conservative for at/above-cap ambiguity); a legacy
+                # BELOW-cap deny was an ordinary retry-deny → must NOT become a
+                # permanent owner escalation after upgrade, so it retries.
+                R_ROUND=$(( 10#${BASH_REMATCH[1]} )); R_MAT=$(( 10#${BASH_REMATCH[2]} ))
                 if (( R_ROUND < 1 )) || { (( R_ROUND >= CAP )) && (( R_MAT == 0 )); }; then
                     CAP_RIDE=1; R_UNVERIFIED=1
                 elif (( R_ROUND >= CAP && R_MAT > 0 )); then
@@ -643,6 +747,129 @@ else
     DRIFT_NOTE="⚠ no approved plan on file (no /before spec for this repo) — drift NOT checked (reviewed for correctness only)."
 fi
 
+# --- ADR-019 MEMORY: prior findings for this (repo, HEAD) --------------------
+# Read the findings ledger (schema-valid lines only) and build a block Codex
+# sees BEFORE reviewing, so it stops re-raising a finding Claude already
+# resolved. Best-effort: any read failure yields an empty block (the exact
+# pre-ADR-019 behavior — a cold review), never a blocked commit. Each ledger
+# line is "<fp> <round> <flattened text>"; we surface the ROUND it was first
+# raised and the text, and instruct Codex not to re-raise unless the CURRENT
+# code still exhibits it. The ledger is populated after this review (below).
+# The ledger read + append + the rounds transaction all rely on flock for
+# consistency. When flock is UNAVAILABLE the whole ADR-019 context layer degrades
+# to the pre-ADR-019 cold review (empty prior block + PROMPT_NOCTX below): reading
+# the ledger unlocked could race the 24h sweep or a concurrent append and feed a
+# torn/partial history into the prompt. CTX_OK tracks whether the memory+context
+# layer is trustworthy this run; it gates BOTH the prior-findings read and the
+# prompt selection.
+CTX_OK=0
+command -v flock >/dev/null 2>&1 && CTX_OK=1
+PRIOR_FINDINGS_BLOCK=""
+if (( CTX_OK )) && [[ -f "$LEDGER_FILE" ]]; then
+    # Read UNDER the ledger lock so a concurrent append / the sweep can't hand us a
+    # torn file. Grep to schema-valid lines, strip the fingerprint, keep the text.
+    # A torn/legacy line that doesn't match is simply skipped (safe: it just
+    # isn't fed back). Cap by LINE COUNT (head/tail -n), never bytes: a byte cap
+    # under LC_ALL=C can split a multibyte finding mid-character, and that invalid
+    # UTF-8 embedded in the prompt can make `codex exec` reject the whole request
+    # and trip the fail-open path. Whole-line truncation keeps every char intact.
+    # A generous 300-line cap keeps the full history in all realistic loops (a
+    # handful of rounds x findings) while bounding a pathological ledger; newer
+    # findings matter most, so keep the LAST N lines (tail).
+    # Snapshot the ledger UNDER its lock into a temp file FIRST, checking flock's
+    # OWN exit status directly (not PIPESTATUS after a $(...) — that reflects the
+    # substitution, not the flock inside it). Only if the lock was taken do we
+    # parse the snapshot. If the lock times out / errors, the read is untrusted →
+    # degrade the whole context layer to the pre-ADR-019 diff-only review rather
+    # than presenting a memory-assisted prompt with no memory.
+    LED_SNAP=$(mktemp 2>/dev/null)
+    # shellcheck disable=SC2016
+    if [[ -n "$LED_SNAP" ]] && flock -w 2 "$LEDGER_FILE.lock" \
+            bash -c 'cat "$1" > "$2" 2>/dev/null' _ "$LEDGER_FILE" "$LED_SNAP" 2>/dev/null; then
+        PRIOR_FINDINGS_BLOCK=$(grep -E '^[0-9a-f]{16} [0-9]+ .+' "$LED_SNAP" 2>/dev/null \
+            | sed -E 's/^[0-9a-f]{16} ([0-9]+) /  - (first raised round \1) /' \
+            | tail -n 300)
+    else
+        # lock not taken (timeout/error) OR no temp file → untrusted read.
+        CTX_OK=0
+        PRIOR_FINDINGS_BLOCK=""
+    fi
+    [[ -n "$LED_SNAP" ]] && rm -f "$LED_SNAP"
+fi
+# The round this review will BECOME — read the prior round count from the rounds
+# file so the [LATE] pressure attaches to round >= 2 REGARDLESS of ledger
+# contents (a failed ledger append, an all-torn ledger, or a prose-only prior
+# round must still get the [LATE] rule — finding: the rule was wrongly tied to a
+# non-empty prior block). Best-effort + advisory only: it shapes the prompt, it
+# does NOT gate allow/deny (that is the authoritative flock transaction below).
+# Counts BOTH schemas (new 4-field + legacy 3-field), same as that transaction.
+# NOTE (intentional, not a defect): this is an UNLOCKED read, so under two
+# concurrent FIRST reviews both can see 0 prior rows and get a round-1 prompt
+# (no [LATE]) even though one is later recorded as round 2. That is acceptable:
+# [LATE] is a convergence-pressure HINT, never a gate decision — a missing tag
+# can't unlock the cap or a ceiling. Reserving the round under a lock here would
+# add a second serialized section purely to perfect an advisory prompt string;
+# the authoritative round + every allow/deny still come from the locked
+# transaction below, which the two concurrent reviews DO serialize on.
+UPCOMING_ROUND=1
+if [[ -f "$ROUNDS_FILE" ]]; then
+    _pr=$(grep -cE '^[0-9]+ [0-9]+ [^[:space:]]+( [0-9]+)?$' "$ROUNDS_FILE" 2>/dev/null)
+    [[ "$_pr" =~ ^[0-9]+$ ]] && UPCOMING_ROUND=$(( _pr + 1 ))
+fi
+
+# --- ADR-019 CONTEXT: changed files + [LATE] pressure -----------------------
+# The changed-file list (tracked + untracked) is named to Codex so it can READ
+# the real surrounding code (the review runs read-only from the repo cwd, so a
+# false finding the code disproves is avoidable). Best-effort: an empty list
+# just omits the hint. Untracked included to match the diff-assembly contract.
+# A very large changeset is line-capped (context hint, not the diff itself — the
+# diff Codex reviews is unaffected); the cap is announced so an omitted-file
+# finding is never silently under-contextualised.
+CHANGED_ALL=$( { git -C "$DIR" diff --name-only HEAD 2>/dev/null
+                 git -C "$DIR" diff --cached --name-only 2>/dev/null
+                 git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null
+               } | sort -u )
+CHANGED_TOTAL=$(printf '%s\n' "$CHANGED_ALL" | grep -c . || true)
+CHANGED_FILES=$(printf '%s\n' "$CHANGED_ALL" | head -500)
+CHANGED_NOTE=""
+(( CHANGED_TOTAL > 500 )) && CHANGED_NOTE="  (… $(( CHANGED_TOTAL - 500 )) more changed files not listed — the diff below still contains them)"
+
+# The prior-findings + [LATE] instruction block, injected into both prompt
+# branches. "Converged" is defined so a reviewer with memory + real code in front
+# of it knows LGTM is the goal, not a per-round trickle of one new finding.
+MEMORY_BLOCK="You are reviewing with MEMORY and PROJECT CONTEXT (two-model
+convergence, ADR-019). The repository is your working directory; you may READ
+any file in it (read-only) to confirm or disprove a suspected issue BEFORE
+reporting it — a finding the real code disproves must NOT be raised.
+Changed files in this diff:
+${CHANGED_FILES:-  (none listed)}${CHANGED_NOTE:+
+$CHANGED_NOTE}
+
+CONVERGED means: you reply LGTM because, with the prior findings and the real
+code in front of you, nothing material remains — NOT merely \"no new finding
+this round\". Do the ONE exhaustive pass that reaches that state."
+if [[ -n "$PRIOR_FINDINGS_BLOCK" ]]; then
+    MEMORY_BLOCK+="
+
+You have ALREADY raised these findings in earlier rounds for this same commit
+point. Do NOT raise any of them again UNLESS the CURRENT code still exhibits it
+— and if it does, cite the exact line that still shows the problem:
+$PRIOR_FINDINGS_BLOCK"
+fi
+# [LATE] pressure attaches whenever this is round >= 2, independent of whether
+# the prior-findings block above is populated (finding: a failed/empty ledger
+# must not disable it).
+if (( UPCOMING_ROUND >= 2 )); then
+    MEMORY_BLOCK+="
+
+This is review round $UPCOMING_ROUND for this commit point. Any finding that
+FIRST appears now (was not already raised in an earlier round) MUST be tagged
+[LATE] at the very start and justify in one clause why it could not have been
+seen at round 1. Reserve [LATE] for genuinely new issues; a resurfaced old
+finding is not [LATE], it is a re-raise and is barred unless the code still
+shows it."
+fi
+
 # Severity contract, shared by both prompt branches. The tags are defined by
 # IMPACT, not likelihood — the cap below only ever auto-allows marginal-tagged
 # findings, so a tag that lets a serious failure read as marginal would be a
@@ -666,14 +893,20 @@ bracket cluster (immediately after [BUG]/[DRIFT]) — a tag appearing only in
 the body text does not count, and more than one severity tag on a finding is
 treated as untagged.
 The two groups and their consequences: MATERIAL = [data-loss] | [security] |
-[correctness] | untagged — always blocks the commit, and escalates to the
-owner once the round cap is reached. MARGINAL = [edge] | [theoretical] — may
-be allowed-with-caveat once the round cap is reached.
+[correctness] | untagged — blocks the commit while the loop is still converging.
+MARGINAL = [edge] | [theoretical] — may be allowed-with-caveat once the round cap
+is reached. At the hard convergence ceiling, ONLY a still-open [security] or
+[data-loss] finding blocks (escalates to the owner) — every other residue is
+allowed-with-caveat so the loop self-terminates without escalating routine code
+to the human; so tag [security]/[data-loss] precisely (that tag is the only one
+that can hold a commit at the ceiling).
 Output ONLY the findings list — no preamble, no closing summary. Any prose
 outside a list item is treated as one additional MATERIAL finding.'
 
 if [[ -n "$SPEC" ]]; then
     PROMPT="You are the independent adversarial reviewer in a two-model workflow.
+$MEMORY_BLOCK
+
 An approved plan was written by the other AI (Claude) BEFORE this diff. Review
 the outgoing git diff on TWO axes: (1) DRIFT from the plan — steps missed,
 scope added that the plan never approved, silent changes; and (2) correctness
@@ -693,6 +926,8 @@ $SPEC
 --- END PLAN ---"
 else
     PROMPT="You are the independent adversarial reviewer in a two-model workflow.
+$MEMORY_BLOCK
+
 Review this outgoing git diff for correctness bugs, edge cases, security,
 and data integrity. Style nits do not count.
 
@@ -701,6 +936,38 @@ first. Do NOT hold a deeper issue back for a later round — surfacing one
 finding per recommit wastes a converged retry and lets real bugs hide behind
 cosmetic ones. If you can find it, report it now. For each finding give
 file:line, the concrete failure scenario, and the fix.
+$SEVERITY_RULES
+If nothing significant, reply exactly: LGTM"
+fi
+
+# Diff-only fallback prompt for when we CANNOT cd into $DIR — same review, but
+# with the filesystem-context instruction ($MEMORY_BLOCK) removed so Codex is
+# never told to read files it would resolve against the WRONG directory. The
+# prior-findings/[LATE]/converged framing is intentionally dropped here too:
+# without the repo cwd this is a pure diff-only cold review (the pre-ADR-019
+# behavior). Uses the spec branch's drift framing when a fresh plan exists.
+if [[ -n "$SPEC" ]]; then
+    PROMPT_NOCTX="You are the independent adversarial reviewer in a two-model workflow.
+An approved plan was written by the other AI (Claude) BEFORE this diff. Review
+the outgoing git diff on TWO axes: (1) DRIFT from the plan; and (2) correctness
+bugs, edge cases, security, data integrity. Style nits do not count. Review the
+DIFF ONLY — do not attempt to read repository files.
+Do ONE EXHAUSTIVE pass, tagging each [DRIFT] or [BUG], most severe first.
+For each finding give file:line, the concrete failure scenario, and the fix.
+$SEVERITY_RULES
+If the diff faithfully implements the plan with no significant issue, reply
+exactly: LGTM
+
+--- APPROVED PLAN ---
+$SPEC
+--- END PLAN ---"
+else
+    PROMPT_NOCTX="You are the independent adversarial reviewer in a two-model workflow.
+Review this outgoing git diff for correctness bugs, edge cases, security, and
+data integrity. Style nits do not count. Review the DIFF ONLY — do not attempt
+to read repository files.
+Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe
+first. For each finding give file:line, the concrete failure scenario, and the fix.
 $SEVERITY_RULES
 If nothing significant, reply exactly: LGTM"
 fi
@@ -723,9 +990,51 @@ trap 'rm -f "$OUT"' EXIT
 # a pure side-effect for the dashboard, never read by the allow/deny logic.
 REVIEW_START_MS=$(date +%s%3N 2>/dev/null)
 [[ "$REVIEW_START_MS" =~ ^[0-9]+$ ]] || REVIEW_START_MS=""
-printf '%s' "${DIFF:0:150000}" | timeout 180 codex exec --skip-git-repo-check \
-    -s read-only -o "$OUT" "$PROMPT" >/dev/null 2>&1
-RC=$?
+# The exact slice transmitted to Codex this round; its REAL byte size feeds the
+# ADR-019 cumulative diff budget, accumulated in the rounds transaction below.
+# The script exports LC_ALL=C globally, so `wc -c` (and ${#..}) already count
+# BYTES not characters — but wc -c is used explicitly so the byte semantics are
+# self-evident and survive any future locale change (finding 6). Slice computed
+# once so the count is of precisely what is sent.
+SENT="${DIFF:0:150000}"
+SENT_BYTES=$(printf '%s' "$SENT" | LC_ALL=C wc -c | tr -d ' ')
+[[ "$SENT_BYTES" =~ ^[0-9]+$ ]] || SENT_BYTES=0
+# Run read-only FROM THE REPO so Codex's file reads resolve to the real project
+# (ADR-019 project context). CRITICAL: the prompt instructs Codex to READ
+# surrounding files, so it must ONLY run with that prompt when we have actually
+# `cd`-ed INTO $DIR. If the cd fails (repo vanished / became inaccessible between
+# diff collection and review), running the context prompt from the gate's own cwd
+# would let Codex read and transmit an UNRELATED repository outside the
+# owner-approved boundary AND judge the wrong code. So on cd failure we fall back
+# to a DIFF-ONLY prompt from a FRESH EMPTY temp directory (NOT $HOME, which may
+# hold credentials or other private repos a tool-driven reviewer could inspect) —
+# the pre-ADR-019 cold review — never the context prompt against the wrong tree.
+# Either way the commit is never blocked on this. $PROMPT_NOCTX is the same
+# review without the file-reading context (built below).
+# The context prompt is used ONLY when BOTH (a) we can cd into the repo AND (b)
+# the context layer is trustworthy (CTX_OK — flock present). Without flock the
+# ledger/rounds state can't be read/written consistently, so the whole ADR-019
+# layer degrades to the pre-ADR-019 diff-only cold review even from the right cwd.
+if (( CTX_OK )) && ( cd "$DIR" 2>/dev/null ); then
+    ( cd "$DIR" && printf '%s' "$SENT" | timeout 180 codex exec \
+        --skip-git-repo-check -s read-only -o "$OUT" "$PROMPT" >/dev/null 2>&1 )
+    RC=$?
+else
+    # Diff-only fallback — reached when cd into $DIR failed OR the context layer is
+    # untrusted (no flock). Run from a throwaway EMPTY dir so a tool-driven reviewer
+    # has no unrelated files to read, with the diff-only prompt (no "read the repo"
+    # instruction). If even the temp dir can't be made, fail OPEN without calling
+    # Codex (RC=1 → the fail-open path below) rather than review from an unknown cwd.
+    NEUTRAL=$(mktemp -d 2>/dev/null)
+    if [[ -n "$NEUTRAL" && -d "$NEUTRAL" ]]; then
+        ( cd "$NEUTRAL" && printf '%s' "$SENT" | timeout 180 codex exec \
+            --skip-git-repo-check -s read-only -o "$OUT" "$PROMPT_NOCTX" >/dev/null 2>&1 )
+        RC=$?
+        rmdir "$NEUTRAL" 2>/dev/null || true
+    else
+        RC=1   # no isolated cwd → do not invoke Codex from an unknown dir; fail open
+    fi
+fi
 REVIEW=$(cat "$OUT" 2>/dev/null); rm -f "$OUT"
 # Elapsed ms (empty when the clock is unavailable — duration_ms is then emitted
 # as JSON null, never a bogus 0). The key is always present so consumers read one
@@ -846,15 +1155,44 @@ sev_label() {
     done
     if (( n == 1 )); then printf '%s' "$sev"; else printf 'untagged'; fi
 }
-MATERIAL_COUNT=0; SEV_SUMMARY=""
+# ADR-019 finding 16: at the ceiling only a [security]/[data-loss] finding may
+# BLOCK; everything else self-terminates. `sev_label` returns 'untagged' for a
+# MULTI-severity cluster like [security][correctness], which would hide the
+# security tag — so security presence is detected SEPARATELY, by whether the
+# leading bracket cluster CONTAINS a security/data-loss tag (contains, not
+# equals). Only the leading cluster is scanned (mirrors sev_label), so a
+# security tag quoted in later evidence text does not count.
+sec_in_cluster() {
+    local first t
+    first=${1%%$'\n'*}
+    first=$(tr '[:upper:]' '[:lower:]' <<<"$first")
+    first=${first#"${first%%[![:space:]]*}"}
+    first=${first#\*\*}
+    while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
+        t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
+        [[ "$t" == security || "$t" == data-loss ]] && { printf 1; return; }
+    done
+    printf 0
+}
+MATERIAL_COUNT=0; SEV_SUMMARY=""; SEC_COUNT=0
 for fitem in "${FINDINGS[@]}"; do
     lbl=$(sev_label "$fitem")
     case "$lbl" in
         edge|theoretical) ;;
         *) MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
     esac
+    [[ "$(sec_in_cluster "$fitem")" == 1 ]] && SEC_COUNT=$(( SEC_COUNT + 1 ))
     SEV_SUMMARY+="${SEV_SUMMARY:+,}$lbl"
 done
+# ADR-019 findings 17+18: a malformed / prose-unparsed reply whose RAW text names
+# a security or data-loss defect must also block at the ceiling — a security tag
+# anywhere in the raw review (case-insensitive, matching sev_label's lowercasing)
+# forces SEC_COUNT>0 so the ceiling-allow can never let it slip past the
+# per-finding cluster scan.
+if (( SEC_COUNT == 0 )); then
+    _rl=$(tr '[:upper:]' '[:lower:]' <<<"$REVIEW")
+    [[ "$_rl" == *'[security]'* || "$_rl" == *'[data-loss]'* ]] && SEC_COUNT=1
+fi
 # A prose reply with no parseable list is ONE unclassifiable finding: material.
 if (( ${#FINDINGS[@]} == 0 )); then
     FINDING_COUNT=1; MATERIAL_COUNT=1; SEV_SUMMARY="prose-unparsed"
@@ -877,65 +1215,119 @@ fi
 
 # --- Round cap state append (CAP/CANON_REPO/ROUNDS_FILE set above, before
 # the cache fast-path). One line per reviewed-with-findings round for this
-# (repo, HEAD): "<finding_count> <material_count> <severity summary>". Key is
-# the CANONICAL repo path + HEAD — per-session keys would let a fresh session
-# reset the cap (a bypass), and distinct worktrees already resolve to
-# distinct toplevels. Read + append happen inside ONE bounded flock critical
-# section: per-append locking alone would let two concurrent reviews compute
-# the same round number. Lock/flock failure leaves ROUND empty → the strict
-# pre-cap behaviour (deny with findings), never a cap unlock. No delete path:
-# HEAD movement orphans the file and the 24h sweep above reaps it.
-ROUND=""; TRAJECTORY=""
+# (repo, HEAD). SCHEMA (ADR-019): "<finding_count> <material_count> <summary>
+# <sent_bytes>" — a 4th field carrying the bytes ACTUALLY transmitted to Codex
+# this round, so the cumulative diff-budget ceiling is computed from the SAME
+# locked transaction as the round increment (finding 10 atomicity). LEGACY
+# 3-field lines "<count> <material> <summary>" (written by a pre-ADR-019 gate
+# before HEAD moved) are still counted toward the round total + trajectory, but
+# contribute 0 bytes — so a mixed file across a straddling upgrade never
+# undercounts rounds (finding 11). Key is the CANONICAL repo path + HEAD.
+# Read + append + byte-sum happen inside ONE bounded flock critical section:
+# per-append locking alone would let two concurrent reviews compute the same
+# round number OR both read a stale remaining budget and slip past the ceiling.
+# Lock/flock failure leaves ROUND empty → the strict pre-cap behaviour (deny
+# with findings), never a cap unlock. No delete path: HEAD movement orphans the
+# file and the 24h sweep above reaps it.
+ROUND=""; TRAJECTORY=""; CUM_BYTES=0
 if command -v flock >/dev/null 2>&1; then
-    # shellcheck disable=SC2016  # single quotes intentional: $1/$2 are bash -c positionals
-    # Round number and trajectory are computed from SCHEMA-VALID lines only
-    # ("<count> <material> <summary>") — a corrupt or torn record can neither
-    # inflate the round toward the cap nor smuggle text into the trajectory.
-    # set -e inside the critical section: a failed append (disk full, bad
-    # perms) MUST abort before the round number / trajectory are emitted — a
+    # shellcheck disable=SC2016  # single quotes intentional: $1..$3 are bash -c positionals
+    # Round number, trajectory, and cumulative bytes are computed from
+    # SCHEMA-VALID lines only — BOTH the new 4-field form and the legacy 3-field
+    # form. A corrupt/torn record matching neither can inflate none of the three.
+    # set -e inside the critical section: a failed append (disk full, bad perms)
+    # MUST abort before the round number / trajectory / bytes are emitted — a
     # half-done append that still printed "prior+1" would advance the cap off a
     # file that never got this round's line. On abort bash -c exits non-zero,
     # ROUNDS_OUT has no "|", ROUND stays empty → strict pre-cap deny (safe).
-    # `grep -c` exits 1 on zero matches (an empty/fresh file) — NOT an error —
-    # so it is guarded with `|| :` to keep set -e from tripping on it.
-    # The schema regex is anchored to a FULL valid line ("<count> <material>
-    # <non-space summary>", end-anchored with $) in BOTH the counter (grep) and
-    # the trajectory (awk). This anchoring also neutralizes the only realistic
-    # torn record: if a PRIOR crashed append left a newline-less final line,
-    # this run's `>>` merges it with the new record onto one physical line
-    # ("2 0 edge3 0 edge") — a malformed multi-token tail the end-anchored regex
-    # REJECTS. That round is simply not counted (an UNDERCOUNT — the safe
-    # direction; it can never prematurely reach the cap), never a corrupt count.
-    # A plain guarded append is therefore sufficient; no rewrite/rename needed
-    # (a rewrite would change the failure semantics vs. a plain append and
-    # reintroduce a verbatim-copy newline-merge bug).
-    # shellcheck disable=SC2016  # single quotes intentional: $1/$2 are bash -c positionals
-    # grep -c exits 1 on ZERO matches (an empty/fresh file) — expected, mapped to
-    # prior=0 — but exits >1 on a real error (unreadable file). awk exits >0 on a
-    # read/processing error. A blanket `|| :` would swallow BOTH, letting a bad
-    # read emit a numbered round off a wrong count / blank trajectory. Instead
-    # each is wrapped in a helper that maps grep's status-1 to a "0" result but
-    # RE-RAISES any status >1 (and any awk failure) so set -e aborts → ROUND
-    # empty → the tracking-unavailable deny, never a bogus round.
+    # The schema regexes are END-ANCHORED so a prior crashed append's
+    # newline-less final line merged with this record ("2 0 edge3 0 edge 40")
+    # matches NEITHER and is simply not counted (an UNDERCOUNT — the safe
+    # direction; it can never prematurely reach the cap). grep -c exits 1 on
+    # ZERO matches (fresh file) — mapped to 0 — but >1 on a real error (aborts).
+    # awk exits >0 on a read/processing error → abort under set -e. NEW=4-field,
+    # LEG=legacy-3-field; the round count is NEW+LEG, bytes sum field 4 of NEW.
     ROUNDS_OUT=$(flock -w 2 "$ROUNDS_FILE.lock" bash -c '
         set -e
         f="$1"; line="$2"
-        prior=0
+        RE_NEW="^[0-9]+ [0-9]+ [^[:space:]]+ [0-9]+$"
+        RE_LEG="^[0-9]+ [0-9]+ [^[:space:]]+$"
+        prior_new=0; prior_leg=0
         if [ -f "$f" ]; then
-            # grep: rc 0 = matches, rc 1 = no matches (→0), rc>1 = error (abort)
-            prior=$(grep -cE "^[0-9]+ [0-9]+ [^[:space:]]+$" "$f" 2>/dev/null) \
-                || { rc=$?; [ "$rc" -eq 1 ] && prior=0 || exit "$rc"; }
+            prior_new=$(grep -cE "$RE_NEW" "$f" 2>/dev/null) \
+                || { rc=$?; [ "$rc" -eq 1 ] && prior_new=0 || exit "$rc"; }
+            prior_leg=$(grep -cE "$RE_LEG" "$f" 2>/dev/null) \
+                || { rc=$?; [ "$rc" -eq 1 ] && prior_leg=0 || exit "$rc"; }
         fi
-        case "$prior" in ""|*[!0-9]*) prior=0 ;; esac
+        case "$prior_new" in ""|*[!0-9]*) prior_new=0 ;; esac
+        case "$prior_leg" in ""|*[!0-9]*) prior_leg=0 ;; esac
         printf "%s\n" "$line" >> "$f"
-        # awk: any nonzero status is a genuine failure here (the program itself
-        # never exits nonzero) → abort under set -e rather than a blank trajectory
-        traj=$(awk "/^[0-9]+ [0-9]+ [^[:space:]]+\$/{printf \"%s%s\", sep, \$1; sep=\"->\"}" "$f")
-        printf "%s|%s" "$(( prior + 1 ))" "$traj"
-    ' _ "$ROUNDS_FILE" "$FINDING_COUNT $MATERIAL_COUNT $SEV_SUMMARY" 2>/dev/null)
-    if [[ "$ROUNDS_OUT" == *"|"* ]]; then
-        ROUND="${ROUNDS_OUT%%|*}"; TRAJECTORY="${ROUNDS_OUT#*|}"
-        [[ "$ROUND" =~ ^[0-9]+$ ]] || { ROUND=""; TRAJECTORY=""; }
+        # trajectory over BOTH schemas (field 1 = finding count), in file order.
+        traj=$(awk "/$RE_NEW/||/$RE_LEG/{printf \"%s%s\", sep, \$1; sep=\"->\"}" "$f")
+        # cumulative transmitted bytes = sum of field 4 over 4-field lines only
+        # (legacy lines have no field 4 → contribute 0). Includes the line just
+        # appended, so the ceiling sees THIS round'"'"'s bytes.
+        bytes=$(awk "/$RE_NEW/{s+=\$4} END{printf \"%d\", s}" "$f")
+        printf "%s|%s|%s" "$(( prior_new + prior_leg + 1 ))" "$traj" "$bytes"
+    ' _ "$ROUNDS_FILE" "$FINDING_COUNT $MATERIAL_COUNT $SEV_SUMMARY $SENT_BYTES" 2>/dev/null)
+    # ROUNDS_OUT = "round|trajectory|cumbytes" — parse right-to-left so a
+    # trajectory (which never contains "|") can't be confused with the fields.
+    if [[ "$ROUNDS_OUT" == *"|"*"|"* ]]; then
+        ROUND="${ROUNDS_OUT%%|*}"
+        _rest="${ROUNDS_OUT#*|}"
+        TRAJECTORY="${_rest%|*}"
+        CUM_BYTES="${_rest##*|}"
+        [[ "$ROUND" =~ ^[0-9]+$ ]] || { ROUND=""; TRAJECTORY=""; CUM_BYTES=0; }
+        [[ "$CUM_BYTES" =~ ^[0-9]+$ ]] || CUM_BYTES=0
+    fi
+fi
+# --- ADR-019 ledger append: record THIS round's findings (fingerprint + text)
+# so the NEXT round's prompt can suppress re-raises. Best-effort and entirely
+# decoupled from the allow/deny decision — a failure here never blocks. Same
+# flock/no-delete/sweep lifecycle as ROUNDS_FILE. Fingerprint = first 16 hex of
+# sha256 over the NORMALIZED finding (lowercased, whitespace-collapsed, digits
+# that look like line numbers dropped) so the same finding re-worded slightly or
+# at a shifted line still matches. Text is newline-flattened + capped to keep
+# the file line-oriented.
+if [[ -n "$ROUND" ]] && command -v flock >/dev/null 2>&1; then
+    # Ledger the parsed list findings AND the synthetic unparsed ones (a
+    # prose-only reply or a material preamble). Without the synthetic entries a
+    # prose/preamble finding would be memoryless and recur every round — exactly
+    # the trickle ADR-019 removes. A helper flattens+normalizes+fingerprints one
+    # finding into a ledger line.
+    ledger_append_line() {
+        local t="$1" norm fp flat
+        norm=$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | tr -d '[:digit:]')
+        fp=$(printf '%s' "$norm" | sha256sum | cut -c1-16)
+        # Flatten to one line, then byte-cap. `cut -c` under the global LC_ALL=C
+        # counts BYTES and can split a multibyte (e.g. Arabic) character at the
+        # 400-byte boundary; that invalid UTF-8 would land in the ledger and later
+        # in the prompt, where codex may reject it and trip fail-open. `iconv
+        # -c -f UTF-8 -t UTF-8` drops any trailing incomplete sequence, leaving
+        # only valid UTF-8. iconv is near-universal; if absent, fall back to
+        # stripping bytes >=0x80 from the capped text (ASCII-only, always valid).
+        flat=$(printf '%s' "$t" | tr '\n' ' ' | tr -s ' ' | cut -c1-400)
+        if command -v iconv >/dev/null 2>&1; then
+            flat=$(printf '%s' "$flat" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
+        else
+            flat=$(printf '%s' "$flat" | LC_ALL=C tr -d '\200-\377')
+        fi
+        LEDGER_LINES+="$fp $ROUND $flat"$'\n'
+    }
+    LEDGER_LINES=""
+    for fitem in "${FINDINGS[@]}"; do ledger_append_line "$fitem"; done
+    # Synthetic entries for the unparsed material paths (so they gain memory too):
+    #   - a prose-only reply (no list at all) → the raw REVIEW is the finding;
+    #   - a material preamble before the first list item → that preamble text.
+    if (( ${#FINDINGS[@]} == 0 )); then
+        ledger_append_line "prose-unparsed: $REVIEW"
+    elif [[ -n "${PREAMBLE//[[:space:]$'\n']/}" ]]; then
+        ledger_append_line "preamble-unparsed: $PREAMBLE"
+    fi
+    if [[ -n "$LEDGER_LINES" ]]; then
+        # shellcheck disable=SC2016
+        flock -w 2 "$LEDGER_FILE.lock" bash -c 'printf "%s" "$2" >> "$1"' \
+            _ "$LEDGER_FILE" "$LEDGER_LINES" 2>/dev/null || true
     fi
 fi
 # The cache marker for a findings verdict is written at each TERMINAL path
@@ -987,48 +1379,94 @@ else
     log_event codex finding "$(jq -cn --arg tag "note" --arg text "$REVIEW" '{tag:$tag, text:$text}')"
 fi
 
-# --- CAP-STOPPED allow: round cap reached and EVERY finding is marginal ----
-# The findings are not dismissed — they go to the owner verbatim, loudly; the
-# commit just stops being hostage to edge/theoretical-only residue. Material
-# findings never take this path, nor do unparsed/untagged ones (both count as
-# material above), nor a failed round counter (ROUND empty).
-if [[ -n "$ROUND" ]] && (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )) && (( ${#FINDINGS[@]} > 0 )); then
-    publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s' "$ROUND" "$FINDING_COUNT")" "$ROUND"
+# --- ADR-019 three-tier round state machine ---------------------------------
+# The ceiling is CAP-GATED (findings 3+13): nothing terminal happens below CAP —
+# below the soft cap EVERY material finding is an ordinary retry-deny, exactly
+# as before, regardless of the byte budget. At/above CAP:
+#   AT_CEILING  = ROUND >= ROUND_MAX  OR  cumulative sent bytes >= DIFF_BUDGET
+# defines the hard stop where the loop self-terminates. Between CAP and the
+# ceiling is the NEW middle tier: material findings still DENY (Claude+Codex keep
+# converging with memory+context) but WITHOUT owner escalation, so the loop can
+# actually reach ROUND_MAX (finding 7). Escalation (a durable owner stop) fires
+# ONLY at the ceiling and ONLY for a still-open [security]/[data-loss] finding
+# (SEC_COUNT>0, findings 16/17) — the gate refusing to auto-merge a security
+# hole. Every non-security residue at the ceiling ALLOWS-with-caveat, so routine
+# code is never escalated to the human.
+AT_CEILING=0
+if [[ -n "$ROUND" ]] && (( ROUND >= CAP )); then
+    if (( ROUND >= ROUND_MAX )) || (( CUM_BYTES >= DIFF_BUDGET )); then
+        AT_CEILING=1
+    fi
+fi
+
+# --- Allow-with-caveat: (a) marginal-only at/above CAP (the classic CAP-STOPPED
+# path), OR (b) at the ceiling with NO open security/data-loss finding. Both
+# surface every finding to the owner verbatim; the commit just stops being held
+# hostage — (a) by edge/theoretical residue, (b) by non-security residue the
+# convergence loop could not clear before the hard stop. Material findings below
+# the ceiling never take this path; nor does a failed round counter (ROUND empty).
+# FINDING_COUNT (not ${#FINDINGS[@]}) is the authoritative open-finding count: a
+# prose-only reply has an EMPTY FINDINGS array but FINDING_COUNT=1 (one synthetic
+# material finding). Using the array length would route a ceiling prose reply to
+# the deny path instead of allow-with-caveat — and since SEC_COUNT already
+# accounts for a security tag anywhere in the raw prose (findings 17/18), a
+# non-security prose reply must self-terminate like any other non-security residue.
+CEIL_ALLOW=0
+if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT == 0 )) && (( FINDING_COUNT > 0 )); then
+    CEIL_ALLOW=1
+fi
+if [[ -n "$ROUND" ]] && (( FINDING_COUNT > 0 )) && { { (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )); } || (( CEIL_ALLOW )); }; then
+    if (( CEIL_ALLOW )) && (( MATERIAL_COUNT > 0 )); then
+        WHY="ceiling reached (round $ROUND/$ROUND_MAX, ${CUM_BYTES}B/${DIFF_BUDGET}B budget) with only NON-security residue open"
+        HDR="⚠ CEILING-STOPPED: round $ROUND — $MATERIAL_COUNT non-security material + marginal findings open; loop self-terminated, commit ALLOWED with caveat (findings go to the owner)"
+    else
+        WHY="round $ROUND reached the cap ($CAP) and EVERY open finding is MARGINAL ([edge]/[theoretical])"
+        HDR="⚠ CAP-STOPPED: round $ROUND/$CAP — all $FINDING_COUNT open findings marginal; commit ALLOWED with caveat (findings go to the owner)"
+    fi
+    # The marker records the ceiling non-security material count so an identical
+    # RETRY renders an accurate caveat (a ceiling material-residue allow must NOT
+    # be described as "only MARGINAL findings"). ceiling=0 is the classic
+    # marginal-only cap stop; ceiling=K>0 means K non-security material findings
+    # self-terminated at the hard ceiling. Appended as a new field so a legacy
+    # "cap_stopped round=N findings=M" marker (no ceiling=) still parses.
+    CEIL_MAT=0; (( CEIL_ALLOW )) && CEIL_MAT="$MATERIAL_COUNT"
+    publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s ceiling=%s' "$ROUND" "$FINDING_COUNT" "$CEIL_MAT")" "$ROUND"
     log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
-        --argjson n "$FINDING_COUNT" --arg traj "$TRAJECTORY" \
-        '{round:$round, findings:$n, trajectory:$traj}')"
+        --argjson n "$FINDING_COUNT" --argjson ceil "$CEIL_ALLOW" --arg traj "$TRAJECTORY" \
+        '{round:$round, findings:$n, ceiling:($ceil==1), trajectory:$traj}')"
     log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
         --argjson round "$ROUND" --arg traj "$TRAJECTORY" \
         '{result:"passed", cap_stopped:true, findings:$n, round:$round, trajectory:$traj}')"
-    CTX="CAP-STOPPED (round cap, enforced by the gate): review round
-$ROUND reached the cap ($CAP) and EVERY open finding is MARGINAL
-([edge]/[theoretical]) — the commit is ALLOWED with this caveat instead of
-blocked. Findings trajectory: $TRAJECTORY. Surface ALL findings below to the
-owner VERBATIM alongside the commit (transparency rule — never silently
-dropped); the owner remains the arbiter and may still demand fixes.
+    CTX="STOPPED (enforced by the gate): $WHY — the commit is ALLOWED with this
+caveat instead of blocked (two-brain-convergence.md: the loop self-terminates on
+convergence, not by escalating routine code to the human). Findings trajectory:
+$TRAJECTORY. Surface ALL findings below to the owner VERBATIM alongside the
+commit (transparency rule — never silently dropped); the owner remains the
+arbiter and may still demand fixes.
 
 $REVIEW"
     [[ -n "$TRUNC_NOTE" ]] && CTX+=$'\n\n'"$TRUNC_NOTE"
     [[ -n "$HIST_NOTE" ]] && CTX+=$'\n\n'"$HIST_NOTE"
     [[ -n "$DRIFT_NOTE" ]] && CTX+=$'\n\n'"$DRIFT_NOTE"
-    allow_with_warning \
-        "⚠ CAP-STOPPED: round $ROUND/$CAP — all $FINDING_COUNT open findings marginal; commit ALLOWED with caveat (findings go to the owner)" \
-        "$CTX"
+    allow_with_warning "$HDR" "$CTX"
 fi
 
-# --- Deny. At round >= cap with material findings open, the deny becomes an
-# explicit owner escalation (durable: the counter never resets at this HEAD,
-# so every later material deny here stays escalated). Below the cap it is the
-# normal adjudicate-and-retry message. Changed diffs always get fresh reviews
-# — a genuinely fixed diff must be able to reach LGTM; the gate never
-# hard-locks the owner's work.
+# --- Deny. Escalation (a durable owner stop) fires ONLY at the ceiling with a
+# still-open [security]/[data-loss] finding (finding 7: NOT at the soft cap). In
+# the middle tier (CAP<=ROUND<ROUND_MAX) and below the cap, a material finding is
+# an ORDINARY retry-deny — Claude+Codex keep converging. Changed diffs always get
+# fresh reviews; the gate never hard-locks the owner's work.
 CAP_ESCALATED=0
-[[ -n "$ROUND" ]] && (( ROUND >= CAP )) && CAP_ESCALATED=1
-# Record this diff's own outcome in its marker so a cached retry acts on
-# THIS verdict (below-cap deny retries pass per the adjudicate-then-retry
-# contract; at-cap material denies stay escalated). No round recorded → no
+if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT > 0 )); then
+    CAP_ESCALATED=1
+fi
+# Record this diff's own outcome in its marker so a cached retry acts on THIS
+# verdict. The escalated flag (finding 9) distinguishes an ordinary/middle-tier
+# deny (escalated=0 → identical retry re-passes per the adjudicate-then-retry
+# contract, so the loop can reach ROUND_MAX) from a ceiling security block
+# (escalated=1 → identical retry stays denied-escalated). No round recorded → no
 # marker → the retry re-reviews.
-[[ -n "$ROUND" ]] && publish_round_marker "$CACHE/$HASH" "$(printf 'denied round=%s material=%s' "$ROUND" "$MATERIAL_COUNT")" "$ROUND"
+[[ -n "$ROUND" ]] && publish_round_marker "$CACHE/$HASH" "$(printf 'denied round=%s material=%s escalated=%s' "$ROUND" "$MATERIAL_COUNT" "$CAP_ESCALATED")" "$ROUND"
 if [[ -n "$ROUND" ]]; then
     ROUND_NOTE=" — round $ROUND of cap $CAP for this repo@HEAD; findings trajectory: $TRAJECTORY"
 else
@@ -1052,17 +1490,20 @@ log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
     '{result:"denied", findings:$n, material:$mat, round:$round, trajectory:$traj, cap_escalated:($esc==1)}')"
 
 if (( CAP_ESCALATED )); then
-    REASON="CAP-REACHED — ESCALATE TO THE OWNER (round $ROUND >= cap $CAP; findings trajectory: $TRAJECTORY).
-$MATERIAL_COUNT of $FINDING_COUNT open finding(s) are MATERIAL
-(data-loss/security/correctness/untagged), so this attempt is DENIED — and
-the review loop is OVER. Do NOT fix-and-recommit again on your own judgment:
-STOP and present the owner the findings below VERBATIM, plus the options (fix
-the material findings / owner overrides the gate / park the work). The owner
-decides; you do not spend another round. (After the owner decides: either the
-material findings get fixed — a changed diff earns a fresh review — or the
-OWNER re-runs this exact commit with CODERV_GATE_OWNER_OVERRIDE=1; the
-explicit override passes with a loud caveat and is never yours to set.)
-(two-brain-convergence.md: CAP-STOPPED.)
+    REASON="CEILING-REACHED SECURITY STOP — ESCALATE TO THE OWNER (round $ROUND at
+the hard ceiling: round_max $ROUND_MAX / budget ${CUM_BYTES}B of ${DIFF_BUDGET}B;
+findings trajectory: $TRAJECTORY).
+$SEC_COUNT of $FINDING_COUNT open finding(s) are [security]/[data-loss] — the
+gate will NOT auto-merge a security or data-loss hole, so this attempt is DENIED
+and the review loop is OVER. This is the ONLY finding class that blocks at the
+ceiling (all other residue self-terminates and is allowed). Do NOT
+fix-and-recommit again on your own judgment: STOP and present the owner the
+findings below VERBATIM, plus the options (fix the security/data-loss findings /
+owner overrides the gate / park the work). The owner decides; you do not spend
+another round. (After the owner decides: either the findings get fixed — a
+changed diff earns a fresh review — or the OWNER re-runs this exact commit with
+CODERV_GATE_OWNER_OVERRIDE=1; the explicit override passes with a loud caveat and
+is never yours to set.) (two-brain-convergence.md: ceiling, ADR-019.)
 
 $REVIEW"
 else
@@ -1091,7 +1532,7 @@ if (( CAP_ESCALATED )); then
     # systemMessage rides alongside the deny so the human sees the cap state
     # in the transcript without relying on the agent to relay it.
     jq -n --arg r "$REASON" \
-        --arg msg "⛔ codex-review-gate CAP-REACHED: round $ROUND/$CAP, $MATERIAL_COUNT material finding(s) still open — owner decision required (trajectory: $TRAJECTORY)" '{
+        --arg msg "⛔ codex-review-gate CEILING SECURITY STOP: round $ROUND/$ROUND_MAX, $SEC_COUNT security/data-loss finding(s) still open — owner decision required (trajectory: $TRAJECTORY)" '{
         systemMessage: $msg,
         hookSpecificOutput: {
             hookEventName: "PreToolUse",

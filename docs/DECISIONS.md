@@ -33,6 +33,37 @@ What did we decide?
 
 ---
 
+## ADR-019: The commit gate gets memory + project context + a convergence ceiling so the Claude↔Codex loop self-terminates without the human
+
+**Date:** 2026-07-21
+**Status:** accepted
+**Decider(s):** owner + Claude (design grounded by a Plan agent; rules in `docs/planning/two-brain-convergence.md`)
+
+### Context
+`codex-review-gate.sh` reviews a **cold diff** on every recommit through a fresh, **memoryless** `codex exec` that can see only the diff — never the surrounding code, never what it already raised. Two consequences bled the community's tokens: (1) it **re-raises** a finding Claude already resolved, because it never learns the disposition; (2) it **invents false findings** the real code disproves, because it cannot read that code. Each such finding is a new deny → another round → and the old round cap only **escalated to the human**, making the owner the loop's off-switch on every project. The owner's framing: *"I need result when you agree with Codex 100%. I don't want to decide for something regarding coding."* — the terminal state must be **genuine convergence**, not a human adjudicating code. ADR-018 shipped the pre-commit half; ADR-019 is the gate-side permanent fix.
+
+### Decision
+Add four inputs to the commit gate (inherited by `/ship` Step 4.5 and `/before` Step 5.6 — rules defined once in `two-brain-convergence.md`, DRY):
+1. **Findings ledger (memory)** — a per-(canonical repo, HEAD) file beside `ROUNDS_FILE` in `$CACHE`, same flock-guarded / no-delete / 24h-swept lifecycle. Each reviewed finding is fingerprinted (hash of its normalized text) and recorded; prior findings are fed into the next round's prompt with an instruction not to re-raise a finding unless the **current** code still exhibits it (cite the line). Best-effort: an IO/flock failure yields an empty prior-findings block, never a block.
+2. **Project context** — `codex exec` runs from the repo cwd (`cd "$DIR"`) under `-s read-only`, is given the changed-file list, and is told to READ the real code before judging — killing false findings. The owner approved sending surrounding project files to OpenAI (same trust boundary as the diff, wider).
+3. **Convergence pressure** — a finding first appearing at round ≥ 2 is tagged `[LATE]` and must justify itself; the prompt defines *converged = LGTM with prior findings + real code in front of you*, not "no new finding this round."
+4. **Ceiling** — above the existing soft cap (`CODERV_GATE_ROUND_CAP`, default 3) sits a hard `CODERV_GATE_ROUND_MAX` (default 5) and `CODERV_GATE_DIFF_BUDGET` (cumulative bytes-reviewed, default 800000). At the ceiling only a still-open `[security]`/`[data-loss]` may BLOCK — via the existing owner-override escalation, i.e. the gate refusing to auto-merge a security hole. Every non-security finding must have converged; a routine `[correctness]`/untagged residue at the ceiling is surfaced but **allowed-with-caveat**, so the loop self-terminates rather than escalating ordinary code to the human.
+
+### Alternatives
+- **Keep escalating every capped loop to the owner** (chosen: rejected) — that IS the bleed; it makes the human the off-switch on every project. The ceiling now auto-terminates non-security residue.
+- **Diff-only review, no project context** — rejected: it leaves the false-finding half of the bleed unfixed; the owner explicitly approved the wider trust boundary to close it.
+- **Store dispositions (fixed/rejected) in the ledger, not just fingerprints** — deferred: the gate cannot know a finding's disposition (that is Claude's adjudication, off-gate). Recording the fingerprint + text and telling Codex "you raised this; re-raise only if the code still shows it" achieves the suppression without the gate guessing state it doesn't own.
+- **Lower the ceiling to the soft cap** — rejected: the soft cap (3) is where marginal residue already auto-allows; the point of ROUND_MAX (5) is to give real convergence a couple more rounds before the hard stop, since with context+memory most loops end at round 2-3.
+
+### Consequences
+- Positive: with memory + real code, Codex reaches a genuine LGTM in ~2-3 rounds, so the loop terminates on **convergence**, not on a human. Escalate-to-human is reserved for a real unmitigated security/data-loss hole at the ceiling — a safety decision, not a code decision.
+- Trade-off: surrounding project files are sent to OpenAI on every review (owner-approved; same trust boundary as the diff). And the review call does more work (reads code) — slower per round, but far fewer rounds.
+- Trade-off: the ledger and context are **best-effort**; every failure path degrades to the pre-ADR-019 behavior (empty prior block, diff-only) and never blocks a commit. Fail-open and the kill switches (`CODERV_GATES_OFF`/`CODEX_REVIEW_OFF`) and the `CODERV_LOG_OFF` contract are untouched; the gate stays the sole author of its trust marker (ADR-018).
+- Deployment: "built" is not "live." A project gets the fix only after its user `git pull`s the toolkit and re-runs `install.sh` (which re-copies the hook). Until then their gate keeps the old trickle — the CHANGELOG/README says so.
+- Revisit if: a project needs a disposition-aware ledger (Claude writing fix/reject back into it) — the fingerprint substrate here is what that would build on.
+
+---
+
 ## ADR-018: The Claude↔Codex argument moves to a pre-commit convergence loop in `/ship`; the gate stays the sole author of its trust marker
 
 **Date:** 2026-07-21
