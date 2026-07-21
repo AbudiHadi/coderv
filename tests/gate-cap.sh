@@ -77,6 +77,51 @@ run_gate() {
     jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
         '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE"
 }
+# Fault-injection tests (append failure, unreadable marker) rely on filesystem
+# permissions the ROOT user bypasses. CAN_DROP_PRIV is true when we can run a
+# single gate invocation as an unprivileged user (nobody) so those permissions
+# actually bite; otherwise those checks SKIP loudly rather than pass silently.
+CAN_DROP_PRIV=0
+NOBODY_GID=""
+if [[ "$(id -u)" != "0" ]]; then
+    CAN_DROP_PRIV=1   # already unprivileged: plain perms suffice
+elif command -v setpriv >/dev/null 2>&1 && id nobody >/dev/null 2>&1; then
+    # Resolve nobody's REAL primary group — it is `nobody` on some distros,
+    # `nogroup` on others; a hardcoded group makes setpriv fail there and the
+    # empty output would masquerade as gate behavior.
+    NOBODY_GID=$(id -g nobody 2>/dev/null)
+    [[ "$NOBODY_GID" =~ ^[0-9]+$ ]] && CAN_DROP_PRIV=2   # root, drop via setpriv
+fi
+# $TDIR itself is mode 0700 from mktemp -d — nobody cannot even traverse into it
+# to reach $HOME/$REPO/cache. Grant traversal on the whole throwaway root so a
+# dropped-privilege gate run can reach its inputs (the specific fault is arranged
+# by the caller on the narrower target).
+[[ "$CAN_DROP_PRIV" == "2" ]] && chmod 0755 "$TDIR"
+# Run one gate invocation, as nobody when we are root (CAN_DROP_PRIV==2). setpriv
+# failure is made LOUD (a bracketed marker in the output) so a check can detect
+# it rather than misread empty output as an allow.
+run_gate_faulty() {
+    local payload
+    payload=$(jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
+                 '{tool_input:{command:$cmd}, cwd:$cwd}')
+    if [[ "$CAN_DROP_PRIV" == "2" ]]; then
+        # Root-owned throwaway repo run as nobody would trip git's dubious-
+        # ownership guard (git rev-parse fails → the gate exits without
+        # reviewing → empty output that looks like an allow). Mark every repo
+        # safe for the dropped user via GIT_CONFIG_* env (no writable HOME
+        # needed). setpriv keeps the caller's env unless we clear it, so the
+        # gate inherits these.
+        printf '%s' "$payload" \
+          | setpriv --reuid nobody --regid "$NOBODY_GID" --clear-groups \
+              env HOME="$HOME" PATH="$PATH" FAKE_REVIEW="$FAKE_REVIEW" \
+                  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+                  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+                  bash "$GATE" 2>/dev/null \
+          || printf '{"__setpriv_failed__":true}'
+    else
+        printf '%s' "$payload" | bash "$GATE"
+    fi
+}
 bump_diff() { echo "change $RANDOM $1" >> "$REPO/app.sh"; }
 rounds_file() {
     local f
@@ -267,6 +312,233 @@ grep -q "CAP-STOPPED" <<<"$(sysmsg "$OUT")"; check "cap-allow established" $?
 OUT=$(run_gate)   # identical retry
 is_allow "$OUT"; check "cap-stopped retry still passes" $?
 grep -q "marginal findings still stand" <<<"$(sysmsg "$OUT")"; check "retry repeats the caveat (never silent)" $?
+
+CACHE_DIR="$HOME/.claude/coderlap/codex-reviewed"
+# The most-recently-written cache MARKER (sha256 hex name, not rounds-*/*.lock).
+latest_marker() {
+    local newest="" f
+    for f in "$CACHE_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        case "${f##*/}" in rounds-*|*.lock|*.tmp.*) continue ;; esac
+        [[ -z "$newest" || "$f" -nt "$newest" ]] && newest="$f"
+    done
+    [[ -n "$newest" ]] && printf '%s' "$newest"
+}
+# Count published markers (sha256-named files, not rounds-*/*.lock/*.tmp.*) via
+# a glob — no `ls | grep` (SC2010) so the suite stays shellcheck-clean.
+count_markers() {
+    local n=0 f
+    for f in "$CACHE_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        case "${f##*/}" in rounds-*|*.lock|*.tmp.*) continue ;; esac
+        n=$((n+1))
+    done
+    printf '%s' "$n"
+}
+
+echo "T16: F1 — a failed rounds APPEND (set -e) leaves ROUND empty (no cap advance, no marker)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t16
+if [[ "$CAN_DROP_PRIV" == "0" ]]; then
+    echo "  SKIP  append-failure — cannot drop privileges (root without usable setpriv/nobody)"
+else
+    # Exercise the `set -e`-guarded APPEND specifically (not the flock-open
+    # path): flock must SUCCEED, then the `printf >> "$ROUNDS_FILE"` must FAIL.
+    # So: pre-create a world-writable lock (flock can open it) and pre-create the
+    # rounds file itself UNWRITABLE to the append's user. Root bypasses perms, so
+    # the gate runs as nobody; the cache dir stays traversable (0755) but the
+    # rounds file is 0444 → nobody's append fails → set -e aborts → ROUND empty →
+    # pre-cap deny with NO marker published.
+    CANON=$(readlink -f "$REPO" 2>/dev/null || echo "$REPO")
+    HEAD_SHA=$(git -C "$REPO" rev-parse HEAD)
+    RF_KEY=$(sha256sum <<<"${CANON}@${HEAD_SHA}" | cut -d' ' -f1)   # EXACT production key
+    RF_PATH="$CACHE_DIR/rounds-$RF_KEY"
+    mkdir -p "$CACHE_DIR"; chmod 0755 "$CACHE_DIR"
+    : > "$RF_PATH.lock"; chmod 0666 "$RF_PATH.lock"   # flock CAN open this
+    : > "$RF_PATH";      chmod 0444 "$RF_PATH"        # append CANNOT write this
+    [[ "$CAN_DROP_PRIV" == "2" ]] && chmod -R a+rX "$HOME" "$REPO" 2>/dev/null
+    chmod 0444 "$RF_PATH"   # reassert (the -R above would re-grant nothing, but be explicit)
+    MARKERS_BEFORE=$(count_markers)
+    OUT=$(run_gate_faulty)
+    ! grep -q "__setpriv_failed__" <<<"$OUT"; check "privilege drop succeeded (setpriv ran)" $?
+    is_deny "$OUT"; check "failed append -> still denies" $?
+    grep -q "round tracking unavailable this run" <<<"$(reason "$OUT")"; check "reason says tracking unavailable (ROUND empty)" $?
+    ! grep -q "round [0-9]* of cap" <<<"$(reason "$OUT")"; check "no numbered round asserted" $?
+    MARKERS_AFTER=$(count_markers)
+    [[ "$MARKERS_AFTER" == "$MARKERS_BEFORE" ]]; check "no cache marker published on failed append (got $MARKERS_BEFORE -> $MARKERS_AFTER)" $?
+    chmod 0644 "$RF_PATH" 2>/dev/null; rm -f "$RF_PATH" "$RF_PATH.lock" 2>/dev/null
+fi
+echo "T16b: F1 — a grep I/O ERROR (status >1) inside the lock aborts -> ROUND empty (not silently 0)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+# The gate maps grep status 1 (zero matches) to prior=0 but must ABORT on a real
+# read error (status >1), so a broken read never yields a numbered round off a
+# reset count. Shim a `grep` that returns 2 ONLY for the rounds-schema counter
+# call (matched by the EXACT production pattern), delegating everything else to
+# the real grep so detection/logging still work.
+# TWO things this test must get right (both were bugs in an earlier draft):
+#  1. the counter grep only runs when the rounds file EXISTS ([ -f "$f" ]), so
+#     pre-create the current-HEAD rounds file with a valid line (else grep is
+#     skipped entirely and the shim never fires);
+#  2. the shim must match the LITERAL production arg "^[0-9]+ [0-9]+ [^[:space:]]+$"
+#     — with a real trailing `$`, no backslash escape.
+GREPSHIM_BIN="$TDIR/grepshim"; mkdir -p "$GREPSHIM_BIN"
+REAL_GREP=$(command -v grep)
+{
+  printf '#!/usr/bin/env bash\n'
+  # shellcheck disable=SC2016  # these are the GENERATED shim's literals, not ours to expand
+  printf 'for a in "$@"; do\n'
+  # shellcheck disable=SC2016
+  printf '    [ "$a" = %q ] && exit 2\n' '^[0-9]+ [0-9]+ [^[:space:]]+$'
+  printf 'done\n'
+  # shellcheck disable=SC2016
+  printf 'exec %q "$@"\n' "$REAL_GREP"
+} > "$GREPSHIM_BIN/grep"
+chmod +x "$GREPSHIM_BIN/grep"
+# Pre-create the rounds file for THIS (repo,HEAD) so the counter grep actually runs.
+CANON16=$(readlink -f "$REPO" 2>/dev/null || echo "$REPO")
+HSHA16=$(git -C "$REPO" rev-parse HEAD)
+RF16="$CACHE_DIR/rounds-$(sha256sum <<<"${CANON16}@${HSHA16}" | cut -d' ' -f1)"
+mkdir -p "$CACHE_DIR"; printf '1 1 correctness\n' > "$RF16"
+bump_diff t16b
+OUT=$(jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
+        '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$GREPSHIM_BIN:$PATH" bash "$GATE")
+is_deny "$OUT"; check "grep I/O error -> still denies" $?
+grep -q "round tracking unavailable this run" <<<"$(reason "$OUT")"; check "grep error -> ROUND empty (tracking unavailable)" $?
+! grep -q "round [0-9]* of cap" <<<"$(reason "$OUT")"; check "grep error -> no numbered round (not silently 0)" $?
+rm -f "$RF16" "$RF16.lock" 2>/dev/null
+
+echo "T17: F4 — tracking-unavailable deny carries the literal 'round unknown — trajectory unavailable'"
+# The canonical no-tracking trigger is a MISSING flock (ROUND never recorded).
+# Build a PATH that has every tool the gate needs EXCEPT flock, so the gate's
+# `command -v flock` fails for one run — root-agnostic, no privilege drop.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+NOFLOCK_BIN="$TDIR/nfbin"; mkdir -p "$NOFLOCK_BIN"
+for tool in jq git awk grep sed sha256sum cat mktemp mv rm find readlink stat date timeout tr sort cut dirname bash mkdir chmod; do
+    src=$(command -v "$tool" 2>/dev/null) && ln -sf "$src" "$NOFLOCK_BIN/$tool"
+done
+ln -sf "$BIN/codex" "$NOFLOCK_BIN/codex"
+bump_diff t17
+OUT=$(jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
+        '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$NOFLOCK_BIN" bash "$GATE")
+is_deny "$OUT"; check "flock missing -> still denies (cap not applied)" $?
+grep -q "round unknown — trajectory unavailable" <<<"$(reason "$OUT")"; check "deny note carries the explicit no-tracking literals" $?
+grep -q "round cap was NOT applied" <<<"$(reason "$OUT")"; check "deny note states the cap was not applied" $?
+
+echo "T18: F2 — a garbled cache marker is DENIED on retry, never a fall-through allow"
+new_head
+printf '%s\n' "LGTM" > "$REVIEW_FILE"
+bump_diff t18; OUT=$(run_gate)
+is_allow "$OUT"; check "clean diff first passes (LGTM, marker written)" $?
+MK=$(latest_marker)
+[[ -n "$MK" && "$(cat "$MK")" == "lgtm" ]]; check "an atomic 'lgtm' marker was published" $?
+# Corrupt the marker in place to simulate a torn/unknown write, then retry the
+# IDENTICAL diff so the cache fast-path reads the garbled marker.
+printf 'denied round=9 material' > "$MK"     # denied-prefix but malformed tail
+OUT=$(run_gate)
+is_deny "$OUT"; check "garbled 'denied' marker (bad tail) -> DENIED, not allowed" $?
+grep -q "could not be parsed" <<<"$(reason "$OUT")"; check "deny reason names the unparseable escalation" $?
+printf 'wat totally unknown token' > "$MK"    # not lgtm/denied/cap_stopped at all
+OUT=$(run_gate)
+is_deny "$OUT"; check "unknown marker token -> DENIED (closed classifier, no fall-through)" $?
+# A cap_stopped marker of the right SHAPE but violating the invariants
+# (round >= cap, findings > 0) must NOT auto-allow: "round=0 findings=0" is
+# semantically impossible for a real cap-stop and is treated as a torn write.
+printf 'cap_stopped round=0 findings=0' > "$MK"
+OUT=$(run_gate)
+is_deny "$OUT"; check "invariant-violating cap_stopped (round=0 findings=0) -> DENIED, not allowed" $?
+# A well-formed cap_stopped marker (round>=cap, findings>0) DOES ride with caveat.
+printf 'cap_stopped round=3 findings=2' > "$MK"
+OUT=$(run_gate)
+is_allow "$OUT"; check "valid cap_stopped marker (round=3 findings=2) -> ALLOW with caveat" $?
+grep -q "marginal findings still stand" <<<"$(sysmsg "$OUT")"; check "valid cap_stopped retry carries the caveat" $?
+# Leading-zero fields must be read base-10, not octal: a bare (( 08 >= CAP ))
+# is a Bash arithmetic ERROR that would leave CAP_RIDE=0 and WRONGLY allow the
+# retry of an open denial. Both marker kinds must survive an "08" field.
+printf 'denied round=08 material=01' > "$MK"    # 8>=cap(3), 1>0 -> stays escalated
+OUT=$(run_gate)
+is_deny "$OUT"; check "octal-looking denied marker (round=08) -> DENIED, no arith error bypass" $?
+printf 'cap_stopped round=09 findings=08' > "$MK"   # 9>=cap, 8>0 -> valid cap-stop
+OUT=$(run_gate)
+is_allow "$OUT"; check "octal-looking cap_stopped (round=09 findings=08) -> ALLOW, parsed base-10" $?
+# Denied markers must satisfy their invariants too, not just the shape: round<1
+# is impossible, and an at/above-cap denial with material=0 would skip the
+# mandatory escalation. Both must route to the unverified deny, never allow.
+printf 'denied round=0 material=1' > "$MK"      # round<1 -> impossible
+OUT=$(run_gate)
+is_deny "$OUT"; check "impossible denied (round=0) -> DENIED, no fall-through allow" $?
+printf 'denied round=9 material=0' > "$MK"      # at-cap denial with material=0 -> escalation must not be skipped
+OUT=$(run_gate)
+is_deny "$OUT"; check "impossible denied (round>=cap, material=0) -> DENIED, escalation not skipped" $?
+printf 'denied round=1 material=1' > "$MK"      # valid BELOW-cap denial -> adjudicate-then-retry passes
+OUT=$(run_gate)
+is_allow "$OUT"; check "valid below-cap denied (round=1) retry -> ALLOW (adjudicate-then-retry contract)" $?
+printf 'lgtm' > "$MK"                          # restore the valid pass marker
+OUT=$(run_gate)
+is_allow "$OUT"; check "valid 'lgtm' marker still passes (classifier not over-broad)" $?
+# A marker that EXISTS as a regular file but cannot be READ must not be
+# downgraded to a pass: `cat` yields "" for both a read failure and a legacy-
+# empty marker, so the gate distinguishes them (via cat's exit status). The
+# fast-path only enters on `-f` (a real file), so a directory can't exercise
+# this branch — the marker stays a regular file with read stripped. Root
+# bypasses chmod, so the gate runs as nobody (run_gate_faulty); if privilege
+# drop isn't available the check SKIPS LOUDLY (never a silent pass).
+if [[ "$CAN_DROP_PRIV" == "0" ]]; then
+    echo "  SKIP  unreadable-marker deny — cannot drop privileges (root without usable setpriv/nobody)"
+else
+    printf 'denied round=9 material=1' > "$MK"
+    # Make the tree traversable/readable for nobody, THEN strip the marker to
+    # 0000 (the recursive chmod would otherwise restore read on it — it lives
+    # under $HOME — and the gate would read a valid marker instead of failing).
+    [[ "$CAN_DROP_PRIV" == "2" ]] && chmod -R a+rX "$HOME" "$REPO" 2>/dev/null
+    chmod 0000 "$MK"
+    OUT=$(run_gate_faulty)
+    ! grep -q "__setpriv_failed__" <<<"$OUT"; check "privilege drop succeeded (setpriv ran)" $?
+    is_deny "$OUT"; check "unreadable marker (read fails) -> DENIED, never a fall-through pass" $?
+    grep -q "could not be parsed" <<<"$(reason "$OUT")"; check "unreadable marker routed to the unverified-escalation deny" $?
+    chmod 0644 "$MK" 2>/dev/null
+fi
+rm -f "$MK" 2>/dev/null
+
+echo "T19: F3 — torn rounds-lines (blank tail AND junk multi-token tail) excluded from count+trajectory"
+new_head
+printf '%s\n' "$MARGINAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t19a; OUT=$(run_gate)   # round 1 -> writes a clean line
+RF=$(rounds_file)
+# Inject TWO torn lines the end-anchored schema (^N M <one-non-space-token>$)
+# must reject: a blank-summary tail, and a junk MULTI-token tail. Both have a
+# valid "count material" numeric prefix — the anchoring is what excludes them.
+printf '5 5 \n' >> "$RF"             # blank summary field
+printf '9 9 edge junk tail\n' >> "$RF"   # extra whitespace-separated tokens
+bump_diff t19b; OUT=$(run_gate)   # this run reads RF (torn lines must be ignored)
+# Only clean lines count: #1 (t19a) and this run (#2) → round 2, not inflated by
+# the two torn lines. Trajectory prints each clean line's FINDING COUNT ($1);
+# MARGINAL_REVIEW has 2 findings, so both clean rounds show 2 → "2->2". The
+# torn lines' prefixes (5 and 9) must NOT appear.
+grep -q "round 2 of cap 3" <<<"$(reason "$OUT")"; check "torn lines excluded from the round count (round 2, not inflated)" $?
+grep -q "trajectory: 2->2" <<<"$(reason "$OUT")"; check "torn lines excluded from the trajectory (2->2, no 5/9 junk)" $?
+! grep -qE "trajectory:[^\"]*[59]" <<<"$(reason "$OUT")"; check "no torn-line prefix (5 or 9) leaked into the trajectory" $?
+
+echo "T20: marker publication is MONOTONIC — a lower round never overwrites a higher one"
+# Two concurrent reviews of the IDENTICAL diff can be assigned different rounds;
+# if a lower-round outcome's write lands last it must NOT clobber a higher-round
+# marker (which would send the next retry down the wrong cached path). Source the
+# publish helpers and exercise the invariant directly (a real race is not
+# deterministically reproducible; the guard it relies on is).
+MONO_DIR=$(mktemp -d)
+# shellcheck source=/dev/null
+source <(sed -n '/^write_marker() {/,/^}/p; /^publish_round_marker() {/,/^}/p' "$GATE")
+MMF="$MONO_DIR/marker"
+printf 'cap_stopped round=3 findings=2' > "$MMF"
+publish_round_marker "$MMF" "denied round=2 material=0" "2"   # lower round, must be rejected
+[[ "$(cat "$MMF")" == "cap_stopped round=3 findings=2" ]]; check "round-2 publish does NOT overwrite the round-3 marker" $?
+publish_round_marker "$MMF" "denied round=4 material=1" "4"   # higher round, must win
+[[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "round-4 publish DOES supersede the round-3 marker" $?
+publish_round_marker "$MMF" "denied round=4 material=2" "4"   # equal round, latest wins (>=)
+[[ "$(cat "$MMF")" == "denied round=4 material=2" ]]; check "equal-round publish is allowed (>= keeps last-writer)" $?
+rm -rf "$MONO_DIR"
 
 echo
 echo "$PASS passed, $FAIL failed"

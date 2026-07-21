@@ -180,6 +180,54 @@ allow_with_warning() {
     exit 0
 }
 
+# Publish a cache marker ATOMICALLY: write to a temp file in the SAME dir, then
+# rename over the target. A plain `printf > $CACHE/$HASH` is not atomic — a
+# concurrent identical retry taking the cache fast-path could `cat` a
+# half-written marker and mis-parse the outcome. The rename is atomic on the
+# same filesystem, so a reader sees either the old marker or the complete new
+# one, never a torn one. A failed write leaves no marker (the retry re-reviews,
+# the safe direction) rather than a truncated one; the temp file is cleaned up.
+write_marker() {
+    # write_marker <marker-file-path> <content>
+    local mf="$1" content="$2" tmp
+    tmp=$(mktemp "${mf}.tmp.XXXXXX" 2>/dev/null) || return 1
+    if printf '%s' "$content" > "$tmp" 2>/dev/null && mv -f "$tmp" "$mf" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null
+    return 1
+}
+
+# Publish a round-bearing marker under the per-hash lock, MONOTONICALLY: never
+# overwrite a marker that already records a HIGHER round (a later/higher-priority
+# outcome must not be downgraded by an earlier round finishing late). lgtm has no
+# round and is published directly (an LGTM'd diff is a fresh diff/hash anyway, so
+# it never contends with a denied/cap_stopped marker at the same hash). Falls
+# back to a plain atomic write when flock is unavailable — the same degrade the
+# rounds counter uses, and the round append it pairs with was itself skipped, so
+# there is no higher-round marker to protect.
+publish_round_marker() {
+    # publish_round_marker <marker-file-path> <content> <this-round>
+    local mf="$1" content="$2" this="$3"
+    command -v flock >/dev/null 2>&1 || { write_marker "$mf" "$content"; return $?; }
+    # shellcheck disable=SC2016  # single quotes intentional: $1..$3 are bash -c positionals
+    flock -w 2 "$mf.lock" bash -c '
+        mf="$1"; content="$2"; this="$3"
+        cur=0
+        if [ -f "$mf" ]; then
+            m=$(cat "$mf" 2>/dev/null)
+            case "$m" in
+                denied\ round=*|cap_stopped\ round=*)
+                    r=${m#* round=}; r=${r%% *}
+                    case "$r" in ""|*[!0-9]*) cur=0 ;; *) cur=$(( 10#$r )) ;; esac ;;
+            esac
+        fi
+        [ "$this" -lt "$cur" ] && exit 0   # a higher round already published — keep it
+        tmp=$(mktemp "$mf.tmp.XXXXXX") || exit 1
+        printf "%s" "$content" > "$tmp" && mv -f "$tmp" "$mf" || { rm -f "$tmp"; exit 1; }
+    ' _ "$mf" "$content" "$this" 2>/dev/null
+}
+
 # What is about to be committed: PreToolUse fires before any `git add` in
 # the same command runs, so review the full working-tree delta, not just
 # the staged part — PLUS untracked files, which `git diff HEAD` misses.
@@ -267,30 +315,101 @@ if [[ -f "$CACHE/$HASH" ]]; then
     # never inferred from the repo/HEAD-wide round state, which may describe
     # a DIFFERENT diff (an LGTM'd diff must not be denied because an earlier
     # diff at this HEAD escalated, and a CAP-STOPPED allow must keep its
-    # caveat on retry). Markers are written per terminal path:
+    # caveat on retry). This is a CLOSED classifier: markers are written per
+    # terminal path in exactly these schemas —
     #   "lgtm" | "cap_stopped round=N findings=M" | "denied round=N material=M"
-    # An empty/legacy marker reads as a plain reviewed-ok pass.
-    MARKER_STATE=$(cat "$CACHE/$HASH" 2>/dev/null)
+    # An empty/legacy marker reads as a plain reviewed-ok pass. Anything ELSE —
+    # a torn write, a truncated marker, an unrecognised token — is NOT allowed
+    # to fall through to a pass: it is treated as an open escalation and DENIED
+    # (the same conservative direction as an unparseable "denied" record). The
+    # branch patterns are ANCHORED to the full schema so a marker that merely
+    # starts with "denied"/"cap_stopped" but has a garbled tail cannot slip in
+    # with a mis-parsed round/material count.
+    # Read the marker in ONE operation that captures exact bytes AND read
+    # success with NO second, raceable syscall. The sentinel 'X' is appended
+    # inside the SAME command substitution but ONLY when `cat` SUCCEEDS (`&&`),
+    # so the sentinel doubly serves as (a) the success flag and (b) a guard that
+    # command substitution's trailing-newline stripping cannot collapse a real
+    # marker to "". After the run:
+    #   - RAW ends in X  → cat succeeded; BODY (RAW without the trailing X) is the
+    #                      exact marker bytes: "" (real empty → legacy pass),
+    #                      "lgtm"/schema (classified), or garbage (→ deny).
+    #   - RAW lacks X    → cat FAILED (unreadable/absent) → open escalation deny.
+    # No stat, no `-r` probe — there is no TOCTOU window and no GNU-stat dep.
+    RAW=$(cat "$CACHE/$HASH" 2>/dev/null && printf 'X')
+    MARKER_READ_OK=0; MARKER_STATE=""
+    if [[ "$RAW" == *X ]]; then
+        MARKER_READ_OK=1; MARKER_STATE="${RAW%X}"   # cat succeeded; exact bytes
+    fi
+    # RAW without a trailing X ⇒ cat failed ⇒ MARKER_READ_OK stays 0 ⇒ deny.
     CAP_RIDE=0; R_UNVERIFIED=0; R_ROUND=0; R_MAT=0
+    if (( ! MARKER_READ_OK )); then
+        # marker present but unreadable → open escalation (never a fall-through
+        # pass). Handled by the CAP_RIDE deny below with the unverified wording.
+        CAP_RIDE=1; R_UNVERIFIED=1
+    else
     case "$MARKER_STATE" in
-        cap_stopped*)
-            log_event system outcome "$(jq -cn '{result:"passed", cached:true, cap_stopped:true}')"
-            allow_with_warning \
-                "⚠ codex-review-gate: retry of a CAP-STOPPED diff ALLOWED — its marginal findings still stand" \
-                "This identical diff was previously allowed at the round cap with MARGINAL findings open ($MARKER_STATE). The retry does not resolve them: surface those findings to the owner alongside this commit (transparency rule — never silently dropped)."
+        ""|lgtm)
+            # reviewed-ok (or legacy 0-byte marker): plain pass, handled below.
+            :
             ;;
-        denied*)
-            R_ROUND=$(sed -n 's/.*round=\([0-9][0-9]*\).*/\1/p' <<<"$MARKER_STATE")
-            R_MAT=$(sed -n 's/.*material=\([0-9][0-9]*\).*/\1/p' <<<"$MARKER_STATE")
-            if [[ "$R_ROUND" =~ ^[0-9]+$ && "$R_MAT" =~ ^[0-9]+$ ]]; then
-                (( R_ROUND >= CAP && R_MAT > 0 )) && CAP_RIDE=1
+        "cap_stopped round="*" findings="*)
+            # A valid cap_stopped marker is "cap_stopped round=<int> findings=<int>",
+            # AND it must satisfy the same INVARIANTS the gate enforces when it
+            # writes one: round >= CAP and findings > 0 (a cap-stopped allow only
+            # happens at/after the cap with at least one open marginal finding).
+            # Checking only the numeric SHAPE would let a corrupt but shape-valid
+            # marker like "cap_stopped round=0 findings=0" bypass the gate; the
+            # invariant check routes such a marker to the unverified deny instead.
+            # 10# forces base-10 so a leading-zero field (e.g. round=08) is not
+            # read as octal — a bare (( 08 >= CAP )) is an arithmetic ERROR that
+            # would leave CAP_RIDE=0 and wrongly allow the retry. Same guard as
+            # the finding-anchor extraction below (line ~788).
+            if [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]+)\ findings=([0-9]+)$ ]] \
+               && (( 10#${BASH_REMATCH[1]} >= CAP )) && (( 10#${BASH_REMATCH[2]} > 0 )); then
+                log_event system outcome "$(jq -cn '{result:"passed", cached:true, cap_stopped:true}')"
+                allow_with_warning \
+                    "⚠ codex-review-gate: retry of a CAP-STOPPED diff ALLOWED — its marginal findings still stand" \
+                    "This identical diff was previously allowed at the round cap with MARGINAL findings open ($MARKER_STATE). The retry does not resolve them: surface those findings to the owner alongside this commit (transparency rule — never silently dropped)."
             else
-                # a denied marker we cannot parse = treated as an open
-                # escalation: deny unless the owner explicitly overrides
+                # cap_stopped prefix but malformed tail OR invariant-violating
+                # counts: do NOT auto-allow a garbled/impossible allow-marker —
+                # fall to the unknown-marker deny below.
                 CAP_RIDE=1; R_UNVERIFIED=1
             fi
             ;;
+        "denied round="*" material="*)
+            if [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]+)\ material=([0-9]+)$ ]]; then
+                # 10# forces base-10 so a leading-zero field (round=08) is not
+                # parsed as octal — a bare (( 08 >= CAP )) is an arithmetic error
+                # that would leave CAP_RIDE=0 and wrongly allow the retry.
+                R_ROUND=$(( 10#${BASH_REMATCH[1]} )); R_MAT=$(( 10#${BASH_REMATCH[2]} ))
+                # Validate the denial INVARIANTS, not just the shape: a real
+                # denied marker always has round >= 1, and a denial recorded at
+                # or above the cap always has material > 0 (an at-cap deny is by
+                # definition a material escalation). An impossible combination
+                # (round=0, or round>=CAP with material=0) is a torn/forged
+                # record — route it to the unverified deny, never a fall-through
+                # allow that would skip the mandatory escalation.
+                if (( R_ROUND < 1 )) || { (( R_ROUND >= CAP )) && (( R_MAT == 0 )); }; then
+                    CAP_RIDE=1; R_UNVERIFIED=1
+                elif (( R_ROUND >= CAP && R_MAT > 0 )); then
+                    CAP_RIDE=1
+                fi
+            else
+                # denied prefix but malformed tail = open escalation: deny
+                # unless the owner explicitly overrides.
+                CAP_RIDE=1; R_UNVERIFIED=1
+            fi
+            ;;
+        *)
+            # Unknown / torn / truncated marker: never a fall-through allow.
+            # Treated as an open escalation (conservative) — the owner override
+            # is the only in-band pass, same as an unparseable denial.
+            CAP_RIDE=1; R_UNVERIFIED=1
+            ;;
     esac
+    fi   # MARKER_READ_OK
     if (( CAP_RIDE )); then
         # An open (or unverifiable) CAP-REACHED escalation is NOT cleared by
         # an identical retry. The ONLY in-band pass is the owner's explicit
@@ -307,7 +426,7 @@ if [[ -f "$CACHE/$HASH" ]]; then
         log_event system outcome "$(jq -cn --argjson unv "$R_UNVERIFIED" \
             '{result:"denied", cached:true, over_cap_escalation:true, state_unverified:($unv==1)}')"
         R_WHY="$R_MAT material finding(s) open at round $R_ROUND"
-        (( R_UNVERIFIED )) && R_WHY="this diff's denial record could not be parsed — treated as an open escalation (conservative)"
+        (( R_UNVERIFIED )) && R_WHY="this diff's cache record is unreadable or could not be parsed — treated as an open escalation (conservative)"
         jq -n --arg r "CAP-REACHED escalation is still OPEN for this repo@HEAD ($R_WHY). An identical-diff retry does NOT clear it. Options: fix the material findings (a changed diff gets a fresh review), or the OWNER explicitly overrides by re-running this exact commit with CODERV_GATE_OWNER_OVERRIDE=1 — the override is the owner's in-band decision signal; never set it on your own judgment." \
               --arg msg "⛔ codex-review-gate: identical retry DENIED — CAP-REACHED escalation open ($R_WHY); owner override: CODERV_GATE_OWNER_OVERRIDE=1" '{
             systemMessage: $msg,
@@ -504,7 +623,7 @@ fi
 # round state and passes without the mandatory escalation caveat.
 
 if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
-    printf 'lgtm' > "$CACHE/$HASH"
+    write_marker "$CACHE/$HASH" 'lgtm'
     log_event codex verdict "$(jq -cn "${DUR_ARG[@]}" '{verdict:"lgtm", findings:0, duration_ms:$dur}')"
     log_event system outcome "$(jq -cn '{result:"passed"}')"
     MSG="✓ Codex review: LGTM"
@@ -630,13 +749,46 @@ if command -v flock >/dev/null 2>&1; then
     # Round number and trajectory are computed from SCHEMA-VALID lines only
     # ("<count> <material> <summary>") — a corrupt or torn record can neither
     # inflate the round toward the cap nor smuggle text into the trajectory.
+    # set -e inside the critical section: a failed append (disk full, bad
+    # perms) MUST abort before the round number / trajectory are emitted — a
+    # half-done append that still printed "prior+1" would advance the cap off a
+    # file that never got this round's line. On abort bash -c exits non-zero,
+    # ROUNDS_OUT has no "|", ROUND stays empty → strict pre-cap deny (safe).
+    # `grep -c` exits 1 on zero matches (an empty/fresh file) — NOT an error —
+    # so it is guarded with `|| :` to keep set -e from tripping on it.
+    # The schema regex is anchored to a FULL valid line ("<count> <material>
+    # <non-space summary>", end-anchored with $) in BOTH the counter (grep) and
+    # the trajectory (awk). This anchoring also neutralizes the only realistic
+    # torn record: if a PRIOR crashed append left a newline-less final line,
+    # this run's `>>` merges it with the new record onto one physical line
+    # ("2 0 edge3 0 edge") — a malformed multi-token tail the end-anchored regex
+    # REJECTS. That round is simply not counted (an UNDERCOUNT — the safe
+    # direction; it can never prematurely reach the cap), never a corrupt count.
+    # A plain guarded append is therefore sufficient; no rewrite/rename needed
+    # (a rewrite would change the failure semantics vs. a plain append and
+    # reintroduce a verbatim-copy newline-merge bug).
+    # shellcheck disable=SC2016  # single quotes intentional: $1/$2 are bash -c positionals
+    # grep -c exits 1 on ZERO matches (an empty/fresh file) — expected, mapped to
+    # prior=0 — but exits >1 on a real error (unreadable file). awk exits >0 on a
+    # read/processing error. A blanket `|| :` would swallow BOTH, letting a bad
+    # read emit a numbered round off a wrong count / blank trajectory. Instead
+    # each is wrapped in a helper that maps grep's status-1 to a "0" result but
+    # RE-RAISES any status >1 (and any awk failure) so set -e aborts → ROUND
+    # empty → the tracking-unavailable deny, never a bogus round.
     ROUNDS_OUT=$(flock -w 2 "$ROUNDS_FILE.lock" bash -c '
+        set -e
         f="$1"; line="$2"
         prior=0
-        [ -f "$f" ] && prior=$(grep -cE "^[0-9]+ [0-9]+ " "$f" 2>/dev/null)
+        if [ -f "$f" ]; then
+            # grep: rc 0 = matches, rc 1 = no matches (→0), rc>1 = error (abort)
+            prior=$(grep -cE "^[0-9]+ [0-9]+ [^[:space:]]+$" "$f" 2>/dev/null) \
+                || { rc=$?; [ "$rc" -eq 1 ] && prior=0 || exit "$rc"; }
+        fi
         case "$prior" in ""|*[!0-9]*) prior=0 ;; esac
         printf "%s\n" "$line" >> "$f"
-        traj=$(awk "/^[0-9]+ [0-9]+ /{printf \"%s%s\", sep, \$1; sep=\"->\"}" "$f" 2>/dev/null)
+        # awk: any nonzero status is a genuine failure here (the program itself
+        # never exits nonzero) → abort under set -e rather than a blank trajectory
+        traj=$(awk "/^[0-9]+ [0-9]+ [^[:space:]]+\$/{printf \"%s%s\", sep, \$1; sep=\"->\"}" "$f")
         printf "%s|%s" "$(( prior + 1 ))" "$traj"
     ' _ "$ROUNDS_FILE" "$FINDING_COUNT $MATERIAL_COUNT $SEV_SUMMARY" 2>/dev/null)
     if [[ "$ROUNDS_OUT" == *"|"* ]]; then
@@ -699,7 +851,7 @@ fi
 # findings never take this path, nor do unparsed/untagged ones (both count as
 # material above), nor a failed round counter (ROUND empty).
 if [[ -n "$ROUND" ]] && (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )) && (( ${#FINDINGS[@]} > 0 )); then
-    printf 'cap_stopped round=%s findings=%s' "$ROUND" "$FINDING_COUNT" > "$CACHE/$HASH"
+    publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s' "$ROUND" "$FINDING_COUNT")" "$ROUND"
     log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
         --argjson n "$FINDING_COUNT" --arg traj "$TRAJECTORY" \
         '{round:$round, findings:$n, trajectory:$traj}')"
@@ -734,14 +886,18 @@ CAP_ESCALATED=0
 # THIS verdict (below-cap deny retries pass per the adjudicate-then-retry
 # contract; at-cap material denies stay escalated). No round recorded → no
 # marker → the retry re-reviews.
-[[ -n "$ROUND" ]] && printf 'denied round=%s material=%s' "$ROUND" "$MATERIAL_COUNT" > "$CACHE/$HASH"
+[[ -n "$ROUND" ]] && publish_round_marker "$CACHE/$HASH" "$(printf 'denied round=%s material=%s' "$ROUND" "$MATERIAL_COUNT")" "$ROUND"
 if [[ -n "$ROUND" ]]; then
     ROUND_NOTE=" — round $ROUND of cap $CAP for this repo@HEAD; findings trajectory: $TRAJECTORY"
 else
-    # flock missing or lock timed out: no round was recorded, so the cap is
-    # not applied this run — say so instead of silently degrading to the
-    # pre-cap behaviour.
-    ROUND_NOTE=" — round tracking unavailable this run (flock missing or lock timeout); the round cap was NOT applied"
+    # ROUND is empty whenever the round could not be recorded — flock missing,
+    # lock timeout, OR a rounds-state I/O failure (a failed append / a grep or
+    # awk error inside the locked section, which set -e turns into an aborted,
+    # "|"-less ROUNDS_OUT). The cap is not applied this run in ANY of those
+    # cases; the note must name all of them, not just flock, so the diagnosis is
+    # never false. Carry the explicit "round unknown — trajectory unavailable"
+    # literals so the owner-facing note reads unambiguously as a no-tracking run.
+    ROUND_NOTE=" — round unknown — trajectory unavailable (round tracking unavailable this run: flock missing, lock timeout, or a rounds-state I/O failure); the round cap was NOT applied"
 fi
 if (( CAP_ESCALATED )); then
     log_event system cap_escalated "$(jq -cn --argjson round "$ROUND" \
