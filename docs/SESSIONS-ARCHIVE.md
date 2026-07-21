@@ -4,6 +4,237 @@
 
 ---
 
+## 2026-07-19 (later 10) — Architecture & integration audit built + woven into all 7 commands + flowchart Artifact — ALL UNCOMMITTED (context gate)
+
+Built the whole v0.11.0 feature the owner asked for: a **/coderv architecture &
+integration audit shape** (not an 8th command) + a true node-and-arrow
+**workflow flowchart** Artifact. Ran /before (spec written), designed via
+AskUserQuestion (owner picked: dimension-fan-out + Codex verify; full 7-command
+weave; sub-shape over slot-8). **Nothing committed yet** — the context gate
+fired at 75% before /ship. A fresh session's FIRST move is to run **/ship**.
+
+**What was built (all in the working tree, unstaged):**
+- **NEW `skills/coderv/architecture-review.md`** — the run-book. Pipeline: read-only
+  scout → 7 parallel dimensions (layering, coupling/cohesion, duplication,
+  module-boundaries, dead-code, **integration-wiring**, **service-liveness**) →
+  dedup by file:line+principle → **Codex adversarially verifies each finding**
+  (SAME `printf | codex exec --skip-git-repo-check -s read-only` channel as the
+  gate — verified 1:1) → scored P0–P3 report to `docs/ARCH-REVIEW-<date>.md`.
+  Advises, never auto-fixes. Wiring+liveness dims degrade honestly to code-only
+  when no SERVER-MAP.md/ss/pm2 ("NOT checked", never faked). Includes a Mermaid
+  diagram + a "the weave" table.
+- **`skills/coderv/SKILL.md`** — new 🏛 shape row in the Step 1 classify table.
+- **The weave into all 7 commands:** `/before` reads newest ARCH-REVIEW as prior
+  art (Step 3 #7); `/ship` hot-spot check — warns if a diff touches an open
+  P0/P1 file (added after Step 4.5); `/session` surfaces open P0/P1 in the
+  handoff template; `/lint` flags a stale review (new cross-check row);
+  `/docify` links the review from architecture.md; `/decision` TRIGGER extended
+  to structural-finding fixes.
+- **ADR-014** in docs/DECISIONS.md (sub-shape not slot-8; honors the 7-cap).
+- **VERSION 0.10.1 → 0.11.0**, CHANGELOG [0.11.0] entry, README /coderv row +
+  docs/skills.md updated.
+- **Flowchart Artifact** (rendered + visually verified via headless chromium,
+  2 collision bugs found & fixed): https://claude.ai/code/artifact/1e9f2ffc-f92c-4833-b207-569e3f1b980d
+  Also an earlier styled-doc version at the SAME url before it was replaced.
+
+**Self-audit passed before the gate fired:** codex channel matches gate 1:1;
+run-book referenced 2× from coderv SKILL.md; install.sh `cp -r` ships the
+run-book automatically (companion file, no marker needed — marker only on
+SKILL.md); every skill still has TRIGGER+SKIP (release.sh-safe); VERSION↔CHANGELOG
+in sync. NOT yet done: /ship (Codex gate on the diff), /verify (docs+skill-prose
+diff — likely "nothing to run, straight to /ship"), release.sh tag/push.
+
+**Also still uncommitted from later-9 (pre-existing, will ride along):**
+`docs/SESSIONS.md` later-9 entry + `docs/coderv-brief.md` (honest technical
+brief, untracked, unreferenced — decide at /ship whether to keep).
+
+**State evidence (verbatim):**
+```
+$ git status --short
+ M CHANGELOG.md
+ M README.md
+ M VERSION
+ M docs/DECISIONS.md
+ M docs/SESSIONS.md
+ M docs/skills.md
+ M skills/before/SKILL.md
+ M skills/coderv/SKILL.md
+ M skills/decision/SKILL.md
+ M skills/docify/SKILL.md
+ M skills/lint/SKILL.md
+ M skills/session/SKILL.md
+ M skills/ship/SKILL.md
+?? docs/coderv-brief.md
+?? skills/coderv/architecture-review.md
+
+$ git log --oneline -3
+8f499f0 Add later-8 session handoff
+b422bc2 Log ADR-013: /coderv acts before it asks (autonomy design)
+bb96e87 Emit review duration and finding file:line for the loop viewer
+
+$ cat VERSION
+0.11.0
+
+$ grep -c "codex exec --skip-git-repo-check" skills/coderv/architecture-review.md hooks/codex-review-gate.sh
+skills/coderv/architecture-review.md:1
+hooks/codex-review-gate.sh:1
+```
+
+**Gotchas the next session should know:**
+- Headless chromium here is snap-sandboxed: it CANNOT write a --screenshot to
+  the scratchpad path. Copy the HTML to `/root/chrome-render/page.html` and
+  screenshot to `/root/chrome-render/render.png` with `--user-data-dir=/root/chrome-render/profile`. That's how the flowchart was visually verified.
+- The spec is at `~/.claude/coderlap/specs/-root-claude-docs-toolkit.md` — the
+  /ship reviewer audits the diff against it.
+- This is a big multi-file diff (13 modified + 2 new). The Codex gate WILL review
+  it; expect real findings — a deny with findings is the system working
+  (batch-fix + rebut once, per ADR-010).
+
+**Next session should probably:**
+1. `cd /root/claude-docs-toolkit` then **/ship** immediately (first move).
+2. Adjudicate Codex gate findings, land the commit.
+3. Then `./release.sh` to tag/push v0.11.0 (also the un-tagged nothing — v0.11.0 is new).
+4. Optional: decide fate of `docs/coderv-brief.md`.
+
+---
+
+## 2026-07-19 (later 9) — Pushed later-8 commits; dashboard redesign explored & rejected
+
+Resumed later-8. Did the one real task — pushed — then went down a UI
+redesign rabbit hole for the coderv-loop dashboard that the owner ultimately
+rejected. Nothing shipped from the redesign; production is byte-for-byte
+unchanged. A fresh session resumes cleanly.
+
+**What shipped:**
+- **Pushed all 5 commits to origin/main** — the 4 later-8 commits (`cada876`
+  `e86b853` `bb96e87` `b422bc2`) plus a new handoff commit `8f499f0`
+  ("Add later-8 session handoff"). `main` is now level with origin. The
+  handoff commit passed through the codex-review-gate clean (no deny).
+
+**Explored then fully reverted (owner decision — DO NOT resurrect unasked):**
+- Owner said the coderv-loop dashboard felt "basic," wanted a "live chat with
+  effects." Built 3 preview directions as throwaway Artifacts — (1) iMessage
+  chat, (2) graphite+cyan cockpit, (3) the ORIGINAL view + 4 light polishes
+  (beat glow-in, gliding hand-off pulse, verdict sweep, spacing). Owner
+  rejected all three; final decision: **keep the current production view as-is.**
+- **All preview files + temp app dirs deleted; scratchpad is empty.**
+  `/home/appuser/apps/coderv-loop/public/index.html` was NEVER modified — only
+  copied out to polish a throwaway. Production `:3130` untouched.
+- 3 private Artifacts remain in the owner's claude.ai gallery (can't delete
+  server-side; harmless, owner can remove them).
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -6
+8f499f0 Add later-8 session handoff
+b422bc2 Log ADR-013: /coderv acts before it asks (autonomy design)
+bb96e87 Emit review duration and finding file:line for the loop viewer
+e86b853 Make /coderv autonomous: discover, scout when confused, always verify
+cada876 Fold the gate roster into one source of truth for install and uninstall
+b1816dc Release 0.10.1: sharper session handoff + doc-lint cleanup
+
+$ git status -sb
+## main...origin/main
+
+$ cat VERSION
+0.10.1
+
+$ git tag -l "v0.*" | sort -V | tail -4
+v0.8.0
+v0.9.0
+v0.10.0
+v0.10.1
+
+$ diff -q /root/.claude/hooks/codex-review-gate.sh hooks/codex-review-gate.sh
+(IDENTICAL — no output; live gate hook is current)
+
+$ ls -A <scratchpad>
+(empty)
+```
+
+**Next session should probably (both non-urgent, both need the owner):**
+- **Cut a 0.11.0 release** for the 4 unreleased commits (`cada876`→`b422bc2`
+  are past the v0.10.1 tag with NO CHANGELOG entry yet). Minor bump — they add
+  user-facing features (autonomous /coderv, gate-roster consolidation, loop
+  viewer timing/file:line). Ritual: add `[0.11.0]` CHANGELOG entry → bump
+  VERSION → `./release.sh` (never tag by hand — CLAUDE.md).
+- **`gh release create v0.10.1`** (and v0.10.0) — GitHub Release pages, pending
+  since later-5. **BLOCKED:** `gh` is not authenticated (`gh release list`
+  returns "please run gh auth login"). Owner must run `! gh auth login` or set
+  `GH_TOKEN` first.
+
+**Gotchas the next session should know:**
+- The dashboard redesign is a CLOSED decision — owner kept the current view.
+  Don't re-pitch improvements to coderv-loop's UI unless the owner reopens it.
+- Same as prior handoffs: codex-review-gate reviews the WHOLE working tree; and
+  a "SESSIONS.md is protected" finding on a Claude commit is role-confusion —
+  reject it (fired before, then passed identical diffs clean).
+
+---
+
+## 2026-07-19 (later 8) — later-7 finished + go-live done; 4 commits local, NOT pushed (context gate)
+
+Closed out the later-7 ship. Both queued items done, plus the go-live the owner
+approved. Nothing mid-flight — a fresh session resumes cleanly from here.
+
+**What happened this session:**
+- Landed the 3 ship commits from later-7 (`cada876`, `e86b853`, `bb96e87`) — see
+  later-7 for the 6 gate-caught bugs + 3 rejected findings.
+- **Go-live (owner approved, verified):** copied the new `codex-review-gate.sh`
+  → `/root/.claude/hooks/` (live gate now emits duration_ms + file/line);
+  `sudo -u appuser pm2 restart coderv-loop` + `pm2 save` → :3130 serves the new
+  viewer (heartbeat/anchor-chip/summary/timing/project all confirmed in served
+  HTML, bytes matched disk index.html).
+- **ADR-013 logged** (`b422bc2`) — /coderv autonomy design, extends ADR-007.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -6
+b422bc2 Log ADR-013: /coderv acts before it asks (autonomy design)
+bb96e87 Emit review duration and finding file:line for the loop viewer
+e86b853 Make /coderv autonomous: discover, scout when confused, always verify
+cada876 Fold the gate roster into one source of truth for install and uninstall
+b1816dc Release 0.10.1: sharper session handoff + doc-lint cleanup
+f8a0314 Release 0.10.0: live-loop event log + coderv-loop dashboard
+
+$ git status -sb
+## main...origin/main [ahead 4]
+
+$ cat VERSION
+0.10.1
+
+$ diff -q /root/.claude/hooks/codex-review-gate.sh hooks/codex-review-gate.sh
+(IDENTICAL — live gate hook is current)
+
+$ sudo -u appuser pm2 describe coderv-loop | grep -E 'status|uptime|restarts'
+status   online
+restarts 2
+uptime   2m
+
+$ ss -tlnp | grep :3130
+LISTEN 0 511 127.0.0.1:3130 ... users:(("node /home/appu",pid=1716022,...))
+```
+
+**Next session should probably (pick from these — none urgent):**
+- **`git push`** — 4 commits are local only (`main ahead 4`). Not pushed this
+  session; owner hadn't decided. This is the first thing to resolve.
+- **Cut a release** when ready: `VERSION` (still 0.10.1) + `CHANGELOG` + run
+  `./release.sh` (never tag by hand — CLAUDE.md). The 4 new commits are unreleased.
+- **`gh release create v0.10.1`** (and v0.10.0) — GitHub Release pages, pending
+  since later-5's handoff. Independent of today's work.
+
+**Gotchas carried forward:**
+- The codex-review-gate reviews the **whole working tree**, not just the staged
+  subset — so `git add <one file>` still gets every uncommitted change reviewed.
+  Expect findings about files you haven't staged yet.
+- `~/.codex/AGENTS.md` #2 forbids **Codex** (the reviewer) from writing
+  source-of-truth docs (SESSIONS/DECISIONS/…) but reserves that for the
+  **conductor** (Claude). If the gate flags "SESSIONS.md is protected" on a
+  Claude commit, that's role-confusion — reject it (it fired once, then passed
+  the identical diff and later commits clean).
+
+---
+
 ## 2026-07-19 (later 7) — SHIPPED later-6's work: 3 commits, gate caught 6 real bugs en route
 
 Resumed the "later 6" handoff and ran `/ship`. The three changes landed as three
