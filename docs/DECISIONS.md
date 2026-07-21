@@ -33,6 +33,34 @@ What did we decide?
 
 ---
 
+## ADR-016: The concurrent same-diff review race in codex-review-gate is an accepted, documented hardening opportunity — not a release-blocking defect
+
+**Date:** 2026-07-21
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude
+
+### Context
+A Codex review of the gate hardening work flagged a concurrency bug (finding 2): the cache fast-path at `codex-review-gate.sh` reads the marker and exits *without a lock*, while the actual `codex exec` review runs much later — with no lock spanning the check-then-review window. So for the same diff (the cache key is `sha256(repo + HEAD + diff)`), a fast LGTM review can publish `lgtm` and let an identical-diff retry take the fast-path and pass, *while a concurrent review of that same diff is still running and destined to deny*. The deny marker still lands afterward (the finding-1 monotonic fix preserves it), but the commit has already gone through.
+
+The mechanism is real. A deterministic harness (`scratchpad/repro-finding2.sh`) drives the unmodified hook via the suite's fake-codex shim + `FAKE_DELAY` and reproduces the bypass 5/5 runs: retry returns ALLOW while the concurrent review returns DENY. (Two traps found along the way: the verdict is a `permissionDecision:"deny"` JSON on stdout at exit 0 — not an exit code; and the slow review must start first so both clear the empty cache before either publishes.)
+
+The deciding factor is the operating model, not the mechanism. The workflow is documented **single-writer, serialized-review** (`AI-WORKFLOW-PLAN.md`): one Claude session issuing git commands, and Claude Code runs PreToolUse hooks synchronously and serially, so one session cannot have two commit reviews in flight. Two concurrent reviews of a byte-identical diff at the same HEAD only arise off-model — e.g. two sessions or a human+agent committing the same diff on one repo within the review window.
+
+### Decision
+Treat finding 2 as an **accepted, documented hardening opportunity**. Do **not** add per-hash review-lifecycle locking or any other concurrency machinery to the release path at this time.
+
+### Alternatives considered
+- **Accept + document, no lock** (chosen) — the race is unreachable under the supported single-writer model; the fix would serialize an expensive `codex exec` under flock and add lock-timeout failure modes to the commit hot path, buying safety only for a configuration the workflow forbids.
+- **Add a per-hash lock over check→review** — closes it fully, but serializes the slowest step of every commit and adds new failure modes to the release path for an out-of-model scenario. Rejected as cost > benefit today.
+- **Locked "review pending" sentinel** (lighter: write a pending marker before `codex exec` so cached retries wait/deny until in-flight reviews resolve) — the leading candidate *if* this is ever revisited, but still unjustified complexity for a race that can't occur in-model. Deferred, not adopted.
+
+### Consequences
+- Positive: the release path stays simple — no lock contention, no lock-timeout edge cases on every commit — and the material half of this work (finding 1: equal-round marker downgrade, reachable even in the sequential retry path) is fixed on its own merits.
+- Trade-off: under an *off-model* multi-writer setup, one diff that a concurrent review would block can slip through once; the deny marker still lands, so the next retry is correctly blocked (not silent-forever).
+- Revisit if: the project adopts multi-session / multi-writer workflows on a shared repo — then reopen with a dedicated design proposal (the "review pending" sentinel is the starting point). The repro at `scratchpad/repro-finding2.sh` is the executable evidence to fold into that work.
+
+---
+
 ## ADR-015: The interactive system map is rendered by a forced mechanical procedure, not described as a design goal
 
 **Date:** 2026-07-20

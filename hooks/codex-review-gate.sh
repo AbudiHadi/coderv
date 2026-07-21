@@ -198,34 +198,71 @@ write_marker() {
     return 1
 }
 
-# Publish a round-bearing marker under the per-hash lock, MONOTONICALLY: never
-# overwrite a marker that already records a HIGHER round (a later/higher-priority
-# outcome must not be downgraded by an earlier round finishing late). lgtm has no
-# round and is published directly (an LGTM'd diff is a fresh diff/hash anyway, so
-# it never contends with a denied/cap_stopped marker at the same hash). Falls
-# back to a plain atomic write when flock is unavailable — the same degrade the
-# rounds counter uses, and the round append it pairs with was itself skipped, so
-# there is no higher-round marker to protect.
+# Publish a cache marker under the per-hash lock, MONOTONICALLY: never overwrite
+# a marker that already records a HIGHER round (a later/higher-priority outcome
+# must not be downgraded by an earlier round finishing late). This ALSO protects
+# concurrent-verdict disagreement: the HASH keys the DIFF, not the review result,
+# so two reviews of the SAME diff can reach different verdicts (Codex is not
+# deterministic). An LGTM path finishing after a deny path must NOT erase the
+# deny's escalation marker — so lgtm is published here too (this="0", below every
+# real round >= 1) and, like any lower/equal round, refuses to replace an
+# existing round-bearing (denied/cap_stopped) marker. Falls back to a plain
+# atomic write when flock is unavailable — the same degrade the rounds counter
+# uses, and the round append it pairs with was itself skipped, so there is no
+# higher-round marker to protect.
 publish_round_marker() {
     # publish_round_marker <marker-file-path> <content> <this-round>
     local mf="$1" content="$2" this="$3"
     command -v flock >/dev/null 2>&1 || { write_marker "$mf" "$content"; return $?; }
     # shellcheck disable=SC2016  # single quotes intentional: $1..$3 are bash -c positionals
+    # Severity rank of the INCOMING content — a blocking `denied` outranks an
+    # allowing `cap_stopped`, which outranks `lgtm`. Ordering is by (round, rank):
+    # a strictly-higher round always wins, and at EQUAL round the higher-severity
+    # verdict wins so a late `cap_stopped` can never downgrade a same-round `denied`
+    # escalation into an allow.
+    local newrank=0
+    case "$content" in
+        denied\ round=*)      newrank=2 ;;
+        cap_stopped\ round=*) newrank=1 ;;
+        *)                    newrank=0 ;;   # lgtm / anything else
+    esac
+    # shellcheck disable=SC2016  # single quotes intentional: $1..$4 are bash -c positionals
     flock -w 2 "$mf.lock" bash -c '
-        mf="$1"; content="$2"; this="$3"
-        cur=0
+        mf="$1"; content="$2"; this="$3"; newrank="$4"
+        cur=0; had_round=0; currank=0
         if [ -f "$mf" ]; then
             m=$(cat "$mf" 2>/dev/null)
             case "$m" in
                 denied\ round=*|cap_stopped\ round=*)
+                    had_round=1
+                    case "$m" in denied\ round=*) currank=2 ;; *) currank=1 ;; esac
                     r=${m#* round=}; r=${r%% *}
-                    case "$r" in ""|*[!0-9]*) cur=0 ;; *) cur=$(( 10#$r )) ;; esac ;;
+                    # reject an out-of-range/oversized field before arithmetic:
+                    # 10# on a >64-bit value WRAPS (e.g. 2^64+1 -> 1), which would
+                    # make a higher round look lower and let this write clobber it.
+                    # Bounded to 9 digits (< 2^63) — real rounds are single/low
+                    # double digits; anything longer is a corrupt record we keep
+                    # (treat as an unbeatably-high round so it is never overwritten).
+                    case "$r" in
+                        ""|*[!0-9]*) cur=0 ;;
+                        ?????????*)  cur=999999999 ;;   # >=10 digits: corrupt, keep it
+                        *)           cur=$(( 10#$r )) ;;
+                    esac ;;
             esac
         fi
-        [ "$this" -lt "$cur" ] && exit 0   # a higher round already published — keep it
+        # Downgrade protection, ordered by (round, severity-rank):
+        #   - a strictly-lower round never overwrites (incl. lgtm at round 0);
+        #   - at EQUAL round, a lower-or-equal severity never overwrites, so a
+        #     late cap_stopped (rank 1) cannot replace a same-round denied
+        #     (rank 2), while a denied CAN still supersede a same-round
+        #     cap_stopped (an upgrade toward blocking is always safe).
+        if [ "$had_round" -eq 1 ]; then
+            if [ "$this" -lt "$cur" ]; then exit 0; fi
+            if [ "$this" -eq "$cur" ] && [ "$newrank" -le "$currank" ]; then exit 0; fi
+        fi
         tmp=$(mktemp "$mf.tmp.XXXXXX") || exit 1
         printf "%s" "$content" > "$tmp" && mv -f "$tmp" "$mf" || { rm -f "$tmp"; exit 1; }
-    ' _ "$mf" "$content" "$this" 2>/dev/null
+    ' _ "$mf" "$content" "$this" "$newrank" 2>/dev/null
 }
 
 # What is about to be committed: PreToolUse fires before any `git add` in
@@ -365,7 +402,11 @@ if [[ -f "$CACHE/$HASH" ]]; then
             # read as octal — a bare (( 08 >= CAP )) is an arithmetic ERROR that
             # would leave CAP_RIDE=0 and wrongly allow the retry. Same guard as
             # the finding-anchor extraction below (line ~788).
-            if [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]+)\ findings=([0-9]+)$ ]] \
+            # Fields are bounded to 1-9 digits (< 2^63): an oversized value like
+            # round=18446744073709551617 would WRAP under 64-bit arithmetic
+            # (2^64+1 -> 1), making an above-cap denial look below-cap; a >9-digit
+            # field fails this anchored match and falls to the deny below instead.
+            if [[ "$MARKER_STATE" =~ ^cap_stopped\ round=([0-9]{1,9})\ findings=([0-9]{1,9})$ ]] \
                && (( 10#${BASH_REMATCH[1]} >= CAP )) && (( 10#${BASH_REMATCH[2]} > 0 )); then
                 log_event system outcome "$(jq -cn '{result:"passed", cached:true, cap_stopped:true}')"
                 allow_with_warning \
@@ -379,7 +420,12 @@ if [[ -f "$CACHE/$HASH" ]]; then
             fi
             ;;
         "denied round="*" material="*)
-            if [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]+)\ material=([0-9]+)$ ]]; then
+            # Fields bounded to 1-9 digits (< 2^63): an oversized round such as
+            # 18446744073709551617 (2^64+1) would WRAP to 1 under 64-bit
+            # arithmetic, making an above-cap denial look below-cap and clearing
+            # the escalation. A >9-digit field fails this anchored match and
+            # routes to the unverified-escalation deny below.
+            if [[ "$MARKER_STATE" =~ ^denied\ round=([0-9]{1,9})\ material=([0-9]{1,9})$ ]]; then
                 # 10# forces base-10 so a leading-zero field (round=08) is not
                 # parsed as octal — a bare (( 08 >= CAP )) is an arithmetic error
                 # that would leave CAP_RIDE=0 and wrongly allow the retry.
@@ -623,7 +669,11 @@ fi
 # round state and passes without the mandatory escalation caveat.
 
 if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
-    write_marker "$CACHE/$HASH" 'lgtm'
+    # Publish under the per-hash lock at round 0 so a concurrent deny/cap_stopped
+    # review of the SAME diff (same hash, different verdict) is never erased by a
+    # late-finishing LGTM — round 0 is below every real round and refuses to
+    # replace a round-bearing marker.
+    publish_round_marker "$CACHE/$HASH" 'lgtm' 0
     log_event codex verdict "$(jq -cn "${DUR_ARG[@]}" '{verdict:"lgtm", findings:0, duration_ms:$dur}')"
     log_event system outcome "$(jq -cn '{result:"passed"}')"
     MSG="✓ Codex review: LGTM"

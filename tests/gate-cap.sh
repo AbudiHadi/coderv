@@ -475,6 +475,17 @@ is_deny "$OUT"; check "impossible denied (round>=cap, material=0) -> DENIED, esc
 printf 'denied round=1 material=1' > "$MK"      # valid BELOW-cap denial -> adjudicate-then-retry passes
 OUT=$(run_gate)
 is_allow "$OUT"; check "valid below-cap denied (round=1) retry -> ALLOW (adjudicate-then-retry contract)" $?
+# An oversized numeric field must NOT wrap under 64-bit arithmetic: a marker
+# like "denied round=18446744073709551617 material=1" (2^64+1) would 10#-wrap to
+# round=1 (< cap) and clear the escalation. Fields are bounded to 1-9 digits, so
+# an oversized field fails the anchored match and routes to the unverified deny.
+printf 'denied round=18446744073709551617 material=1' > "$MK"
+OUT=$(run_gate)
+is_deny "$OUT"; check "oversized denied round (2^64+1) -> DENIED, no 64-bit wrap bypass" $?
+grep -q "could not be parsed" <<<"$(reason "$OUT")"; check "oversized denied marker routed to the unverified deny" $?
+printf 'cap_stopped round=18446744073709551617 findings=1' > "$MK"
+OUT=$(run_gate)
+is_deny "$OUT"; check "oversized cap_stopped round (2^64+1) -> DENIED, no wrap-to-allow" $?
 printf 'lgtm' > "$MK"                          # restore the valid pass marker
 OUT=$(run_gate)
 is_allow "$OUT"; check "valid 'lgtm' marker still passes (classifier not over-broad)" $?
@@ -536,8 +547,54 @@ publish_round_marker "$MMF" "denied round=2 material=0" "2"   # lower round, mus
 [[ "$(cat "$MMF")" == "cap_stopped round=3 findings=2" ]]; check "round-2 publish does NOT overwrite the round-3 marker" $?
 publish_round_marker "$MMF" "denied round=4 material=1" "4"   # higher round, must win
 [[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "round-4 publish DOES supersede the round-3 marker" $?
-publish_round_marker "$MMF" "denied round=4 material=2" "4"   # equal round, latest wins (>=)
-[[ "$(cat "$MMF")" == "denied round=4 material=2" ]]; check "equal-round publish is allowed (>= keeps last-writer)" $?
+# Equal round + equal severity (denied vs denied): the existing marker is kept
+# (both are blocking escalations of the same diff/round — equivalent, so no
+# need to churn the file; ordering is by (round, severity), ties keep incumbent).
+publish_round_marker "$MMF" "denied round=4 material=2" "4"
+[[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "equal round + equal severity keeps the incumbent denied marker" $?
+# Severity precedence at EQUAL round: a late cap_stopped (allow-with-caveat, rank
+# 1) must NEVER downgrade a same-round denied (block, rank 2) — otherwise the next
+# retry reads cap_stopped and is allowed when it should stay blocked. Test BOTH
+# publication orders.
+printf 'denied round=4 material=1' > "$MMF"
+publish_round_marker "$MMF" "cap_stopped round=4 findings=1" "4"   # lower severity, same round
+[[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "equal-round cap_stopped does NOT downgrade a denied escalation" $?
+# The reverse order IS a safe upgrade toward blocking: a denied supersedes a
+# same-round cap_stopped.
+printf 'cap_stopped round=4 findings=1' > "$MMF"
+publish_round_marker "$MMF" "denied round=4 material=1" "4"        # higher severity, same round
+[[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "equal-round denied DOES supersede a cap_stopped (upgrade toward blocking)" $?
+# A strictly-higher round still wins regardless of severity direction (a later
+# cap_stopped at round 5 legitimately supersedes a round-4 denied for a diff that
+# was re-reviewed to a cap-stop — round dominates when it differs).
+printf 'denied round=4 material=1' > "$MMF"
+publish_round_marker "$MMF" "cap_stopped round=5 findings=1" "5"
+[[ "$(cat "$MMF")" == "cap_stopped round=5 findings=1" ]]; check "strictly-higher round wins even downgrading severity" $?
+printf 'denied round=4 material=1' > "$MMF"    # restore for the LGTM tests below
+# Concurrent-verdict disagreement: the hash keys the DIFF, not the verdict, so a
+# late-finishing LGTM (round 0) of the SAME diff must NEVER erase a deny/cap_stop
+# escalation marker — otherwise the next identical retry reads 'lgtm' and allows.
+publish_round_marker "$MMF" "lgtm" "0"
+[[ "$(cat "$MMF")" == "denied round=4 material=1" ]]; check "late LGTM (round 0) does NOT clobber a round-bearing deny marker" $?
+printf 'cap_stopped round=3 findings=2' > "$MMF"
+publish_round_marker "$MMF" "lgtm" "0"
+[[ "$(cat "$MMF")" == "cap_stopped round=3 findings=2" ]]; check "late LGTM does NOT clobber a cap_stopped marker either" $?
+# An oversized round field in an EXISTING marker must not wrap and look 'low',
+# letting a real (in-range) round overwrite it: >=10 digits is kept as unbeatably
+# high, so even a genuine higher-looking round cannot clobber the corrupt record.
+printf 'denied round=18446744073709551617 material=1' > "$MMF"
+publish_round_marker "$MMF" "denied round=5 material=1" "5"
+[[ "$(cat "$MMF")" == "denied round=18446744073709551617 material=1" ]]; check "oversized existing round treated as high — round-5 publish does NOT wrap-and-clobber" $?
+# Edge: an existing round-bearing marker whose round field is itself malformed
+# (had_round=1 but cur=0). A round-0 lgtm must STILL be refused — the '-eq 0'
+# clause, not the '-lt cur' clause, is what protects this torn-deny case.
+printf 'denied round=xyz material=1' > "$MMF"
+publish_round_marker "$MMF" "lgtm" "0"
+[[ "$(cat "$MMF")" == "denied round=xyz material=1" ]]; check "lgtm does NOT clobber a round-bearing marker with a malformed round field" $?
+# A fresh marker file (no existing round) accepts any publish, incl. lgtm.
+rm -f "$MMF"
+publish_round_marker "$MMF" "lgtm" "0"
+[[ "$(cat "$MMF")" == "lgtm" ]]; check "lgtm publishes onto a fresh (no-marker) hash" $?
 rm -rf "$MONO_DIR"
 
 echo
