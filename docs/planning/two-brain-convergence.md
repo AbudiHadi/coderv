@@ -1,5 +1,23 @@
 # Convergence mechanism — FINAL (Codex rounds 1-3 all folded in)
 
+## THE ONE RULE THAT MAKES THE CAP REAL (read first)
+The whole anti-loop guarantee below — ledger memory, project context, round
+counter, cap — lives inside `codex-review-gate.sh`. It only counts and caps
+rounds that go THROUGH the gate. A manual `codex exec` (or any hand-driven Codex
+review of a diff) touches NONE of it: no ledger, no counter, no cap. So a
+hand-run review loop is the pre-ADR-019 memoryless trickle reproduced by hand,
+and it never self-terminates — the human ends it, every time. That is the exact
+token-bleed ADR-019 was built to kill.
+
+**Rule (absolute):** the ONLY sanctioned adversarial review of a diff is the gate,
+reached via `/ship` (Step 4.5) or the commit-time hook. NEVER run `codex exec`
+by hand to adjudicate a diff, "confirm convergence", or do "one more round." If
+you catch yourself typing `codex exec` on a diff — STOP and run `/ship`. Each
+new real finding a good reviewer surfaces per round is EXPECTED and fine; it is
+the CAP, not a perfect first review, that ends the loop. Context and the ledger
+make each round smarter; they do not make rounds disappear.
+
+
 ## End states (four, mutually exclusive, all distinctly labeled)
 - CONVERGED  : unresolved-material set EMPTY and every material fix VERIFIED.
               The only state that means "100%".

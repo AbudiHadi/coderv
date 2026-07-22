@@ -20,6 +20,14 @@ never rubber-stamp.
   retry you see should address the whole batch; if Claude rebuts a finding, it
   gets **one** rebuttal round, then either concedes, fixes, or escalates the
   disagreement to the owner. Don't expect (or reward) per-finding trickle.
+- **The gate is the only sanctioned review loop.** Adversarial diff review runs
+  through `codex-review-gate.sh` (the commit hook, or `/ship` Step 4.5) — which
+  gives you a findings ledger (what was already raised) and the round counter +
+  cap that stop the loop. A hand-driven `codex exec` review of a diff has none
+  of that: no memory, no cap, so it loops until a human ends it — the token
+  bleed the gate exists to prevent. If you are invoked by hand to "do one more
+  round" on a diff, say so and point back to the gate; do not become an
+  uncapped manual loop.
 
 ## Working discipline
 

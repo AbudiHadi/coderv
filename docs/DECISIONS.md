@@ -33,6 +33,57 @@ What did we decide?
 
 ---
 
+## ADR-021: The gate is the ONLY sanctioned Codex diff-review loop — hand-run `codex exec` is banned
+
+**Date:** 2026-07-22
+**Status:** accepted
+**Decider(s):** owner + Claude
+
+### Context
+ADR-019 gave `codex-review-gate.sh` memory (findings ledger), project context, and a round counter + cap, so the Claude↔Codex loop self-terminates. It works — but every one of those properties lives **inside the gate** and only applies to rounds that go **through** it. On alrafiq's career-floor regex, Claude drove Codex by hand — a bare `codex exec` per "round" — outside the gate. The gate's log proves it: exactly one gate round (`"round":1`) was recorded, then a hand-driven R2/R3/R4/R5. A manual `codex exec` touches no ledger (so each round re-discovers the space cold), increments no counter (so the cap of 3 never fires), and has no ceiling (so it loops until the human ends it). It is the pre-ADR-019 memoryless trickle reproduced by hand — the exact bleed ADR-019 was built to kill, re-created by bypassing it. The finding-per-round was even *legitimate* (each regex patch had a real new hole), which is precisely why only the CAP — not a "perfect" review — can end such a loop.
+
+### Decision
+Make the gate the single sanctioned adversarial diff-review path, and forbid hand-driven Codex review of a diff:
+1. **`two-brain-convergence.md`** gains a top "THE ONE RULE THAT MAKES THE CAP REAL" section: the anti-loop guarantee only counts rounds through the gate; a manual `codex exec` on a diff is banned; if you catch yourself typing it — STOP and run `/ship`. A new real finding per round is EXPECTED; the CAP, not a perfect first review, ends the loop.
+2. **`~/.codex/AGENTS.md`** (and the `templates/codex-AGENTS.md` seed for fresh installs) gains a "gate is the only sanctioned review loop" bullet under *Your role*: if Codex is invoked by hand to "do one more round" on a diff, it points back to the gate instead of becoming an uncapped manual loop.
+3. The sanctioned `codex exec` call sites are unchanged — they live INSIDE `/ship` Step 4.5 and the commit hook, which own the ledger/counter/cap. Only *ad-hoc* hand invocation is banned.
+
+### Alternatives
+- **Add a hook that hard-blocks any `codex exec` outside the gate** (deferred) — a shell wrapper could refuse `codex exec` unless an in-gate env sentinel is set. Rejected for now: `/ship` and the hook legitimately call `codex exec`, and a global block risks false positives on future sanctioned uses; the documented rule + Codex-side self-refusal covers the actual failure (Claude hand-looping). Revisit if the rule alone proves insufficient.
+- **Do nothing — treat it as a one-off operator error** — rejected: the whole ADR-019 investment is defeated by one habit; the bypass must be written down as a rule, not left to memory.
+
+### Consequences
+- Positive: the ADR-019 cap becomes un-bypassable in practice — every diff review now flows through the counter, so round 3 reaches CAP-STOPPED and the owner decides, instead of an unbounded hand-loop. Closes KI-002.
+- Trade-off: the ban is enforced by documentation + Codex self-refusal, not (yet) by a machine block. A determined hand-run still works; the guard is a rule, not a lock. Acceptable because the failure was a habit, not a hostile actor.
+- Deployment: same as ADR-019 — the `templates/` seed reaches new projects on install; `~/.codex/AGENTS.md` is already live on this VPS. Existing installs inherit the rule when their `~/.codex/AGENTS.md` is refreshed.
+
+---
+
+## ADR-020: REJECTED — do NOT downgrade a pre-ceiling gate `deny` to `ask`
+
+**Date:** 2026-07-22
+**Status:** rejected
+**Decider(s):** owner + Claude
+
+### Context
+An uncommitted working-tree change (author/session unknown; discovered 2026-07-22) flipped `codex-review-gate.sh` so that every material finding **below the ceiling** emitted `permissionDecision: "ask"` (the owner approves or declines) instead of `"deny"` (a hard block that forces a retry). The stated appeal: stop the gate from *interrupting* routine work with hard blocks, since ADR-019 already reserves the durable hard stop for a ceiling `[security]`/`[data-loss]` finding. It shipped with a comment citing "ADR-020" but no ADR text existed, and it passed the test suite.
+
+### Decision
+**Rejected. The pre-ceiling verdict stays `deny`.** The change was reverted (`git checkout hooks/codex-review-gate.sh tests/gate-cap.sh`).
+
+The gate's own adversarial review (round 2) caught it, and the finding is correct: `ask` below the cap **breaks the ADR-019 invariant** stated verbatim in `two-brain-convergence.md` line 182 — *"ADR-019 ... never weakens a material block below the cap"* — and line 113 — *"round >= cap AND >=1 material open → DENY."* The whole convergence mechanism depends on a below-cap material finding being a **retry-deny**: that is what forces Claude to fix the batch and re-submit, which is how genuine agreement is reached. Downgrade it to `ask` and a **round-1 material finding can be waved through on a reflexive "yes,"** so the converged-retry loop never has to run — the gate stops being a gate below the ceiling. The change silently contradicted ADR-019 without superseding it.
+
+### Alternatives
+- **Keep `ask` below the ceiling** (rejected — this ADR) — defeats ADR-019's retry loop; a real bug can land on a fast "yes." If the hard-block friction is genuinely too high, the correct fix is to make Codex raise *fewer, higher-confidence* pre-cap findings (tune the reviewer threshold), NOT to weaken the verdict that forces convergence.
+- **Supersede the ADR-019 below-cap invariant deliberately** — not taken: no rationale was offered strong enough to trade away the loop's forcing function. Left on the record here so a future session that wants `ask` must first argue *against this ADR* and edit line 182, rather than silently re-flipping the verdict.
+
+### Consequences
+- The ADR-019 invariant stands: pre-ceiling material findings `deny`; only a ceiling `[security]`/`[data-loss]` finding is a durable owner hard-stop. `permissionDecision` is `deny` in all three gate branches (verified: `hooks/codex-review-gate.sh` lines 677, 1539, 1547).
+- This ADR number is spent on a rejected change (per "never delete history" — a rejected decision keeps its slot with the reasoning). ADR-021 is the accepted anti-hand-loop decision.
+- Prevention: a below-cap `ask` in the gate is now a documented regression (see KI-002's sibling reasoning); the gate's own review flags it, and this ADR explains why.
+
+---
+
 ## ADR-019: The commit gate gets memory + project context + a convergence ceiling so the Claude↔Codex loop self-terminates without the human
 
 **Date:** 2026-07-21

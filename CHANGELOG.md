@@ -5,7 +5,7 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
-## [0.13.0] — 2026-07-21
+## [0.13.0] — 2026-07-22
 
 > **Heads-up — reinstall required.** The commit gate's behaviour changed. Your
 > currently *installed* hook keeps the old behaviour until you `git pull` this
@@ -13,6 +13,7 @@ Versioning follows [SemVer](https://semver.org/).
 > `~/.claude/hooks/`. Until you reinstall, ADR-019 is not live on your machine.
 
 ### Added
+- **The commit gate is now the ONLY sanctioned Codex diff-review loop — hand-run `codex exec` on a diff is banned (ADR-021).** All the anti-loop machinery (findings ledger, round counter, cap, ceiling) lives *inside* the gate and only counts rounds that go through it. A hand-driven `codex exec` review touches none of it — no memory, no cap — so it reproduces the pre-ADR-019 uncapped trickle by hand and never self-terminates (the human ends it, every time). The rule now lives in `two-brain-convergence.md` ("THE ONE RULE THAT MAKES THE CAP REAL"), `~/.codex/AGENTS.md`, and the `codex-AGENTS.md` template: route every diff review through `/ship` or the commit gate; if you catch yourself typing `codex exec` on a diff, stop and run `/ship`. A new real finding per round is *expected* — the CAP, not a perfect first review, ends the loop.
 - **The commit gate now has memory, project context, and a convergence ceiling — so the Claude↔Codex review loop self-terminates on genuine agreement instead of escalating routine code to you (ADR-019).** The old gate reviewed a *cold diff* on every recommit through a fresh, memoryless `codex exec` that could see only the diff — so it re-raised findings you had already resolved and invented false ones the real code disproves, and the round cap only ever *escalated to the human*, making you the loop's off-switch on every project. That was the token bleed. Four inputs fix it:
   - **Findings ledger (memory).** A per-(repo, HEAD) ledger beside the round-counter records each finding's fingerprint + text and feeds them back into the next round's prompt, so Codex stops re-raising a finding you already fixed unless the current code still shows it.
   - **Project context.** The review runs read-only *from the repo directory* with the changed-file list, so Codex reads the real surrounding code and false findings die. On a directory-access failure it falls back to a diff-only review from a throwaway empty directory — never reading an unrelated tree.
