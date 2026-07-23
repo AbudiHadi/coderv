@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-07-23 — ADR-022 SHIPPED (`b8d2ffc`): the gate is a quality gate by default, deep security is /ship --security; v0.14.0 ready to release
+
+**What shipped (the later-5 plan, implemented + hardened + committed):**
+- `hooks/codex-review-gate.sh`: `[hardening]` marginal tag + impact-subordination
+  governing rule; default mode = ENGINEERING QUALITY GATE brief, marginal-only
+  reviews ALLOW in round 1 with an "Optional Security Review (non-blocking)"
+  section; mixed denies re-list marginal findings verbatim under that section;
+  `CODERV_GATE_SECURITY=1` = deep-security opt-in ([hardening] blocks, old cap
+  semantics). `/ship` gained `--security`. Docs: ADR-022, KI-004 closed,
+  CHANGELOG [0.14.0], VERSION 0.14.0.
+- **Review-driven hardening (3 review rounds + a fresh-context audit, all
+  findings fixed, none rejected):** (r1) review MODE joined the gate's cache
+  HASH — a default-mode allow never satisfies a --security rerun (T72);
+  (audit F1) PreToolUse hooks don't inherit a command env-prefix, so the gate
+  now parses `CODERV_GATE_SECURITY=1` from the scrubbed command string
+  (upgrade-only) and every verdict names the mode (T73); (r2) an optional-notes
+  allow writes NO cache marker — an identical retry re-reviews so findings are
+  re-surfaced verbatim, never a count-only caveat (T65). Round 3: LGTM.
+- Commit-time gate: allowed at its CEILING (round 15/5 — rounds accumulated at
+  this repo@HEAD from the whole pre-pivot lexer saga) with ONE non-security
+  residue finding: CHANGELOG:39 said 235 where the suite is 237. Fixed in the
+  docs-only follow-up commit that carries this handoff.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -2
+b8d2ffc Make the default gate an engineering quality gate; deep security is opt-in (ADR-022)
+d8ea45f Ban hand-run codex exec — the gate is the only sanctioned review loop (ADR-021)
+$ cat VERSION
+0.14.0
+$ bash tests/gate-cap.sh | tail -1
+237 passed, 0 failed
+$ diff -q hooks/codex-review-gate.sh ~/.claude/hooks/codex-review-gate.sh
+(identical — deployed atomically; install.sh --force also refreshed all skills)
+```
+
+**Gotchas the next session should know:**
+- The legacy suite (T1–T64) is PINNED to `CODERV_GATE_SECURITY=1` — those
+  are the pre-0.14.0 semantics, alive in security mode. Default-mode behavior
+  is T65–T73. Don't "fix" the pin.
+- The rounds file at d8ea45f carried 15 rounds; the ceiling allow was correct
+  behavior, not a bug. HEAD has moved, so the counter is fresh now.
+- The grounding receipt this session was a documented skip pointing at the
+  converged spec (plan was Codex-LGTM'd in later-5; no /before rerun needed).
+
+**Next session should probably:**
+1. Owner: `./release.sh` to tag v0.14.0 + sync the website (owner's call).
+2. Optional: backfill release pages v0.6.0–v0.10.1 (needs `gh release create`
+   permission — see the 2026-07-19 later-12/13 entries).
+
+---
+
 ## 2026-07-22 (later 5) — PIVOT: kill the trickle via a SEVERITY-POLICY redesign (ADR-022), NOT more lexer work. Plan CONVERGED (Codex LGTM r2). Context gate hit BEFORE implementation — fresh session builds it.
 
 **★ START HERE — the plan is done and Codex-approved; nothing is implemented yet.
