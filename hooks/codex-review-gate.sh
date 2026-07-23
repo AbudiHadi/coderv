@@ -19,7 +19,18 @@
 # every reviewed-with-findings round for the same (repo, HEAD) is counted in a
 # flock-guarded state file; each deny prints the round number + finding-count
 # trajectory. The reviewer tags every finding with an IMPACT severity — MATERIAL
-# = [data-loss]/[security]/[correctness]/untagged, MARGINAL = [edge]/[theoretical].
+# = [data-loss]/[security]/[correctness]/untagged, MARGINAL = [edge]/
+# [theoretical]/[hardening].
+#
+# ADR-022 policy split — quality gate by default, deep security by opt-in:
+# in DEFAULT mode the review is an ENGINEERING QUALITY GATE: realistic-impact
+# defects (correctness/regression/data-loss/reachable security) block; exotic
+# adversarially-crafted-input findings are tagged [hardening] and, together
+# with [edge]/[theoretical], ALLOW IMMEDIATELY (round 1, not cap-gated) under
+# a non-blocking "Optional Security Review" section — surfaced, never dropped.
+# CODERV_GATE_SECURITY=1 (/ship --security) is the explicit deep-review mode:
+# full adversarial brief, [hardening] blocks like material, and the cap-gated
+# marginal semantics below apply unchanged.
 #
 # ADR-019 makes the loop self-terminate on GENUINE CONVERGENCE instead of
 # escalating routine code to the human. Three inputs give Codex what a cold
@@ -79,9 +90,11 @@
 # Kill switch: CODERV_GATES_OFF=1 (all gates) or CODEX_REVIEW_OFF=1
 # Tunables: CODERV_GATE_ROUND_CAP (soft cap, default 3), CODERV_GATE_ROUND_MAX
 #   (hard ceiling, default 5, always > cap), CODERV_GATE_DIFF_BUDGET (cumulative
-#   transmitted-byte ceiling, default 800000), CODERV_GATE_OWNER_OVERRIDE=1 (the
-#   owner's in-band pass over an open ceiling security escalation), CODERV_LOG_OFF=1
-#   (silence the live-loop event log).
+#   transmitted-byte ceiling, default 800000), CODERV_GATE_SECURITY=1 (ADR-022
+#   deep-security opt-in: adversarial brief + [hardening] blocks; default is the
+#   quality-gate mode), CODERV_GATE_OWNER_OVERRIDE=1 (the owner's in-band pass
+#   over an open ceiling security escalation), CODERV_LOG_OFF=1 (silence the
+#   live-loop event log).
 #
 # <!-- claude-docs-toolkit -->
 set -o pipefail
@@ -202,7 +215,280 @@ CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT")
 # scrubbed first (double then single: contractions like "don't" live in
 # double quotes) so `echo "git commit"` and commit messages never trigger.
 NL=$'\n'
-SCRUBBED=$(sed -e 's/"[^"]*"/QUOTED/g' -e "s/'[^']*'/QUOTED/g" <<<"$CMD")
+# Heredoc BODIES are stdin data, never commands (0.13.1): a message fed via
+# `git commit -F - <<'EOF'` is unquoted text, so an embedded
+# `; git -C <dir> commit` line inside it would otherwise survive the quote
+# scrub and steer target resolution. Drop body lines (and the terminator);
+# the operator line itself survives, so detection still sees the real
+# invocation. An unterminated heredoc scrubs to end-of-command — the safe
+# direction. `<<<` herestrings are not heredocs and are left alone.
+#
+# The delimiter word is resolved by FULL Bash quote removal (0.13.1 round 9):
+# a `#` or backtick is an ordinary word char once the word has begun
+# (<<EOF#TAG terminates on the literal EOF#TAG, not EOF); a `#` at word start
+# is a comment (no heredoc); segments may be unquoted, '...', "...", $'...'
+# (ANSI-C, fully decoded), or $"..." (dq); bare `$` is a literal char. Quote
+# state (single / double / ANSI-C) CARRIES across newlines via q_sq/q_dq/q_ac
+# so a multi-line quoted string can't hide a fake <<EOF on a later line and
+# smuggle a real commit past the scrub. LC_ALL=C so ANSI-C byte emission is
+# exact. If awk cannot sanitize, the caller fails CLOSED when a heredoc is
+# present (never reviews attacker-controlled unsanitized text).
+SCRUBBED=$(LC_ALL=C awk '
+    # ---- ANSI-C ($\x27...\x27) decode: return the decoded delimiter segment.
+    # s is the segment body (between the quotes). Full escape set, matching
+    # bash: \a\b\e\E\f\n\r\t\v \\ \\\x27 \" \? , octal \nnn (1-3), hex \xHH
+    # (1-2), control \cX, unicode \uHHHH / \UHHHHHHHH (emitted as UTF-8).
+    # Unknown escapes keep the backslash literally, as bash does.
+    function ansic(s,    out, m, len, ch, nx, j, hex, oct, cp, cc) {
+        out = ""; m = 1; len = length(s)
+        while (m <= len) {
+            ch = substr(s, m, 1)
+            if (ch != "\\" || m == len) { out = out ch; m++; continue }
+            nx = substr(s, m+1, 1)
+            if (nx == "a") { out = out sprintf("%c", 7);  m += 2; continue }
+            if (nx == "b") { out = out sprintf("%c", 8);  m += 2; continue }
+            if (nx == "e" || nx == "E") { out = out sprintf("%c", 27); m += 2; continue }
+            if (nx == "f") { out = out sprintf("%c", 12); m += 2; continue }
+            if (nx == "n") { out = out sprintf("%c", 10); m += 2; continue }
+            if (nx == "r") { out = out sprintf("%c", 13); m += 2; continue }
+            if (nx == "t") { out = out sprintf("%c", 9);  m += 2; continue }
+            if (nx == "v") { out = out sprintf("%c", 11); m += 2; continue }
+            if (nx == "\\") { out = out "\\"; m += 2; continue }
+            if (nx == "\047") { out = out "\047"; m += 2; continue }
+            if (nx == "\"") { out = out "\""; m += 2; continue }
+            if (nx == "?") { out = out "?"; m += 2; continue }
+            # A NUL byte TRUNCATES the $'...' string in bash — everything from
+            # the \0 onward is dropped (verified: $'AB\x00CD' -> "AB"). So any
+            # numeric escape that decodes to 0 ends the segment right here;
+            # returning `out` matches bash instead of emitting a literal NUL that
+            # would mismatch the real terminator and swallow a later commit.
+            if (nx ~ /[0-7]/) {                 # \nnn octal, up to 3 digits
+                oct = nx; j = m + 2
+                while (j <= len && length(oct) < 3 && substr(s, j, 1) ~ /[0-7]/) { oct = oct substr(s, j, 1); j++ }
+                cp = 0
+                for (hex = 1; hex <= length(oct); hex++) cp = cp * 8 + (substr(oct, hex, 1) + 0)
+                if (cp % 256 == 0) return out    # NUL truncates
+                out = out sprintf("%c", cp % 256); m = j; continue
+            }
+            if (nx == "x") {                    # \xHH hex, up to 2 digits
+                hex = ""; j = m + 2
+                while (j <= len && length(hex) < 2 && substr(s, j, 1) ~ /[0-9A-Fa-f]/) { hex = hex substr(s, j, 1); j++ }
+                if (hex == "") { out = out "\\x"; m += 2; continue }   # bash keeps \x literal
+                if (hexval(hex) == 0) return out    # NUL truncates
+                out = out sprintf("%c", hexval(hex)); m = j; continue
+            }
+            if (nx == "c") {                    # \cX control char
+                if (m + 2 > len) { out = out "\\c"; m += 2; continue }
+                cc = substr(s, m+2, 1)
+                # Bash: \cX = toupper(X) masked with 0x1f, over the FULL ASCII
+                # range (punctuation too: \c[ -> 27, \c] -> 29), with \c? the
+                # sole special case -> DEL (127). \c@ decodes to 0 -> truncates.
+                if (cc == "?") { out = out sprintf("%c", 127); m += 3; continue }
+                if (ORD[toupper(cc)] % 32 == 0) return out    # \c@ -> NUL truncates
+                out = out sprintf("%c", ORD[toupper(cc)] % 32)
+                m += 3; continue
+            }
+            if (nx == "u" || nx == "U") {       # \uHHHH / \UHHHHHHHH -> UTF-8
+                len_max = (nx == "u") ? 4 : 8
+                hex = ""; j = m + 2
+                while (j <= len && length(hex) < len_max && substr(s, j, 1) ~ /[0-9A-Fa-f]/) { hex = hex substr(s, j, 1); j++ }
+                if (hex == "") { out = out "\\" nx; m += 2; continue }
+                cp = hexval(hex)
+                # A codepoint of 0 truncates the string like any NUL. Out-of-
+                # range code points (> U+10FFFF) are bash-version-specific and
+                # not a delimiter a committer types; treat them as truncating
+                # too — conservative, since truncation only ever makes our
+                # computed delimiter a PREFIX of the real one, which over-runs
+                # the scrub (safe) rather than under-running it (which could let
+                # a decoy survive).
+                if (cp == 0 || cp > 1114111) return out
+                out = out utf8(cp); m = j; continue
+            }
+            out = out "\\" nx; m += 2           # unknown escape: keep backslash (bash)
+        }
+        return out
+    }
+    function hexval(h,   v, k, d, c) {
+        v = 0
+        for (k = 1; k <= length(h); k++) {
+            c = substr(h, k, 1); d = index("0123456789abcdef", tolower(c)) - 1
+            v = v * 16 + d
+        }
+        return v
+    }
+    function utf8(cp) {                          # encode a code point as UTF-8 bytes
+        # DECIMAL literals only — mawk parses 0x80 as 0, which would emit wrong
+        # bytes and let a \u.. delimiter miss its real terminator (round 9).
+        if (cp < 128) return sprintf("%c", cp)
+        if (cp < 2048)
+            return sprintf("%c%c", 192 + int(cp/64), 128 + (cp%64))
+        if (cp < 65536)
+            return sprintf("%c%c%c", 224 + int(cp/4096), 128 + int(cp/64)%64, 128 + (cp%64))
+        return sprintf("%c%c%c%c", 240 + int(cp/262144), 128 + int(cp/4096)%64, 128 + int(cp/64)%64, 128 + (cp%64))
+    }
+    # Every heredoc is QUEUED (with <<A <<B the bodies follow in order, so
+    # tracking only the first would let the second body survive). Operators
+    # count ONLY at unquoted, uncommented positions — a quoted "<<EOF", a
+    # `# <<EOF` comment, or a <<EOF inside a still-open multi-line string must
+    # not queue a bogus delimiter that eats a later real commit line.
+    BEGIN {
+        qh = 1; qt = 0; q_sq = 0; q_dq = 0; q_ac = 0
+        # ORD[char] = ASCII code, built portably (awk has no ord()); used by the
+        # \cX control-escape decoder over the full printable range.
+        _asc = " !\"#$%&\047()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_\140abcdefghijklmnopqrstuvwxyz{|}~"
+        for (_z = 1; _z <= length(_asc); _z++) ORD[substr(_asc, _z, 1)] = _z + 31
+    }
+    qh <= qt {
+        line = $0
+        if (tabq[qh]) sub(/^\t+/, "", line)
+        if (line == delimq[qh]) qh++
+        next
+    }
+    {
+        line = $0
+        n = length(line); i = 1
+        while (i <= n) {
+            c = substr(line, i, 1)
+            # Quote state carries across newlines: if a string opened on an
+            # earlier line and never closed, we are still inside it here.
+            if (q_sq) { if (c == "\047") q_sq = 0; i++; continue }
+            if (q_ac) {                              # inside $\x27...\x27 (ANSI-C)
+                if (c == "\\") { i += 2; continue }  # \\ and \\\x27 do not close
+                if (c == "\047") q_ac = 0
+                i++; continue
+            }
+            if (q_dq) {
+                if (c == "\\") { i += 2; continue }
+                if (c == "\"") q_dq = 0
+                i++; continue
+            }
+            if (c == "\\") { i += 2; continue }
+            # $\x27 opens an ANSI-C string; $" opens a locale double-quote —
+            # both must be seen BEFORE the bare-quote cases so \x27 inside
+            # $\x27...\x27 is not mistaken for a plain single quote.
+            if (c == "$" && substr(line, i+1, 1) == "\047") { q_ac = 1; i += 2; continue }
+            if (c == "$" && substr(line, i+1, 1) == "\"")   { q_dq = 1; i += 2; continue }
+            if (c == "\047") { q_sq = 1; i++; continue }
+            if (c == "\"") { q_dq = 1; i++; continue }
+            # `#` opens a comment only at a token boundary: start of line, or
+            # after whitespace or a control operator (; & | ( ) ). `true;# <<EOF`
+            # and `case x in x)# <<EOF` are comments — without the operator case
+            # the fake heredoc would queue and eat a following real commit line.
+            if (c == "#" && (i == 1 || substr(line, i-1, 1) ~ /[[:space:];&|()]/)) break
+            if (c == "<") {
+                if (substr(line, i, 3) == "<<<") { i += 3; continue }
+                if (substr(line, i, 2) == "<<") {
+                    j = i + 2
+                    tab = 0
+                    if (substr(line, j, 1) == "-") { tab = 1; j++ }
+                    while (substr(line, j, 1) ~ /[[:space:]]/) j++
+                    # A `#` here (word start, before any segment) is a comment,
+                    # not a delimiter char: `cat << #x` is a bash syntax error,
+                    # nothing runs, so queue nothing and stop scanning the line.
+                    if (substr(line, j, 1) == "#") break
+                    # The delimiter is ONE shell word, possibly built from
+                    # concatenated segments of different quoting (unquoted,
+                    # '...', "...", $\x27...\x27 ANSI-C, $"...") that the shell
+                    # quote-removes and joins. Parse segment by segment until a
+                    # word boundary, decoding as the shell does, so a partial
+                    # quote cannot make us queue a short delimiter that then
+                    # swallows the real terminator and a following commit.
+                    # broke=1 means a segment hit end-of-line mid-quote: not a
+                    # valid heredoc op. sawq=1 means at least one quote segment
+                    # was seen, so an empty resolved word (<<\x27\x27) is still a
+                    # real (empty) delimiter and must queue.
+                    d = ""; broke = 0; sawq = 0
+                    while (j <= n) {
+                        ch = substr(line, j, 1)
+                        # $\x27...\x27 ANSI-C segment
+                        if (ch == "$" && substr(line, j+1, 1) == "\047") {
+                            k = j + 2; seg = ""
+                            while (k <= n) {
+                                cc = substr(line, k, 1)
+                                if (cc == "\\" && k < n) { seg = seg cc substr(line, k+1, 1); k += 2; continue }
+                                if (cc == "\047") break
+                                seg = seg cc; k++
+                            }
+                            if (k > n) { broke = 1; break }
+                            d = d ansic(seg); sawq = 1; j = k + 1; continue
+                        }
+                        # $"..." locale double-quote segment (same removal as ")
+                        if (ch == "$" && substr(line, j+1, 1) == "\"") { j++; ch = "\"" }
+                        # word boundary: whitespace, control/redirection ops.
+                        # `#` and backtick are ORDINARY chars once the word has
+                        # begun — they are NOT boundaries here (they were only
+                        # boundaries at word start, handled above).
+                        if (ch ~ /[[:space:];&|()<>]/) break
+                        if (ch == "\"") {
+                            k = j + 1
+                            while (k <= n) {
+                                cc = substr(line, k, 1)
+                                if (cc == "\\" && k < n) {
+                                    nx = substr(line, k+1, 1)
+                                    # inside "...", backslash escapes " \ $ ` and
+                                    # is dropped; before anything else it stays.
+                                    if (nx == "\"" || nx == "\\" || nx == "$" || nx == "`") { d = d nx; k += 2; continue }
+                                }
+                                if (cc == "\"") break
+                                d = d cc; k++
+                            }
+                            if (k > n) { broke = 1; break }
+                            sawq = 1; j = k + 1; continue
+                        }
+                        if (ch == "\047") {
+                            k = j + 1
+                            while (k <= n && substr(line, k, 1) != "\047") { d = d substr(line, k, 1); k++ }
+                            if (k > n) { broke = 1; break }
+                            sawq = 1; j = k + 1; continue
+                        }
+                        if (ch == "\\" && j < n) { d = d substr(line, j+1, 1); j += 2; continue }
+                        d = d ch; j++
+                    }
+                    if (broke) { i = j; continue }   # unterminated quote: not a heredoc op
+                    if (d != "" || sawq) {           # real word (incl. empty <<\x27\x27)
+                        qt++
+                        tabq[qt] = tab
+                        delimq[qt] = d
+                        i = j
+                        continue
+                    }
+                }
+            }
+            i++
+        }
+        print line
+    }
+' <<<"$CMD" 2>/dev/null)
+AWK_RC=$?
+# awk missing/failed: fall back to the raw command (pre-heredoc-scrub
+# behaviour) ONLY when no heredoc is present — the quote scrub below still
+# applies. But if the command contains `<<` and awk could not sanitize it, a
+# heredoc body could smuggle a decoy commit line past the scrub; there is no
+# safe fallback, so fail CLOSED (deny loudly), mirroring the jq-missing path.
+if [[ -z "$SCRUBBED" || $AWK_RC -ne 0 ]]; then
+    if [[ "$CMD" == *'<<'* ]]; then
+        jq -n \
+          --arg msg "⛔ codex-review-gate: heredoc present but awk could not sanitize it — commit BLOCKED (not reviewed). Install awk (mawk/gawk) or rewrite the commit without a heredoc, then retry." \
+          --arg r "A heredoc (<<) is present and the command-scrub pass (awk) failed or is unavailable. A heredoc body could hide an unreviewed command line past the scrub, so there is no safe fallback — per the AI workflow rules a review that cannot run must fail CLOSED, never silently allow. Fix: install awk, or re-run the commit without a heredoc (e.g. -m/-F <file>)." '{
+            systemMessage: $msg,
+            hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: $r
+            }
+        }'
+        exit 0
+    fi
+    SCRUBBED="$CMD"
+fi
+# Quote scrub, escape-aware for the forms that support backslash escapes
+# (0.13.1): inside "..." and $'...' a \" / \' does NOT close the string, so
+# the old naive pairing let a message containing \" spill its tail —
+# including an injected `; git -C <dir> commit` — outside the QUOTED
+# sentinel. Plain '...' cannot contain an escaped quote (POSIX), so its
+# naive rule is exact. Order: $'...' first, then "..." (contractions like
+# "don'\''t" live inside double quotes), then '...'.
+SCRUBBED=$(sed -E -e "s/\\\$'([^'\\\\]|\\\\.)*'/QUOTED/g" -e 's/"([^"\\]|\\.)*"/QUOTED/g' -e "s/'[^']*'/QUOTED/g" <<<"$SCRUBBED")
 ENVPFX="([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
 # Git global flags: -C / -c (space or attached form), value-taking long
 # flags in BOTH --flag=v and --flag v forms (enumerated from git's own
@@ -226,9 +512,26 @@ SUBCMD="${BASH_REMATCH[9]}"
 # accepted limitation, same class as the sh -c wrapper.
 GITC_RE="(^|[;&|(\`${NL}])[[:space:]]*${ENVPFX}(command[[:space:]]+)?git([[:space:]]+${GFLAG_NC})*[[:space:]]+-C[[:space:]]*(\"[^\"]+\"|\'[^\']+\'|[^\&\;\|[:space:]]+)([[:space:]]+${GFLAG_NC})*[[:space:]]+${SUBCMDS}([[:space:]]|\$|[;&|)])"
 C_GITC=""; C_CD=""
-if [[ "$CMD" =~ $GITC_RE ]]; then
+# SECURITY (0.13.1): match against $SCRUBBED, never raw $CMD — same as GIT_RE
+# above. Raw matching let a commit MESSAGE containing `; git -C <clean-repo>
+# commit ...` hijack the review target: the clean decoy's empty diff silently
+# allowed while the real repo's diff committed unreviewed. Trade-off: a QUOTED
+# -C path scrubs to QUOTED (not a dir) and degrades to the cd/cwd candidates
+# below — the same repo in the common case. Protecting `-C "..."` from the
+# scrub is NOT an option: a message containing that exact text would be
+# protected too, reintroducing the bypass.
+if [[ "$SCRUBBED" =~ $GITC_RE ]]; then
     C_GITC="${BASH_REMATCH[9]//[\"\']/}"
     C_GITC="${C_GITC/#\~/$HOME}"
+    # 0.13.1: a fully-quoted -C value scrubs to exactly QUOTED (or to a
+    # QUOTED/... artifact from a quoted leading segment) — never treat those
+    # as paths: as bare candidates they resolve RELATIVE to the gate's cwd,
+    # ahead of the session cwd, so a plantable clean repo literally named
+    # QUOTED would become a silent-allow decoy. Discard those two forms
+    # ONLY; a real path merely CONTAINING the word (e.g. /srv/QUOTED-project)
+    # stays a valid candidate — over-discarding would skip its review
+    # whenever the session cwd is outside that repo.
+    [[ "$C_GITC" == "QUOTED" || "$C_GITC" == QUOTED/* ]] && C_GITC=""
 fi
 if [[ "$CMD" =~ ^[[:space:]]*cd[[:space:]]+(\"[^\"]+\"|\'[^\']+\'|[^\&\;\|[:space:]]+) ]]; then
     C_CD="${BASH_REMATCH[1]//[\"\']/}"
@@ -422,12 +725,39 @@ if [[ "$DOCS_ONLY" == "1" ]]; then
     exit 0
 fi
 
-# One review per unique (repo, HEAD, diff): the retry after adjudication
-# passes; any tree change, new commit, or DIFFERENT repo with an identical
-# diff produces a new hash and a fresh review.
+# ADR-022 review-policy mode — resolved BEFORE the cache key because the mode
+# is part of the review's identity (see HASH below). DEFAULT (unset) =
+# engineering QUALITY GATE: realistic-impact defects block; marginal findings
+# ([edge]/[theoretical]/[hardening]) never block — they allow immediately with
+# a non-blocking "Optional Security Review" section, so a healthy commit
+# converges in ONE round. CODERV_GATE_SECURITY=1 = explicit DEEP SECURITY
+# REVIEW opt-in (/ship --security): the full adversarial brief, [hardening]
+# treated as material, and the pre-0.14.0 cap-gated marginal semantics.
+SECURITY_MODE=0
+[[ "${CODERV_GATE_SECURITY:-0}" == "1" ]] && SECURITY_MODE=1
+# A PreToolUse hook inherits Claude Code's environment, NOT an env-prefix
+# written inside the command string — so the /ship --security commit form
+# (`CODERV_GATE_SECURITY=1 git commit ...`) must be recognized from the
+# SCRUBBED command text itself or the opt-in would silently downgrade to the
+# default brief (fresh-context audit F1). Matching the scrubbed text keeps
+# quoted mentions inert; and the spoof direction is safe by construction —
+# the flag can only UPGRADE the review to the stricter adversarial mode.
+SEC_PFX_RE='(^|[;&|(`[:space:]])CODERV_GATE_SECURITY=1[[:space:]]'
+[[ "$SCRUBBED" =~ $SEC_PFX_RE ]] && SECURITY_MODE=1
+# Outcome visibility: every owner-facing verdict names the mode when the deep
+# review ran, so a transport failure can never masquerade as a security pass.
+MODE_TAG=""; (( SECURITY_MODE )) && MODE_TAG=" [deep-security mode]"
+
+# One review per unique (repo, HEAD, diff, mode): the retry after adjudication
+# passes; any tree change, new commit, DIFFERENT repo with an identical diff,
+# or a MODE FLIP produces a new hash and a fresh review. The mode is part of
+# the key because an allow earned under the default quality-gate policy
+# (lgtm / optional marker) must never satisfy an explicit --security rerun of
+# the same diff — the deep review is the whole point of the opt-in — and,
+# symmetrically, a security-mode verdict must not pre-answer a default run.
 REPO_ID=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
 BASE=$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo unborn)
-HASH=$(sha256sum <<<"${REPO_ID}@${BASE}${NL}${DIFF}" | cut -d' ' -f1)
+HASH=$(sha256sum <<<"${REPO_ID}@${BASE}${NL}${DIFF}${NL}mode=${SECURITY_MODE}" | cut -d' ' -f1)
 # Every event of THIS review shares the diff HASH as its exchange id (xid), so
 # the viewer groups + de-dups the whole exchange correctly even when repos
 # interleave. Set here, once, after HASH exists; log_event falls back to it.
@@ -485,6 +815,8 @@ ROUND_MAX="${CODERV_GATE_ROUND_MAX:-5}"
 # the rounds transaction). Default 800000; same bounded-int guard.
 DIFF_BUDGET="${CODERV_GATE_DIFF_BUDGET:-800000}"
 [[ "$DIFF_BUDGET" =~ ^[1-9][0-9]{0,8}$ ]] || DIFF_BUDGET=800000
+# (SECURITY_MODE is resolved earlier, before the cache key — the review mode
+# is part of the review's identity.)
 CANON_REPO=$(readlink -f "$REPO_ID" 2>/dev/null) || CANON_REPO="$REPO_ID"
 ROUNDS_FILE="$CACHE/rounds-$(sha256sum <<<"${CANON_REPO}@${BASE}" | cut -d' ' -f1)"
 # ADR-019 findings ledger: sibling to ROUNDS_FILE, same (canonical repo, HEAD)
@@ -519,6 +851,9 @@ if [[ -f "$CACHE/$HASH" ]]; then
     #   "lgtm"
     #   "cap_stopped round=N findings=M [ceiling=K]"
     #   "denied round=N material=M [escalated=E]"
+    # (An ADR-022 optional-notes allow deliberately writes NO marker — a
+    # cached retry could only echo a count, not the findings, so it
+    # re-reviews instead; transparency over caching.)
     # An empty/legacy marker reads as a plain reviewed-ok pass. Anything ELSE —
     # a torn write, a truncated marker, an unrecognised token — is NOT allowed
     # to fall through to a pass: it is treated as an open escalation and DENIED
@@ -871,46 +1206,99 @@ shows it."
 fi
 
 # Severity contract, shared by both prompt branches. The tags are defined by
-# IMPACT, not likelihood — the cap below only ever auto-allows marginal-tagged
-# findings, so a tag that lets a serious failure read as marginal would be a
-# hole in the gate. The wording (incl. the "never tag as [edge]" rule) was
-# co-designed with the reviewer model itself.
+# REACHABILITY + IMPACT, never likelihood or craftedness — the allow paths below
+# only ever auto-allow marginal-tagged findings, so a tag that lets a serious
+# failure read as marginal would be a hole in the gate. The wording (incl. the
+# "never tag as [edge]" rule) was co-designed with the reviewer model itself.
+# ADR-022: [hardening] joins the marginal group in default mode; the grouping
+# paragraph is mode-dependent (default = Optional-Security-Review routing,
+# security mode = the pre-0.14.0 cap semantics with [hardening] material).
 SEVERITY_RULES='Tag EVERY finding with exactly ONE impact severity in square
-brackets, chosen by IMPACT, not likelihood:
+brackets, chosen by REACHABILITY + IMPACT — never by likelihood, and never by
+how crafted the triggering input is (real injection is usually crafted input;
+craftedness must not downgrade a reachable failure):
   [data-loss]   = loss or corruption of user data.
   [security]    = confidentiality, integrity, authorization, or any other
-                  security-guarantee failure.
+                  security-guarantee failure that a realistic actor — normal
+                  use OR a credible attacker against the real trust boundary —
+                  can actually REACH.
   [correctness] = any reachable wrong user-visible or externally observable
                   result not covered by the two above.
   [edge]        = bounded, recoverable misbehavior on unlikely input.
   [theoretical] = proven unreachable under supported real-world execution
                   (not merely unlikely).
-Never tag a reachable security, data-integrity, or wrong-result failure as
-[edge], regardless of rarity, recoverability, or blast radius. A finding with
-no severity tag is treated as material.
+  [hardening]   = a security-relevant weakness that requires adversarially-
+                  crafted, exotic, or extremely-low-frequency input (obscure
+                  shell-grammar corners, parser edge cases) AND has NO credible
+                  reachable high-impact path: a defense-in-depth gap whose only
+                  "attacker" is someone crafting pathological input to defeat a
+                  guardrail with no realistic damage beyond it. [hardening] is
+                  FORBIDDEN when a realistic attacker can reach the path —
+                  reachability wins over rarity.
+GOVERNING RULE for ALL marginal tags: [edge], [theoretical], and [hardening]
+are valid ONLY when the defect has no credible reachable high-impact
+consequence. A rare-but-reachable data-loss, security, or wrong-result defect
+MUST take a MATERIAL tag regardless of rarity, recoverability, or blast radius.
+A finding with no severity tag is treated as material.
 Place the severity tag at the VERY START of the finding, in the leading
 bracket cluster (immediately after [BUG]/[DRIFT]) — a tag appearing only in
 the body text does not count, and more than one severity tag on a finding is
-treated as untagged.
-The two groups and their consequences: MATERIAL = [data-loss] | [security] |
-[correctness] | untagged — blocks the commit while the loop is still converging.
-MARGINAL = [edge] | [theoretical] — may be allowed-with-caveat once the round cap
-is reached. At the hard convergence ceiling, ONLY a still-open [security] or
-[data-loss] finding blocks (escalates to the owner) — every other residue is
-allowed-with-caveat so the loop self-terminates without escalating routine code
-to the human; so tag [security]/[data-loss] precisely (that tag is the only one
-that can hold a commit at the ceiling).
+treated as untagged.'
+if (( SECURITY_MODE )); then
+    SEVERITY_RULES+='
+The two groups and their consequences (DEEP SECURITY REVIEW mode): MATERIAL =
+[data-loss] | [security] | [correctness] | [hardening] | untagged — blocks the
+commit while the loop is still converging (in this opt-in mode hardening gaps
+block like real bugs). MARGINAL = [edge] | [theoretical] — may be allowed-with-
+caveat once the round cap is reached. At the hard convergence ceiling, ONLY a
+still-open [security] or [data-loss] finding blocks (escalates to the owner) —
+every other residue is allowed-with-caveat so the loop self-terminates without
+escalating routine code to the human; so tag [security]/[data-loss] precisely
+(that tag is the only one that can hold a commit at the ceiling).'
+else
+    SEVERITY_RULES+='
+The two groups and their consequences (quality-gate mode): MATERIAL =
+[data-loss] | [security] | [correctness] | untagged — blocks the commit while
+the loop is still converging. MARGINAL = [edge] | [theoretical] | [hardening] —
+NEVER blocks: marginal findings are surfaced to the owner under a non-blocking
+"Optional Security Review" section and the commit proceeds. Tag precisely in
+BOTH directions: a marginal tag on a reachable high-impact defect lets a real
+bug through; a material tag on an exotic guardrail gap blocks a healthy commit.'
+fi
+SEVERITY_RULES+='
 Output ONLY the findings list — no preamble, no closing summary. Any prose
 outside a list item is treated as one additional MATERIAL finding.'
 
+# ADR-022 mode framing shared by all four prompt variants. Default = quality
+# gate (converge in one round on realistic-impact findings only); security
+# mode = the full adversarial brief the gate always used, made explicit.
+if (( SECURITY_MODE )); then
+    ROLE_LINE="You are the independent adversarial reviewer in a two-model workflow, running an explicit DEEP SECURITY REVIEW (owner opt-in)."
+    MODE_BRIEF="Hunt exhaustively with an adversarial mindset: fuzzing, parser
+hardening, exotic shell grammar, adversarially-crafted input, and every
+correctness and data-integrity angle. Deep-hardening findings are in scope
+and block in this mode."
+else
+    ROLE_LINE="You are the ENGINEERING QUALITY GATE in a two-model workflow."
+    MODE_BRIEF="This is a quality gate, not a penetration test. Prioritize
+correctness bugs, regressions, data loss, broken logic, and other
+high-confidence defects a user would actually hit. Report realistic security
+issues — a credible attacker can reach the path and the impact is high — those
+block. Do NOT recursively harden against increasingly exotic,
+adversarially-crafted, or extremely-low-frequency input: tag such
+deep-hardening/parser-corner findings [hardening] so they route to the
+non-blocking Optional Security Review section instead of blocking."
+fi
+
 if [[ -n "$SPEC" ]]; then
-    PROMPT="You are the independent adversarial reviewer in a two-model workflow.
+    PROMPT="$ROLE_LINE
 $MEMORY_BLOCK
 
 An approved plan was written by the other AI (Claude) BEFORE this diff. Review
 the outgoing git diff on TWO axes: (1) DRIFT from the plan — steps missed,
 scope added that the plan never approved, silent changes; and (2) correctness
 bugs, edge cases, security, data integrity. Style nits do not count.
+$MODE_BRIEF
 
 Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, tagging each
 [DRIFT] or [BUG], most severe first. Do NOT hold a deeper issue back for a
@@ -925,11 +1313,12 @@ exactly: LGTM
 $SPEC
 --- END PLAN ---"
 else
-    PROMPT="You are the independent adversarial reviewer in a two-model workflow.
+    PROMPT="$ROLE_LINE
 $MEMORY_BLOCK
 
 Review this outgoing git diff for correctness bugs, edge cases, security,
 and data integrity. Style nits do not count.
+$MODE_BRIEF
 
 Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe
 first. Do NOT hold a deeper issue back for a later round — surfacing one
@@ -947,11 +1336,12 @@ fi
 # without the repo cwd this is a pure diff-only cold review (the pre-ADR-019
 # behavior). Uses the spec branch's drift framing when a fresh plan exists.
 if [[ -n "$SPEC" ]]; then
-    PROMPT_NOCTX="You are the independent adversarial reviewer in a two-model workflow.
+    PROMPT_NOCTX="$ROLE_LINE
 An approved plan was written by the other AI (Claude) BEFORE this diff. Review
 the outgoing git diff on TWO axes: (1) DRIFT from the plan; and (2) correctness
 bugs, edge cases, security, data integrity. Style nits do not count. Review the
 DIFF ONLY — do not attempt to read repository files.
+$MODE_BRIEF
 Do ONE EXHAUSTIVE pass, tagging each [DRIFT] or [BUG], most severe first.
 For each finding give file:line, the concrete failure scenario, and the fix.
 $SEVERITY_RULES
@@ -962,10 +1352,11 @@ exactly: LGTM
 $SPEC
 --- END PLAN ---"
 else
-    PROMPT_NOCTX="You are the independent adversarial reviewer in a two-model workflow.
+    PROMPT_NOCTX="$ROLE_LINE
 Review this outgoing git diff for correctness bugs, edge cases, security, and
 data integrity. Style nits do not count. Review the DIFF ONLY — do not attempt
 to read repository files.
+$MODE_BRIEF
 Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe
 first. For each finding give file:line, the concrete failure scenario, and the fix.
 $SEVERITY_RULES
@@ -1077,8 +1468,8 @@ if [[ "$REVIEW" =~ ^[[:space:]]*LGTM[[:space:].!]*$ ]]; then
     publish_round_marker "$CACHE/$HASH" 'lgtm' 0
     log_event codex verdict "$(jq -cn "${DUR_ARG[@]}" '{verdict:"lgtm", findings:0, duration_ms:$dur}')"
     log_event system outcome "$(jq -cn '{result:"passed"}')"
-    MSG="✓ Codex review: LGTM"
-    CTX="Codex adversarial review of this diff: LGTM (no findings)."
+    MSG="✓ Codex review: LGTM$MODE_TAG"
+    CTX="Codex review of this diff: LGTM (no findings).$MODE_TAG"
     if [[ -n "$TRUNC_NOTE" ]]; then
         MSG="✓ Codex review: LGTM (first 150KB only — tail UNREVIEWED)"
         CTX="Codex reviewed ONLY the first 150KB of this oversized diff: LGTM on that part; the remainder was NOT reviewed. $TRUNC_NOTE"
@@ -1134,7 +1525,8 @@ fi
 
 # Severity per finding — the IMPACT tags the prompt demands. MATERIAL =
 # data-loss | security | correctness | untagged/unrecognized (a reviewer that
-# forgets the tag must never unlock the cap). MARGINAL = edge | theoretical.
+# forgets the tag must never unlock the cap). MARGINAL = edge | theoretical |
+# hardening — except in security mode (ADR-022), where hardening is MATERIAL.
 # Only the LEADING bracket-tag cluster of the finding's first line counts —
 # a finding whose EVIDENCE quotes a literal "[edge]" further along must stay
 # untagged/material, and per the prompt exactly ONE severity is legal: zero
@@ -1148,7 +1540,7 @@ sev_label() {
     while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
         t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
         case "$t" in
-            data-loss|security|correctness|edge|theoretical)
+            data-loss|security|correctness|edge|theoretical|hardening)
                 sev="$t"; n=$(( n + 1 )) ;;
             *) ;;   # non-severity tags ([bug]/[drift]/…) just pass through
         esac
@@ -1179,6 +1571,10 @@ for fitem in "${FINDINGS[@]}"; do
     lbl=$(sev_label "$fitem")
     case "$lbl" in
         edge|theoretical) ;;
+        hardening)
+            # ADR-022: marginal by default (Optional Security Review), material
+            # under the explicit deep-security opt-in.
+            (( SECURITY_MODE )) && MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
         *) MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
     esac
     [[ "$(sec_in_cluster "$fitem")" == 1 ]] && SEC_COUNT=$(( SEC_COUNT + 1 ))
@@ -1411,33 +1807,66 @@ fi
 # the deny path instead of allow-with-caveat — and since SEC_COUNT already
 # accounts for a security tag anywhere in the raw prose (findings 17/18), a
 # non-security prose reply must self-terminate like any other non-security residue.
+# ADR-022 quality-gate allow: in DEFAULT mode a marginal-only review
+# ([hardening]/[edge]/[theoretical], MATERIAL_COUNT==0) allows IMMEDIATELY —
+# round 1, not cap-gated, and independent of round-tracking health (the round
+# number plays no part in the verdict; a flock failure must not turn a
+# non-blocking review into a deny). The findings are surfaced under a labeled
+# "Optional Security Review (non-blocking)" section — never silently dropped.
+OPT_ALLOW=0
+if (( ! SECURITY_MODE )) && (( FINDING_COUNT > 0 )) && (( MATERIAL_COUNT == 0 )); then
+    OPT_ALLOW=1
+fi
 CEIL_ALLOW=0
 if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT == 0 )) && (( FINDING_COUNT > 0 )); then
     CEIL_ALLOW=1
 fi
-if [[ -n "$ROUND" ]] && (( FINDING_COUNT > 0 )) && { { (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )); } || (( CEIL_ALLOW )); }; then
-    if (( CEIL_ALLOW )) && (( MATERIAL_COUNT > 0 )); then
-        WHY="ceiling reached (round $ROUND/$ROUND_MAX, ${CUM_BYTES}B/${DIFF_BUDGET}B budget) with only NON-security residue open"
-        HDR="⚠ CEILING-STOPPED: round $ROUND — $MATERIAL_COUNT non-security material + marginal findings open; loop self-terminated, commit ALLOWED with caveat (findings go to the owner)"
+if (( OPT_ALLOW )) || { [[ -n "$ROUND" ]] && (( FINDING_COUNT > 0 )) && { { (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )); } || (( CEIL_ALLOW )); }; }; then
+    if (( OPT_ALLOW )); then
+        HDR="✓ quality gate PASSED — $FINDING_COUNT non-blocking finding(s) routed to Optional Security Review"
+        # Deliberately NO cache marker for an optional-notes pass: a marker can
+        # only carry counts, so a cached retry — possibly in a FRESH session
+        # that never saw this review — could not re-surface the findings
+        # verbatim (transparency rule). An identical retry therefore re-reviews
+        # and re-lists everything; the cost is one extra review on a rare path
+        # (this allow normally lands the commit on the same attempt).
+        log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
+            --argjson round "${ROUND:-null}" \
+            '{result:"passed", optional_review:true, findings:$n, round:$round}')"
+        CTX="QUALITY GATE PASSED (ADR-022 default mode): no realistic-impact
+defect found — every open finding is MARGINAL ([hardening]/[edge]/
+[theoretical]), so the commit is ALLOWED in this round.
+
+Optional Security Review (non-blocking):
+$REVIEW
+
+Surface the findings above to the owner VERBATIM alongside the commit
+(transparency rule — never silently dropped). Fixing them is the owner's
+option, not a requirement for this commit. For the full adversarial
+deep-security review, rerun via /ship --security (CODERV_GATE_SECURITY=1)."
     else
-        WHY="round $ROUND reached the cap ($CAP) and EVERY open finding is MARGINAL ([edge]/[theoretical])"
-        HDR="⚠ CAP-STOPPED: round $ROUND/$CAP — all $FINDING_COUNT open findings marginal; commit ALLOWED with caveat (findings go to the owner)"
-    fi
-    # The marker records the ceiling non-security material count so an identical
-    # RETRY renders an accurate caveat (a ceiling material-residue allow must NOT
-    # be described as "only MARGINAL findings"). ceiling=0 is the classic
-    # marginal-only cap stop; ceiling=K>0 means K non-security material findings
-    # self-terminated at the hard ceiling. Appended as a new field so a legacy
-    # "cap_stopped round=N findings=M" marker (no ceiling=) still parses.
-    CEIL_MAT=0; (( CEIL_ALLOW )) && CEIL_MAT="$MATERIAL_COUNT"
-    publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s ceiling=%s' "$ROUND" "$FINDING_COUNT" "$CEIL_MAT")" "$ROUND"
-    log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
-        --argjson n "$FINDING_COUNT" --argjson ceil "$CEIL_ALLOW" --arg traj "$TRAJECTORY" \
-        '{round:$round, findings:$n, ceiling:($ceil==1), trajectory:$traj}')"
-    log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
-        --argjson round "$ROUND" --arg traj "$TRAJECTORY" \
-        '{result:"passed", cap_stopped:true, findings:$n, round:$round, trajectory:$traj}')"
-    CTX="STOPPED (enforced by the gate): $WHY — the commit is ALLOWED with this
+        if (( CEIL_ALLOW )) && (( MATERIAL_COUNT > 0 )); then
+            WHY="ceiling reached (round $ROUND/$ROUND_MAX, ${CUM_BYTES}B/${DIFF_BUDGET}B budget) with only NON-security residue open"
+            HDR="⚠ CEILING-STOPPED: round $ROUND — $MATERIAL_COUNT non-security material + marginal findings open; loop self-terminated, commit ALLOWED with caveat (findings go to the owner)"
+        else
+            WHY="round $ROUND reached the cap ($CAP) and EVERY open finding is MARGINAL ([edge]/[theoretical])"
+            HDR="⚠ CAP-STOPPED: round $ROUND/$CAP — all $FINDING_COUNT open findings marginal; commit ALLOWED with caveat (findings go to the owner)"
+        fi
+        # The marker records the ceiling non-security material count so an identical
+        # RETRY renders an accurate caveat (a ceiling material-residue allow must NOT
+        # be described as "only MARGINAL findings"). ceiling=0 is the classic
+        # marginal-only cap stop; ceiling=K>0 means K non-security material findings
+        # self-terminated at the hard ceiling. Appended as a new field so a legacy
+        # "cap_stopped round=N findings=M" marker (no ceiling=) still parses.
+        CEIL_MAT=0; (( CEIL_ALLOW )) && CEIL_MAT="$MATERIAL_COUNT"
+        publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s ceiling=%s' "$ROUND" "$FINDING_COUNT" "$CEIL_MAT")" "$ROUND"
+        log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
+            --argjson n "$FINDING_COUNT" --argjson ceil "$CEIL_ALLOW" --arg traj "$TRAJECTORY" \
+            '{round:$round, findings:$n, ceiling:($ceil==1), trajectory:$traj}')"
+        log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
+            --argjson round "$ROUND" --arg traj "$TRAJECTORY" \
+            '{result:"passed", cap_stopped:true, findings:$n, round:$round, trajectory:$traj}')"
+        CTX="STOPPED (enforced by the gate): $WHY — the commit is ALLOWED with this
 caveat instead of blocked (two-brain-convergence.md: the loop self-terminates on
 convergence, not by escalating routine code to the human). Findings trajectory:
 $TRAJECTORY. Surface ALL findings below to the owner VERBATIM alongside the
@@ -1445,6 +1874,7 @@ commit (transparency rule — never silently dropped); the owner remains the
 arbiter and may still demand fixes.
 
 $REVIEW"
+    fi
     [[ -n "$TRUNC_NOTE" ]] && CTX+=$'\n\n'"$TRUNC_NOTE"
     [[ -n "$HIST_NOTE" ]] && CTX+=$'\n\n'"$HIST_NOTE"
     [[ -n "$DRIFT_NOTE" ]] && CTX+=$'\n\n'"$DRIFT_NOTE"
@@ -1507,7 +1937,7 @@ is never yours to set.) (two-brain-convergence.md: ceiling, ADR-019.)
 
 $REVIEW"
 else
-    REASON="CODEX ADVERSARIAL REVIEW (commit paused once, per the AI workflow rules)$ROUND_NOTE:
+    REASON="CODEX REVIEW$MODE_TAG (commit paused once, per the AI workflow rules)$ROUND_NOTE:
 
 $REVIEW
 
@@ -1523,6 +1953,25 @@ STOP and surface to the owner when the SAME unresolved finding has been rejected
 twice on substantially the same rationale (same underlying claim, same cited
 evidence, no materially new code or facts) — that is a loop, not convergence; the
 owner decides, you do not keep re-committing."
+    # ADR-022: in default mode, marginal findings riding along with a material
+    # deny are RE-LISTED verbatim under the Optional section (not just counted)
+    # so the owner never has to re-parse severity tags to see which findings
+    # block, and the fix batch targets only what does.
+    if (( ! SECURITY_MODE )) && (( FINDING_COUNT > MATERIAL_COUNT )); then
+        MARG_LIST=""
+        for fitem in "${FINDINGS[@]}"; do
+            case "$(sev_label "$fitem")" in
+                edge|theoretical|hardening) MARG_LIST+="- $fitem"$'\n' ;;
+            esac
+        done
+        REASON+="
+
+Optional Security Review (non-blocking): the $(( FINDING_COUNT - MATERIAL_COUNT ))
+marginal finding(s) below do NOT block and need no fix for the retry; this deny
+is for the $MATERIAL_COUNT material finding(s) only. Marginal findings go to the
+owner at their discretion (or via the /ship --security deep review):
+$MARG_LIST"
+    fi
 fi
 [[ -n "$TRUNC_NOTE" ]] && REASON+=$'\n\n'"$TRUNC_NOTE"
 [[ -n "$HIST_NOTE" ]] && REASON+=$'\n\n'"$HIST_NOTE"

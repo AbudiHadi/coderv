@@ -7,12 +7,29 @@ description: |
 
   SKIP — when the user is only asking about git status without intent to commit (e.g. "what changed?", "show me the diff").
 user-invocable: true
-argument-hint: "(no args — reads git diff and staged files)"
+argument-hint: "(optional: --security for the deep adversarial review; default is the quality gate)"
 ---
 
 # Ship — Smart Pre-commit
 
 Goal: docs stay fresh + honest, with minimum friction.
+
+## Flags — `--security` (ADR-022)
+
+`/ship --security` runs the whole flow in **DEEP SECURITY REVIEW** mode: export
+`CODERV_GATE_SECURITY=1` for every review command in this run — the Step 4.5
+pre-commit Codex loop AND the final `git commit` (so the commit-time
+codex-review-gate also runs the full adversarial brief and `[hardening]`
+findings block). This is the explicit opt-in for adversarial, fuzzing, and
+parser-hardening review; use it when the owner asks for a security pass.
+
+**Default (no flag) = engineering QUALITY GATE mode.** Realistic
+correctness / regression / data-loss / reachable-security defects block as
+always; exotic adversarially-crafted-input findings are tagged `[hardening]`
+and land in a non-blocking **"Optional Security Review"** section instead of
+blocking — a normal dev commit converges in ONE round. Surface any Optional
+findings to the owner verbatim (transparency rule); they never block and never
+oblige another round.
 
 ## Step 1 — Look at the diff
 
@@ -207,9 +224,15 @@ reviewer told to be exhaustive in ONE pass (this is what stops the trickle):
 OUT=$(mktemp)
 SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done; [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd); printf '%s' "$ROOT" | tr '/' '-').md
 { printf '%s\n' \
-    "You are the independent adversarial reviewer in a two-model workflow." \
+    "You are the ENGINEERING QUALITY GATE in a two-model workflow." \
     "Review this outgoing git diff for correctness, edge cases, security, data" \
     "integrity, and (if a plan is included) drift from it. Style nits do not count." \
+    "Prioritize correctness bugs, regressions, data loss, broken logic, and other" \
+    "high-confidence defects a user would actually hit; report realistic security" \
+    "issues (a credible attacker can reach the path, high impact). Do NOT" \
+    "recursively harden against exotic or adversarially-crafted input — tag such" \
+    "deep-hardening findings [hardening]: they are NON-BLOCKING (Optional Security" \
+    "Review), not grounds for another round." \
     "Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe" \
     "first — holding one back for a later round is a FAILURE (it wastes a converged" \
     "retry and lets real bugs hide behind cosmetic ones). file:line + the concrete" \
@@ -219,6 +242,14 @@ SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f 
 RC=$?
 REVIEW=$(cat "$OUT"); rm -f "$OUT"
 ```
+
+**With `--security`**, swap the first line for *"You are the independent
+adversarial reviewer in a two-model workflow, running an explicit DEEP SECURITY
+REVIEW."* and replace the do-NOT-harden instruction with *"Hunt exhaustively
+with an adversarial mindset: fuzzing, parser hardening, exotic shell grammar,
+adversarially-crafted input. Deep-hardening findings block in this mode."* —
+mirroring `codex-review-gate.sh`'s two briefs so /ship and the gate always
+argue under the same policy.
 
 **Codex unavailable → FAIL OPEN, never block** (RC ≠ 0 or empty `REVIEW` after
 ONE retry): surface *"Codex unavailable — diff not peer-reviewed before commit"*
@@ -230,6 +261,9 @@ a coverage hole: the codex-review-gate still runs its own review at commit time.
 phase and the gate; `docs/planning/two-brain-convergence.md`):
 
 - **CONVERGED — requires BOTH** (a) the unresolved-**material** set is empty
+  (ADR-022: in default mode `[hardening]`/`[edge]`/`[theoretical]` findings are
+  NOT material — list them for the owner under "Optional Security Review" and
+  converge; with `--security`, `[hardening]` counts as material)
   **AND** (b) the snapshot you just reviewed is the snapshot you are about to
   commit: `SNAP_HASH` (the diff Codex saw) **equals** a freshly re-assembled
   diff hash. A round can resolve every finding yet **change the bytes** (the fix
@@ -428,7 +462,7 @@ Judgment items for you: <none, or one line each>
 <2-3 sentences on WHY>
 ```
 
-**On "approve" I run:** `git add <files> && git commit -m "<message>"` — the codex-review-gate reviews the outgoing diff before it lands.
+**On "approve" I run:** `git add <files> && git commit -m "<message>"` — the codex-review-gate reviews the outgoing diff before it lands. (With `--security`, prefix the commit with `CODERV_GATE_SECURITY=1 ` so the gate reviews in deep-security mode too.)
 
 👉 **My recommendation: <approve — 100% | fix gate N first | ship at <P>% because <reason>>.**
 ````

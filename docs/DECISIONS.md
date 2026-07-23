@@ -33,6 +33,90 @@ What did we decide?
 
 ---
 
+## ADR-022: Quality gate by default, deep security review by explicit opt-in — the severity-policy split that ends the trickle
+
+**Date:** 2026-07-23
+**Status:** accepted
+**Decider(s):** owner + Claude (plan converged with Codex, LGTM round 2)
+
+### Context
+Even with ADR-019's memory + cap + ceiling, the gate kept "behaving like a
+penetration tester on every commit." The round-8/9 shell-lexer saga was the
+proof: fixing the review-target hijack spawned eight review rounds, each
+surfacing one more *genuinely real but exotic* shell-grammar corner
+(`$'...'` ANSI-C quoting, mid-word `#`, backtick segments, …). Every finding
+was tagged `[security]`, `[security]` can never be marginal, so each one
+BLOCKED — and the surface of "ways a determined shell author could craft
+pathological input against a local guardrail" is infinite, so the trickle
+could never converge. An earlier direction this session (delete the lexer /
+cwd-only target resolution) was explored and abandoned: it just relocated the
+trickle to redirect-vector enumeration (`-C` → `--git-dir` → `GIT_DIR` → …).
+The bug was never the lexer. It was the SEVERITY POLICY: exotic-input
+defense-in-depth findings carried the same blocking weight as a real
+reachable auth bypass.
+
+### Decision
+Split the policy along REACHABILITY + IMPACT, never craftedness or rarity:
+
+1. **Default mode = engineering QUALITY GATE.** The reviewer brief prioritizes
+   correctness / regressions / data-loss / broken logic / realistic security
+   and explicitly forbids recursive hardening against exotic input. A new
+   MARGINAL tag `[hardening]` marks a security-relevant weakness with NO
+   credible reachable high-impact path (the shell-grammar-corner class).
+   `[hardening]` is FORBIDDEN when a realistic attacker can reach the path —
+   real injection is usually crafted input and must still block.
+2. **Marginal never blocks in default mode.** A marginal-only review
+   (`[hardening]`/`[edge]`/`[theoretical]`) ALLOWS in ROUND 1 — not cap-gated —
+   with the findings surfaced under a labeled **"Optional Security Review
+   (non-blocking)"** section (transparency preserved: surfaced, never dropped).
+   A normal dev commit with no realistic-impact defect converges in ONE round.
+3. **Impact subordination governs ALL marginal tags:** a rare-but-reachable
+   high-impact defect must take a MATERIAL tag; `[edge]`/`[theoretical]` may
+   not downgrade it any more than `[hardening]` may.
+4. **Deep security review is an explicit opt-in:** `CODERV_GATE_SECURITY=1`
+   (exported by `/ship --security`) flips the reviewer to the full adversarial
+   brief (fuzzing, parser hardening, exotic shell grammar) AND makes
+   `[hardening]` MATERIAL. The pre-0.14.0 cap-gated marginal semantics apply
+   unchanged in this mode.
+5. **Scope: policy only.** The 0.13.1 shell lexer stays in the tree, active
+   and fully tested — its findings class just stops blocking by default.
+   Realistic `[security]`/`[data-loss]`/`[correctness]` blocking, the cap /
+   ledger / ceiling machinery, and the ceiling security escalation are all
+   unchanged.
+
+### Alternatives
+- **Keep perfecting the lexer round-by-round** (rejected) — the KI-002-class
+  loop with an infinite surface; round 9 was already the scoped "once and
+  done" pass and the gate still had more.
+- **Delete the lexer / cwd-only target resolution** (explored, de-scoped by
+  owner) — relocated the trickle to redirect-vector enumeration; same
+  infinite-surface trap, minus the protection the lexer already provides.
+- **Owner-override each trickle** (rejected) — makes the human the loop's
+  off-switch again, the exact failure ADR-019 exists to prevent.
+
+### Consequences
+- Positive: normal dev commits converge in one round; exotic findings stay
+  visible (Optional section) instead of blocking; deep review still exists,
+  on demand, where it belongs; the terminal state is genuine convergence.
+- Trade-off: in default mode a finding the reviewer *mis*-tags `[hardening]`
+  will not block. Mitigated by the impact-subordination rule (reachability
+  wins, stated in the prompt as the governing rule), untagged-defaults-to-
+  material, and the commit still carrying the finding to the owner verbatim.
+- Supersedes: the abandoned cwd-only / lexer-deletion direction (never an
+  ADR; recorded here so it is not re-explored).
+- Verified by: `tests/gate-cap.sh` T65–T73 (round-1 hardening allow, security/
+  correctness still block, opt-in flip, mixed-severity routing with the
+  marginal findings re-listed verbatim under the Optional section, prompt
+  flip, and mode-flip cache isolation); the legacy T1–T64 suite runs pinned
+  to security mode and proves the pre-0.14.0 machinery unchanged.
+- Refinement from this ADR's own pre-commit review (Codex round 1): the
+  review MODE joined the gate's cache identity — a default-mode allow marker
+  (`lgtm`/`optional`) must never satisfy an explicit `--security` rerun of
+  the identical diff, and a security-mode verdict must not pre-answer a
+  default run. Each mode owns its own review, marker, and retry semantics.
+
+---
+
 ## ADR-021: The gate is the ONLY sanctioned Codex diff-review loop — hand-run `codex exec` is banned
 
 **Date:** 2026-07-22

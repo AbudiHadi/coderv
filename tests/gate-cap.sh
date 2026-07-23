@@ -83,6 +83,14 @@ git -C "$REPO" commit -qm seed
 REVIEW_FILE="$TDIR/review.txt"
 export FAKE_REVIEW="$REVIEW_FILE"
 
+# ADR-022: the legacy suite below (T1-T64) encodes the pre-0.14.0 lifecycle —
+# marginal-only denies below the cap, cap-gated allows, the ceiling tiers.
+# Those semantics now live in the explicit DEEP SECURITY mode; default mode is
+# the quality gate (marginal-only allows in round 1). Pin the legacy suite to
+# security mode so it keeps proving the cap/ledger machinery unchanged; the
+# ADR-022 block at the end unsets this and covers the default mode.
+export CODERV_GATE_SECURITY=1
+
 run_gate() {
     # fresh diff each call so the (repo,HEAD,diff) cache never short-circuits
     jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
@@ -1043,6 +1051,605 @@ VA=$(cat "$TDIR/t36bA"); VB=$(cat "$TDIR/t36bB")
 DENIES=0; ALLOWS=0
 for V in "$VA" "$VB"; do if is_deny "$V"; then DENIES=$((DENIES+1)); else ALLOWS=$((ALLOWS+1)); fi; done
 { (( DENIES == 1 )) && (( ALLOWS == 1 )); }; check "ceiling straddle: exactly one pre-ceiling deny + one ceiling allow under concurrency (deny:$DENIES allow:$ALLOWS)" $?
+
+echo "T37: message-embedded '; git -C <decoy> commit' cannot hijack the review target (0.13.1 bypass regression)"
+# GITC_RE used to match the RAW command, so a commit MESSAGE containing a
+# delimiter + `git -C <clean-decoy> commit` pointed the review at the decoy
+# (empty diff -> silent allow) while the real repo's diff committed
+# UNREVIEWED. GITC_RE now matches the quote-scrubbed command, same as GIT_RE:
+# the decoy text lives inside the -m quotes, so it scrubs away and the review
+# stays on the real (cwd) repo — whose material finding must deny.
+DECOY="$TDIR/decoy"
+mkdir -p "$DECOY"
+git -C "$DECOY" init -q
+git -C "$DECOY" config user.email t@t
+git -C "$DECOY" config user.name t
+echo clean > "$DECOY/f"
+git -C "$DECOY" add -A && git -C "$DECOY" commit -qm seed
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t37    # the REAL repo is dirty; the decoy stays clean
+OUT=$(jq -cn --arg cmd "git commit -m \"note; git -C $DECOY commit fixed the build\"" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "quoted-message -C decoy ignored — real repo reviewed, material finding denies" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "review ran fresh against the real repo's key" $?
+
+echo "T38: legit UNQUOTED git -C <dir> commit still extracts the dir (cwd not a repo)"
+new_head
+NOREPO="$TDIR/norepo"
+mkdir -p "$NOREPO"
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t38
+OUT=$(jq -cn --arg cmd "git -C $REPO commit -m t" --arg cwd "$NOREPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "unquoted -C dir extraction survives the scrub (reviewed despite non-repo cwd)" $?
+
+echo "T39: QUOTED -C path degrades safely — planted 'QUOTED' decoy ignored, cwd (same repo) reviewed"
+# Accepted 0.13.1 trade-off: a quoted -C value scrubs to the QUOTED sentinel,
+# which the gate must DISCARD — resolved as a bare candidate it is a path
+# RELATIVE to the gate's cwd, ahead of the session cwd, so a clean repo
+# literally named QUOTED planted there would become a silent-allow decoy.
+# With the sentinel discarded, resolution falls through to cd/cwd: session
+# cwd inside the same repo — the common case — still reviews that repo.
+# (Protecting `-C "..."` from the scrub would be spoofable by a message
+# containing that exact text, reintroducing the T37 bypass.)
+SPREPO="$TDIR/sp ace"
+mkdir -p "$SPREPO"
+git -C "$SPREPO" init -q
+git -C "$SPREPO" config user.email t@t
+git -C "$SPREPO" config user.name t
+echo base > "$SPREPO/app.sh"
+git -C "$SPREPO" add -A && git -C "$SPREPO" commit -qm seed
+echo dirty >> "$SPREPO/app.sh"
+mkdir -p "$SPREPO/QUOTED"          # the plantable decoy: a CLEAN repo named QUOTED
+git -C "$SPREPO/QUOTED" init -q
+git -C "$SPREPO/QUOTED" config user.email t@t
+git -C "$SPREPO/QUOTED" config user.name t
+echo clean > "$SPREPO/QUOTED/f"
+git -C "$SPREPO/QUOTED" add -A && git -C "$SPREPO/QUOTED" commit -qm seed
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+OUT=$(cd "$SPREPO" && jq -cn --arg cmd "git -C \"$SPREPO\" commit -m t" --arg cwd "$SPREPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "QUOTED sentinel discarded — planted decoy skipped, real repo's material finding denies" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "fresh key: the real repo (not the decoy) was reviewed" $?
+
+echo "T40: heredoc commit-message body cannot hijack the review target (0.13.1)"
+# `git commit -F - <<'EOF'` feeds the message on stdin: the body is data but
+# carries no quotes, so it used to survive the quote scrub — an embedded
+# `; git -C <decoy> commit` line hijacked resolution exactly like T37.
+# Heredoc bodies are now scrubbed out like quoted strings.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t40
+HD_CMD="git commit -F - <<'EOF'
+note; git -C $DECOY commit fixed the build
+EOF"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "heredoc-body -C decoy ignored — real repo reviewed, material finding denies" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "review ran against the real repo's fresh key" $?
+
+echo "T41: heredoc commit is still DETECTED (body scrub never hides the invocation line)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t41
+HD_CMD="git commit -F - <<'EOF'
+a perfectly harmless message
+EOF"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "heredoc commit reviewed (material finding denies) — operator line survived the scrub" $?
+
+echo "T42: escaped quote in the message cannot spill an injected -C past the scrub (0.13.1)"
+# Inside "..." a \" does not close the string; the old naive quote pairing let
+# the tail — including `; git -C <decoy> commit` — escape the QUOTED sentinel.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t42
+EQ_CMD="git commit -m \"he said \\\" ; git -C $DECOY commit \\\" done\""
+OUT=$(jq -cn --arg cmd "$EQ_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "escaped-quote injection ignored — real repo reviewed, material finding denies" $?
+
+echo "T43: a real unquoted path CONTAINING 'QUOTED' is still a valid -C candidate (no over-discard)"
+# The sentinel discard covers exactly QUOTED and QUOTED/... artifacts; a
+# genuine path that merely contains the word must keep its review — with the
+# session cwd outside the repo, over-discarding would silently skip it.
+QPROJ="$TDIR/QUOTED-project"
+mkdir -p "$QPROJ"
+git -C "$QPROJ" init -q
+git -C "$QPROJ" config user.email t@t
+git -C "$QPROJ" config user.name t
+echo base > "$QPROJ/app.sh"
+git -C "$QPROJ" add -A && git -C "$QPROJ" commit -qm seed
+echo dirty >> "$QPROJ/app.sh"
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+OUT=$(jq -cn --arg cmd "git -C $QPROJ commit -m t" --arg cwd "$NOREPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "path containing QUOTED still extracted and reviewed (deny), not over-discarded" $?
+
+echo "T44: heredoc delimiter with punctuation (END-MSG) is still scrubbed (no hijack)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t44
+HD_CMD="git commit -F - <<'END-MSG'
+note; git -C $DECOY commit fixed the build
+END-MSG"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "punctuation-delimiter heredoc body scrubbed — real repo reviewed, denies" $?
+
+echo "T45: SECOND heredoc's body on one line is scrubbed too (delimiter queue)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t45
+HD_CMD="git commit -F - <<'A' && cat <<'B'
+first body line
+A
+note; git -C $DECOY commit fixed the build
+B"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "second heredoc body scrubbed — injected -C ignored, real repo denies" $?
+
+echo "T46: a QUOTED '<<EOF' is not a heredoc — a later real commit line is still detected"
+# fail-closed guard: echo "<<EOF" used to queue a bogus delimiter whose
+# never-found terminator ate every following line — including the real
+# `git commit` — so the gate emitted NO review at all.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t46
+FK_CMD="echo \"<<EOF\"
+git commit -m t46"
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "quoted fake heredoc ignored — the real commit below it is still reviewed (denies)" $?
+
+echo "T47: a COMMENTED '# <<EOF' is not a heredoc — a later real commit line is still detected"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t47
+FK_CMD="true # <<EOF
+git commit -m t47"
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "commented fake heredoc ignored — the real commit below it is still reviewed (denies)" $?
+
+echo "T48: '# <<EOF' immediately after a control operator (no space) is a comment, not a heredoc"
+# `true;# <<EOF` — the # opens a comment at a token boundary right after `;`,
+# so the fake delimiter must NOT queue and eat the real commit line below.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t48
+FK_CMD="true;# <<EOF
+git commit -m t48"
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "operator-adjacent comment ignored — the real commit below it is still reviewed (denies)" $?
+
+echo "T49: QUOTED heredoc delimiter with an arbitrary char (END@MSG) is still scrubbed"
+# A quoted delimiter may contain ANY character; the old allowlist
+# [A-Za-z0-9_.+-] missed @, so <<'END@MSG' was not recognized and its body
+# (with an injected -C decoy) survived the scrub and hijacked the target.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t49
+HD_CMD="git commit -F - <<'END@MSG'
+note; git -C $DECOY commit fixed the build
+END@MSG"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "arbitrary-char quoted delimiter body scrubbed — real repo reviewed, denies" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "review ran against the real repo's fresh key" $?
+
+echo "T50: double-quoted delimiter with an ESCAPED quote (<<\"END\\\"MSG\") resolves its real terminator"
+# Shell removes the quotes/escapes: <<"END\"MSG" terminates on END"MSG. The
+# old scan stopped at the \" and queued the wrong delimiter END, so the body
+# (with an injected decoy) plus the real commit below it were consumed to EOF
+# and skipped review. The body must be scrubbed AND the real commit detected.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t50
+HD_CMD='cat <<"END\"MSG"
+note; git -C '"$DECOY"' commit fixed the build
+END"MSG
+git commit -m t50'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "escaped-quote delimiter resolved — body scrubbed, real commit still reviewed (denies)" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "real repo reviewed (not the decoy, not skipped)" $?
+
+echo "T51: '# <<EOF' right after a ')' operator is a comment, not a heredoc"
+# `case x in x)# <<EOF` — the # opens a comment at the token boundary after )
+# so the fake delimiter must NOT queue and eat the real commit line below.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t51
+FK_CMD="case x in x)# <<EOF
+esac
+git commit -m t51"
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "comment after ) ignored — the real commit below it is still reviewed (denies)" $?
+
+echo "T52: MIXED-quote delimiter <<E'OF' resolves to EOF (partial quote can't queue a short delim)"
+# <<E'OF' is the single word EOF. The old branch-per-form parser stopped at
+# the quote and queued E, then swallowed the real terminator + the git commit.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t52
+HD_CMD="cat <<E'OF'
+note; git -C $DECOY commit fixed the build
+EOF
+git commit -m t52"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "mixed-quote delimiter resolved to EOF — body scrubbed, real commit reviewed (denies)" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "real repo reviewed, not skipped past the real terminator" $?
+
+echo "T53: three-segment delimiter <<'E'O\"F\" also resolves to EOF"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t53
+HD_CMD='cat <<'\''E'\''O"F"
+note; git -C '"$DECOY"' commit fixed the build
+EOF
+git commit -m t53'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "single+unquoted+double segments resolved to EOF — body scrubbed, real commit reviewed (denies)" $?
+
+# ---- ROUND 9: full Bash quote-removal in the heredoc delimiter lexer -------
+# Each case below was a bypass before round 9: the pre-round-9 lexer treated
+# `#`/backtick as word boundaries and had no $'...' / $"..." / literal-$ /
+# empty-delimiter / cross-line-quote handling, so a crafted delimiter queued a
+# WRONG (or no) heredoc, letting the body's injected `git -C $DECOY commit`
+# hijack the target (silent allow on the clean decoy) or the fake operator eat
+# the real commit line. A deny with "round 1 of cap 3" proves the REAL repo was
+# reviewed: body scrubbed, decoy ignored, real terminator resolved.
+
+echo "T54: mid-word '#' is a literal delimiter char (<<EOF#TAG terminates on EOF#TAG)"
+# Pre-fix: '#' was a word boundary, so the delimiter queued as EOF; the real
+# terminator EOF#TAG never matched, the body + real commit were eaten to EOF.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t54
+HD_CMD="cat <<EOF#TAG
+note; git -C $DECOY commit fixed the build
+EOF#TAG
+git commit -m t54"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "mid-word # kept — body scrubbed on EOF#TAG, real commit reviewed (denies)" $?
+grep -q "round 1 of cap 3" <<<"$(reason "$OUT")"; check "T54 real repo reviewed, not the decoy" $?
+
+echo "T55: backtick is a literal delimiter char (<<\`X\` terminates on \`X\`)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t55
+HD_CMD='cat <<`X`
+note; git -C '"$DECOY"' commit fixed the build
+`X`
+git commit -m t55'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "backtick delimiter kept — body scrubbed, real commit reviewed (denies)" $?
+
+echo "T56: ANSI-C delimiter <<\$'EOF' resolves to EOF"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t56
+HD_CMD="cat <<\$'EOF'
+note; git -C $DECOY commit fixed the build
+EOF
+git commit -m t56"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "\$'EOF' resolved to EOF — body scrubbed, real commit reviewed (denies)" $?
+
+echo "T57: ANSI-C escape decode family — the delimiter's REAL bytes must match the terminator"
+# The body decoy is followed by the DECODED terminator (a real tab, an 'A' from
+# octal/hex, a UTF-8 é, or the literal bytes of an invalid escape). If the
+# decode is wrong the terminator never matches and the scrub over/under-runs.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+# T57a \t -> real tab
+bump_diff t57a
+HD_CMD=$(printf 'cat <<$\047E\\tF\047\ndecoy; git -C %s commit x\nE\tF\ngit commit -m t57a' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57a \\t decoded to a real tab — terminator matched, real commit reviewed" $?
+# T57b octal \101 -> A
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57b
+HD_CMD=$(printf 'cat <<$\047E\\101F\047\ndecoy; git -C %s commit x\nEAF\ngit commit -m t57b' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57b octal \\101 decoded to A — terminator EAF matched, real commit reviewed" $?
+# T57c hex \x41 -> A
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57c
+HD_CMD=$(printf 'cat <<$\047E\\x41F\047\ndecoy; git -C %s commit x\nEAF\ngit commit -m t57c' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57c hex \\x41 decoded to A — terminator EAF matched, real commit reviewed" $?
+# T57d control \cA -> byte 1 (control char); terminator is E<0x01>F
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57d
+HD_CMD=$(printf 'cat <<$\047E\\cAF\047\ndecoy; git -C %s commit x\nE\001F\ngit commit -m t57d' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57d control \\cA decoded to byte 1 — terminator matched, real commit reviewed" $?
+# T57d2 control on PUNCTUATION (\c[ -> byte 27, the full-range mask, not just letters)
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57d2
+HD_CMD=$(printf 'cat <<$\047E\\c[F\047\ndecoy; git -C %s commit x\nE\033F\ngit commit -m t57d2' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57d2 control \\c[ decoded to byte 27 (punctuation range) — terminator matched, real commit reviewed" $?
+# T57d3 \c? is the special case -> DEL (byte 127), not the plain mask
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57d3
+HD_CMD=$(printf 'cat <<$\047E\\c?F\047\ndecoy; git -C %s commit x\nE\177F\ngit commit -m t57d3' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57d3 control \\c? decoded to DEL (127) — terminator matched, real commit reviewed" $?
+# T57e unicode é -> UTF-8 c3 a9; terminator is <é>EOF
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57e
+HD_CMD=$(printf 'cat <<$\047\\u00e9EOF\047\ndecoy; git -C %s commit x\n\xc3\xa9EOF\ngit commit -m t57e' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57e \\u00e9 decoded to UTF-8 (c3 a9) — terminator matched, real commit reviewed" $?
+# T57f invalid escape \q kept literal as backslash-q; terminator is E\qF
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57f
+HD_CMD=$(printf 'cat <<$\047E\\qF\047\ndecoy; git -C %s commit x\nE\\qF\ngit commit -m t57f' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57f invalid \\q kept literal — terminator E\\qF matched, real commit reviewed" $?
+# T57g NUL TRUNCATES the $'...' string (bash: $'AB\x00CD' -> "AB"). A decoded
+# NUL from hex/octal/\c@ must end the delimiter there, not emit a literal 0 byte
+# that misses bash's real (truncated) terminator and swallows the later commit.
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57g1
+HD_CMD=$(printf 'cat <<$\047E\\c@F\047\ndecoy; git -C %s commit x\nE\ngit commit -m t57g1' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57g1 \\c@ NUL truncates <<\$'E\\c@F' to E — decoy scrubbed, real commit reviewed" $?
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57g2
+HD_CMD=$(printf 'cat <<$\047A\\x00B\047\ndecoy; git -C %s commit x\nA\ngit commit -m t57g2' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57g2 \\x00 NUL truncates <<\$'A\\x00B' to A — decoy scrubbed, real commit reviewed" $?
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57g3
+HD_CMD=$(printf 'cat <<$\047X\\000Y\047\ndecoy; git -C %s commit x\nX\ngit commit -m t57g3' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57g3 \\000 NUL truncates <<\$'X\\000Y' to X — decoy scrubbed, real commit reviewed" $?
+# T57h incomplete hex (\x with no hex digit) is kept LITERAL by bash:
+# $'E\xZF' -> "E\xZF" (Z is not a hex digit). Terminator carries the literal
+# backslash-x-Z-F, so the delimiter must not decode or drop it.
+new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57h
+HD_CMD=$(printf 'cat <<$\047E\\xZF\047\ndecoy; git -C %s commit x\nE\\xZF\ngit commit -m t57h' "$DECOY")
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "T57h incomplete hex \\xZF kept literal — terminator E\\xZF matched, real commit reviewed" $?
+
+# T57-mawk: the ANSI-C decoder must emit identical bytes under mawk — the
+# hook's fallback documents mawk as supported, and mawk parses hex numeric
+# literals as 0 (the round-9 utf8/ORD tables use DECIMAL to survive it). Run
+# the byte-sensitive cases with `awk` shadowed by mawk on PATH; SKIP loudly if
+# mawk is not installed rather than pass silently.
+if command -v mawk >/dev/null 2>&1; then
+    MAWKBIN="$TDIR/mawkbin"; mkdir -p "$MAWKBIN"; ln -sf "$(command -v mawk)" "$MAWKBIN/awk"
+    # \x41 -> A
+    new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57m1
+    HD_CMD=$(printf 'cat <<$\047E\\x41F\047\ndecoy; git -C %s commit x\nEAF\ngit commit -m t57m1' "$DECOY")
+    OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$MAWKBIN:$PATH" bash "$GATE")
+    is_deny "$OUT"; check "T57-mawk hex \\x41 -> A under mawk — terminator matched, real commit reviewed" $?
+    # é -> UTF-8 c3 a9 (the exact case where hex literals would zero out on mawk)
+    new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57m2
+    HD_CMD=$(printf 'cat <<$\047\\u00e9EOF\047\ndecoy; git -C %s commit x\n\xc3\xa9EOF\ngit commit -m t57m2' "$DECOY")
+    OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$MAWKBIN:$PATH" bash "$GATE")
+    is_deny "$OUT"; check "T57-mawk \\u00e9 -> UTF-8 (c3 a9) under mawk — terminator matched, real commit reviewed" $?
+    # \c[ -> byte 27 under mawk (ORD table, full range)
+    new_head; printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"; bump_diff t57m3
+    HD_CMD=$(printf 'cat <<$\047E\\c[F\047\ndecoy; git -C %s commit x\nE\033F\ngit commit -m t57m3' "$DECOY")
+    OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$MAWKBIN:$PATH" bash "$GATE")
+    is_deny "$OUT"; check "T57-mawk control \\c[ -> byte 27 under mawk — terminator matched, real commit reviewed" $?
+else
+    echo "  SKIP  T57-mawk: mawk not installed (decode-family mawk parity not exercised)"
+fi
+
+echo "T58: double-quote \$ escape (<<\"END\\\$MSG\") resolves to END\$MSG"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t58
+HD_CMD='cat <<"END\$MSG"
+note; git -C '"$DECOY"' commit fixed the build
+END$MSG
+git commit -m t58'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "\\\$ removed in \"...\" delimiter — terminator END\$MSG matched, real commit reviewed" $?
+
+echo "T59: locale double-quote <<\$\"EOF\" resolves to EOF"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t59
+HD_CMD='cat <<$"EOF"
+note; git -C '"$DECOY"' commit fixed the build
+EOF
+git commit -m t59'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "\$\"EOF\" treated as double-quote segment — real commit reviewed (denies)" $?
+
+echo "T60: bare \$ is a literal delimiter char (<<E\$F terminates on E\$F)"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t60
+HD_CMD='cat <<E$F
+note; git -C '"$DECOY"' commit fixed the build
+E$F
+git commit -m t60'
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "literal \$ kept — terminator E\$F matched, real commit reviewed (denies)" $?
+
+echo "T61: a fake <<EOF INSIDE a \$'...' string queues nothing (\\' does not close it)"
+# echo $'a\'b <<EOF c' is ONE ANSI-C string (a'b <<EOF c); the <<EOF is data,
+# not an operator, so it must NOT queue a heredoc and eat the real commit line.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t61
+FK_CMD=$(printf 'echo $\047a\\\047b <<EOF c\047\ngit commit -m t61')
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "fake <<EOF inside \$'...' ignored — the real commit below it is reviewed (denies)" $?
+
+echo "T62: empty delimiter <<'' queues (terminator = first empty line) — body decoy scrubbed"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t62
+HD_CMD="cat <<''
+note; git -C $DECOY commit fixed the build
+
+git commit -m t62"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "empty delimiter queued — body decoy scrubbed to the blank line, real commit reviewed (denies)" $?
+
+echo "T63: a fake <<EOF on a later line of a MULTI-LINE \"...\" string queues nothing"
+# The double-quoted string opens on line 1 and stays open across newlines; the
+# <<EOF on line 2 is inside it. Pre-fix the per-line state reset treated line 2
+# as unquoted and queued a bogus heredoc that ate the real commit after the
+# closing quote. Quote state must carry across newlines.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t63
+FK_CMD='echo "opening
+<<EOF still inside the string
+closing" ; git commit -m t63'
+OUT=$(jq -cn --arg cmd "$FK_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "multi-line quoted <<EOF ignored — real commit after the closing quote reviewed (denies)" $?
+
+echo "T64: awk-failure WITH a heredoc fails CLOSED (deny), never reviews unsanitized text"
+# If the scrub pass (awk) cannot run, a heredoc body could smuggle a decoy
+# commit past the scrub. There is no safe fallback, so the gate must DENY
+# loudly (mirroring the jq-missing path) rather than review the raw command.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t64
+FAILAWK="$TDIR/failbin"
+mkdir -p "$FAILAWK"
+printf '#!/bin/sh\nexit 3\n' > "$FAILAWK/awk"   # awk always fails
+chmod +x "$FAILAWK/awk"
+HD_CMD="git commit -F - <<'EOF'
+a message
+EOF"
+OUT=$(jq -cn --arg cmd "$HD_CMD" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$FAILAWK:$PATH" bash "$GATE")
+is_deny "$OUT"; check "awk-fail + heredoc denies (fail-closed)" $?
+grep -qi "scrub pass (awk) failed" <<<"$(reason "$OUT")"; check "T64 deny reason names the awk-sanitize failure" $?
+# and awk-failure WITHOUT a heredoc keeps the raw-CMD fallback (still reviews)
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t64b
+OUT=$(jq -cn --arg cmd "git commit -m plain" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$FAILAWK:$PATH" bash "$GATE")
+is_deny "$OUT"; check "T64b awk-fail without heredoc still reviews (raw-CMD fallback, denies on material)" $?
+
+# ============================ ADR-022 (0.14.0) ==============================
+# Default (quality-gate) mode: marginal findings ([hardening]/[edge]/
+# [theoretical]) never block — allow in ROUND 1 with an "Optional Security
+# Review (non-blocking)" section; realistic-impact findings still block.
+# CODERV_GATE_SECURITY=1 is the deep-review opt-in that makes [hardening] block.
+unset CODERV_GATE_SECURITY
+
+HARDENING_REVIEW='1. [BUG][hardening] app.sh:1 — exotic shell-grammar corner can defeat the scrubber; no reachable high-impact path.'
+MIXED_MARGINAL_REVIEW='1. [BUG][hardening] app.sh:1 — parser corner, no reachable impact.
+2. [BUG][edge] app.sh:2 — bounded recoverable oddity on weird input.
+3. [BUG][theoretical] app.sh:3 — proven unreachable.'
+MIXED_MAT_HARD_REVIEW='1. [BUG][correctness] app.sh:1 — wrong result on valid input. Fix: X.
+2. [BUG][hardening] app.sh:2 — exotic parser corner, no reachable impact.'
+
+echo "T65: default mode — [hardening]-only review ALLOWS in ROUND 1 with an Optional Security Review section"
+new_head
+printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
+bump_diff t65; OUT=$(run_gate)
+is_allow "$OUT"; check "hardening-only allows in round 1 (not deny, not cap-dependent)" $?
+grep -q "Optional Security Review" <<<"$(ctx "$OUT")"; check "context carries the labeled Optional Security Review section" $?
+grep -q "quality gate PASSED" <<<"$(sysmsg "$OUT")"; check "systemMessage names the quality-gate pass" $?
+grep -q "shell-grammar corner" <<<"$(ctx "$OUT")"; check "finding surfaced verbatim, not dropped" $?
+grep -q '"optional_review":true' "$HOME/.claude/coderlap/loop-events.jsonl"; check "optional_review outcome logged" $?
+# an optional-notes pass writes NO cache marker: the identical retry
+# RE-REVIEWS and re-surfaces the findings verbatim (a count-only cached caveat
+# could never satisfy the transparency rule in a fresh session).
+OUT=$(run_gate)
+is_allow "$OUT"; check "identical retry of an optional-notes pass allows (via re-review)" $?
+grep -q "shell-grammar corner" <<<"$(ctx "$OUT")"; check "retry re-surfaces the original finding text verbatim" $?
+
+echo "T66: default mode — an all-marginal mix (hardening+edge+theoretical) also allows in round 1"
+new_head
+printf '%s\n' "$MIXED_MARGINAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t66; OUT=$(run_gate)
+is_allow "$OUT"; check "edge/theoretical join hardening in the round-1 allow" $?
+grep -q "Optional Security Review" <<<"$(ctx "$OUT")"; check "mixed marginal findings listed in the Optional section" $?
+
+echo "T67: default mode — a realistic [security] finding still BLOCKS"
+new_head
+printf '%s\n' "$SECURITY_REVIEW" > "$REVIEW_FILE"
+bump_diff t67; OUT=$(run_gate)
+is_deny "$OUT"; check "[security] denies in default mode" $?
+
+echo "T68: default mode — a [correctness] finding still BLOCKS"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t68; OUT=$(run_gate)
+is_deny "$OUT"; check "[correctness] denies in default mode" $?
+
+echo "T69: CODERV_GATE_SECURITY=1 — the same [hardening] finding BLOCKS (deep-review opt-in)"
+new_head
+printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
+bump_diff t69
+OUT=$(CODERV_GATE_SECURITY=1 run_gate)
+is_deny "$OUT"; check "security mode makes [hardening] material (round-1 deny)" $?
+
+echo "T70: default mode — mixed [correctness]+[hardening] blocks on the material one, hardening routed to Optional"
+new_head
+printf '%s\n' "$MIXED_MAT_HARD_REVIEW" > "$REVIEW_FILE"
+bump_diff t70; OUT=$(run_gate)
+is_deny "$OUT"; check "mixed review denies (the correctness finding blocks)" $?
+grep -q "Optional Security Review (non-blocking)" <<<"$(reason "$OUT")"; check "deny reason carries the Optional Security Review section" $?
+# the marginal finding must be LISTED VERBATIM inside the section, not merely
+# counted — the owner must never re-parse severity tags to see what blocks.
+sed -n '/Optional Security Review (non-blocking)/,$p' <<<"$(reason "$OUT")" \
+  | grep -q "exotic parser corner"; check "the hardening finding text is re-listed under the Optional section" $?
+grep -q "material" <<<"$(reason "$OUT")"; check "deny reason names the material-only scope of the block" $?
+
+echo "T72: the review MODE is part of the cache identity — a default-mode optional allow never satisfies a --security rerun"
+new_head
+printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
+bump_diff t72
+OUT=$(run_gate)
+is_allow "$OUT"; check "default-mode pass allows with optional notes" $?
+# identical diff, mode flipped: must get a FRESH review (mode is in the hash),
+# where [hardening] is material -> deny. Riding any default-mode verdict here
+# would silently skip the deep review the owner explicitly asked for.
+OUT=$(CODERV_GATE_SECURITY=1 run_gate)
+is_deny "$OUT"; check "identical diff under CODERV_GATE_SECURITY=1 re-reviews and DENIES (no marker ride)" $?
+
+echo "T73: the --security flag also rides the COMMAND STRING (PreToolUse hooks don't inherit a command env-prefix)"
+new_head
+printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
+bump_diff t73
+# env NOT set — only the command string carries the assignment, exactly what
+# the /ship --security commit form produces. The gate must still run the deep
+# review ([hardening] material -> deny) and NAME the mode in the outcome.
+OUT=$(jq -cn --arg cmd "CODERV_GATE_SECURITY=1 git commit -m t" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' | bash "$GATE")
+is_deny "$OUT"; check "env-prefix in the command string flips the gate to security mode ([hardening] denies)" $?
+grep -q "deep-security mode" <<<"$(reason "$OUT")"; check "deny reason names the deep-security mode (downgrade visibility)" $?
+
+echo "T71: reviewer prompt flips by mode — quality-gate brief by default, adversarial brief on opt-in"
+new_head
+printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
+bump_diff t71
+CAPD="$TDIR/cap-adr022-default"
+run_gate_capture "$CAPD" >/dev/null
+grep -q "ENGINEERING QUALITY GATE" "$CAPD/prompt"; check "default prompt carries the quality-gate brief" $?
+grep -q "Optional Security Review" "$CAPD/prompt"; check "default prompt routes exotic findings to the Optional section" $?
+new_head
+bump_diff t71b
+CAPS="$TDIR/cap-adr022-security"
+mkdir -p "$CAPS"
+jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
+    '{tool_input:{command:$cmd}, cwd:$cwd}' \
+  | CAPTURE_DIR="$CAPS" CODERV_GATE_SECURITY=1 bash "$GATE" >/dev/null
+grep -q "DEEP SECURITY REVIEW" "$CAPS/prompt"; check "opt-in prompt carries the adversarial deep-review brief" $?
 
 echo
 echo "$PASS passed, $FAIL failed"

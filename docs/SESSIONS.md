@@ -4,6 +4,354 @@
 
 ---
 
+## 2026-07-22 (later 5) — PIVOT: kill the trickle via a SEVERITY-POLICY redesign (ADR-022), NOT more lexer work. Plan CONVERGED (Codex LGTM r2). Context gate hit BEFORE implementation — fresh session builds it.
+
+**★ START HERE — the plan is done and Codex-approved; nothing is implemented yet.
+The round-9 lexer work from later-4 is STILL UNCOMMITTED in the tree but is NO
+LONGER the thing to ship. The owner reframed the whole problem. Read this, then
+implement the approved spec. ★**
+
+**WHY THE PIVOT (owner's decision — this is the real fix):** the round-8/9 lexer
+trickle (one bash-quoting edge per review round, endless) was never a lexer bug —
+it was a SEVERITY-POLICY bug. Exotic shell-grammar findings get tagged `[security]`,
+and `[security]` can never be marginal, so they block forever. The gate was
+"behaving like a penetration tester on every commit." Owner's directive, verbatim
+intent: *"redesign the review policy — converge in a SINGLE round for normal dev;
+block realistic correctness/regression/data-loss/high-confidence bugs; do NOT
+recursively harden against exotic/theoretical/low-frequency attack scenarios;
+route deep-hardening findings to an 'Optional Security Review' section instead of
+blocking; reserve adversarial/fuzzing/parser-hardening for an explicit opt-in
+(`/ship --security`)."*
+
+**OWNER DECISIONS (both locked):**
+1. **Scope = POLICY ONLY.** Leave the shell lexer in the tree as-is (it works,
+   214/214). Do NOT delete it, do NOT do cwd-only target resolution — that
+   direction was explored earlier this session and DE-SCOPED (it just relocated
+   the trickle to redirect-vector enumeration: `-C` → `--git-dir` → ambient
+   `GIT_DIR` → `-c core.worktree` → `GIT_CONFIG_*`… same infinite-surface trap).
+2. **Block line = realistic-impact blocks; exotic → Optional.** Realistic
+   high-impact security (real auth bypass / injection reachable by a credible
+   attacker) still BLOCKS. Exotic/no-reachable-impact weakness → Optional Security
+   Review (allow-with-note).
+
+**THE APPROVED SPEC IS THE GROUND TRUTH:**
+`~/.claude/coderlap/specs/-root-claude-docs-toolkit.md` (Base `d8ea45f`, CONVERGED,
+Codex LGTM round 2). Implement THAT. Summary of what it says:
+- **SEVERITY_RULES** (`hooks/codex-review-gate.sh` ~L1168): add a new MARGINAL tag
+  `[hardening]` = security-relevant weakness with NO credible reachable high-impact
+  path (the shell-grammar-corner-in-a-self-authored-commit-message class).
+  Classification hinges on **REACHABILITY + IMPACT, NOT craftedness** (Codex
+  finding: real injection IS crafted and must still block; `[hardening]` is
+  FORBIDDEN when a realistic attacker can reach the path). ALL marginal tags
+  (`[edge]`/`[theoretical]`/`[hardening]`) are **subordinate to impact** — a
+  rare-but-reachable high-impact bug MUST be MATERIAL (Codex finding 2).
+- **Reviewer prompt** (BOTH branches, ~L1196+): default = ENGINEERING QUALITY GATE
+  brief (one exhaustive pass, prioritize correctness/regression/data-loss/logic,
+  route exotic to `[hardening]`/Optional, do NOT recursively harden).
+- **Opt-in:** `CODERV_GATE_SECURITY=1` flips to the full adversarial brief AND
+  makes `[hardening]` MATERIAL (blocks). `/ship` gets a `--security` flag that
+  exports it. Default = quality-gate mode.
+- **One-round convergence:** in default mode, marginal-only findings ALLOW-with-
+  caveat in ROUND 1 (not cap-gated), listed under a labeled "Optional Security
+  Review (non-blocking)" section (transparency preserved — surfaced, not dropped).
+  Realistic `[security]`/`[data-loss]`/`[correctness]` still blocks.
+- **Tests** (`tests/gate-cap.sh`): (a) hardening-only ALLOWS r1 + Optional section;
+  (b) realistic `[security]` BLOCKS; (c) `[correctness]` BLOCKS; (d)
+  `CODERV_GATE_SECURITY=1` makes `[hardening]` BLOCK; (e) mixed correctness+hardening
+  blocks on correctness, lists hardening in Optional. T1-T15b + lexer tests still pass.
+- **Docs:** ADR-022 (the policy split; supersedes the abandoned cwd-only direction);
+  close the round-8/9 lexer saga in KNOWN-ISSUES pointing at ADR-022; VERSION →
+  **0.14.0** (behavior change); CHANGELOG [0.14.0].
+- Deploy hook atomically (temp → `bash -n` → chmod → `mv -f` → `diff -q`); commit
+  via `/ship` in DEFAULT mode — it MUST converge in ONE round (that IS the proof).
+
+**RAW STATE at close (verbatim):**
+```
+$ git status --short
+MM CHANGELOG.md
+M  VERSION
+M  docs/KNOWN-ISSUES.md
+MM docs/SESSIONS.md
+MM hooks/codex-review-gate.sh
+MM tests/gate-cap.sh
+
+$ git log --oneline -3
+d8ea45f Ban hand-run codex exec — the gate is the only sanctioned review loop (ADR-021)
+1352a5b Give the commit gate memory + project context + a convergence ceiling (ADR-019)
+61b0cd2 Move the Claude/Codex argument into a /ship pre-commit loop (ADR-018)
+
+$ cat VERSION
+0.13.1                          # spec bumps this to 0.14.0
+
+$ diff -q hooks/codex-review-gate.sh ~/.claude/hooks/codex-review-gate.sh
+Files ... differ                # DEPLOYED HOOK != SOURCE. The deployed copy is a
+                                # MID-SESSION lexer build; source moved after. Do
+                                # NOT trust either as final — the ADR-022 build
+                                # will rewrite the source, then redeploy fresh.
+
+$ bash tests/gate-cap.sh   →  214 passed, 0 failed
+```
+
+**IMPORTANT nuance for the implementer — the working tree is a MIX:**
+- The uncommitted changes contain the later-4 ROUND-9 LEXER WORK (ANSI-C decoder,
+  NUL truncation, T54-T64/T57g/h) PLUS partial ADR-022 doc edits I made before the
+  pivot (CHANGELOG/SESSIONS still mention 0.13.1 + 213/214 lexer framing). The
+  ADR-022 build must OVERWRITE those docs to the 0.14.0 policy framing. The lexer
+  code itself STAYS (owner de-scoped its deletion) — it's just non-blocking now.
+- The tree is stacked on `d8ea45f`. Do NOT `git reset` — the lexer work is kept.
+
+**DEAD ENDS this session (do not repeat):**
+- cwd-only target resolution / deleting the lexer → relocated the trickle to
+  redirect-vector enumeration (Codex found 5 classes in 5 rounds). ABANDONED.
+- Perfecting the lexer round-by-round → the KI-002 loop. The POLICY fix is what
+  ends it: exotic findings simply stop blocking.
+
+**Also still true from later-4:** the deployed hook + 0.13.1 changelog are the
+lexer approach; ADR-022 supersedes the framing (not the code). `./release.sh` is
+the owner's call AFTER the commit lands.
+
+---
+
+## 2026-07-22 (later 4) — ROUND 9 done: heredoc delimiter lexer spec-completed, 213/213, verified end-to-end, hook DEPLOYED — shipping now
+
+**What this session did:** the owner chose "fix round 9 first" (over override) —
+spec-complete the heredoc delimiter lexer in ONE capped pass. Done:
+
+- **`hooks/codex-review-gate.sh` — full Bash quote-removal in the delimiter
+  lexer.** `#`/backtick are literal delimiter chars once the word begins
+  (`<<EOF#TAG`, ``<<`X` ``); `#` at word start is a comment (no heredoc);
+  `$'...'` ANSI-C decode with the full escape set (octal/hex/`\cX` over the whole
+  ASCII range incl. `\c?`→DEL/`\u`→UTF-8/invalid-kept-literal); `$"..."` locale
+  quote; literal `$`; `\$`/`` \` `` removed in `"..."`; empty `<<''` queues. Main
+  scanner now tracks `$'...'` state and carries quote state **across newlines**
+  (a fake `<<EOF` inside a multi-line string queues nothing). Scrub awk runs
+  under `LC_ALL=C` with **decimal** numeric literals so gawk and mawk agree.
+- **awk-fail fail-closed:** heredoc present + scrub can't run → DENY loudly (no
+  raw-CMD review). No heredoc → raw-CMD fallback preserved.
+- **`tests/gate-cap.sh` — T54–T64 (+ control-punctuation + mawk-parity), all
+  red-first. Suite: 213 passed, 0 failed** (was 186).
+- **Verified end-to-end** (not just tests): drove the real gate with a mid-word-`#`
+  hijack and a `<<$'EOF'` hijack — both reviewed the REAL backdoor repo, not the
+  clean decoy (`deny, round 1`); awk-fail+heredoc denied fail-closed. Deployed
+  hook is byte-identical to source (`diff -q` clean).
+
+**Two extra correctness bugs the review surfaced and I fixed in the same pass**
+(both would have shipped otherwise): `utf8()` used hex literals mawk parses as 0;
+`\cX` only mapped letters (punctuation like `\c[` decoded wrong). Both regression-
+locked.
+
+**Owner's standing decision:** round 9 was the ONE scoped completion. If the gate
+finds a *genuinely new class* beyond this pass, the owner overrides — no round 10.
+
+**Landing now via `/ship`** (VERSION 0.13.1 already set; CHANGELOG [0.13.1]
+updated to 213 checks + the round-9 lexer + fail-closed notes). After it lands:
+`./release.sh` (tags v0.13.1, pushes, syncs website) is the owner's call.
+
+---
+
+## 2026-07-22 (later 3) — 0.13.1 built + tested (186/186) + hook DEPLOYED, but BLOCKED at the gate ceiling; needs OWNER override to land
+
+> **SUPERSEDED by later-4 above:** round 9 was fixed rather than overridden; the
+> 186/186 + owner-override state below is historical. Suite is now 213/213.
+
+
+**★ START HERE next session: everything is done and the fixed hook is LIVE on the
+server (186/186). The ONLY thing left is to land the commit, which the gate is
+blocking at its round-8 security ceiling. The commit CANNOT be landed by the
+agent — the gate rejects `CODERV_GATE_OWNER_OVERRIDE=1` when the agent sets it
+(verified this session). The OWNER must run the override, OR the residual finding
+must be fixed. ★**
+
+**THE OWNER-OVERRIDE COMMAND (owner runs this — leading `! ` in the prompt, or a
+terminal). This is the recommended path; the core fix is proven and the residue
+is exotic parser edge-cases:**
+```
+cd /root/claude-docs-toolkit && CODERV_GATE_OWNER_OVERRIDE=1 git commit -F- <<'MSG'
+Close the commit-gate review-target hijack family (0.13.1)
+
+A commit message quoting "; git -C <dir> commit ..." could redirect the gate's
+review to a clean decoy repo (empty diff, silent allow) while the real diff
+committed unreviewed. Fixed GITC_RE to match the scrubbed command like GIT_RE,
+then closed the vectors the review rounds found on top: heredoc message bodies
+(delimiter parsed as one shell word across quoted/unquoted/escaped segments),
+escaped-quote message spill, the QUOTED-sentinel collisions the first fix
+introduced, and fake heredoc operators hidden in quotes or comments. Suite
+163 -> 186 checks (T37-T53), every attack case proven to fail against its
+pre-fix gate.
+
+Also: ADR-021 ban added to the global CLAUDE.md, KI-003 logged, and the ADR-021
+changelog bullet moved out of the already-tagged 0.13.0 entry.
+MSG
+```
+**After it lands:** run `./release.sh` (tags v0.13.1, pushes, syncs website site.ts,
+prints `gh release create`). Owner's call to run it.
+
+**WHY IT'S BLOCKED — the review-loop story (this is NOT a broken commit):**
+The `/ship` + commit-gate review ran the gate against ITS OWN fix and, round after
+round, kept finding real-but-exotic ways to sneak a fake heredoc operator past the
+command-scrubber: trajectory `1->2->1->1->1->1->1->1` over 8 rounds. Each finding
+was genuine and each was fixed + regression-locked (T37-T53), but the tail is
+unbounded — it's the cost of hand-rolling a shell quote-removal lexer in awk. The
+LAST open finding (round 8, `hooks/codex-review-gate.sh:269`) asks to also handle
+`$'...'` ANSI-C quoting, `#` mid-word, backtick segments, and `\$`/backtick
+double-quote escapes. **This is the KI-002 loop the ceiling exists to stop.** The
+agent CORRECTLY refused to fix-and-recommit a 9th time and escalated to the owner.
+The CORE bug you were sent to fix (a commit MESSAGE redirecting the review via
+GITC_RE matching raw `$CMD`) IS fixed and proven; the residue is a defense-in-depth
+scanner layered on top, and the CHANGELOG scope-note already says the scrub is "a
+guardrail against accidental/casual redirection, not a sandbox against a determined
+adversarial shell author."
+
+**DECISION FOR THE OWNER (pick one):**
+1. **Override + ship (recommended)** — run the command above. Proven core, exotic
+   residue, honest scope note. Then `./release.sh`.
+2. **Fix round 9 first** — implement Bash quote-removal for the whole delimiter word
+   (`$'...'`, `#`-once-word-begun, backtick segs, full `"..."` escape set) + T54+
+   regressions. Real work, may not terminate in one round. Not recommended as an
+   endless chase; DO it only as a scoped "make the delimiter lexer spec-complete
+   ONCE, then override if the gate still finds a new class" — cap it yourself.
+3. **Park** — leave staged (this state). Nothing lost.
+
+**RAW STATE at close (verbatim):**
+```
+$ git status --short
+ M CHANGELOG.md
+ M VERSION
+ M docs/KNOWN-ISSUES.md
+ M docs/SESSIONS.md
+ M hooks/codex-review-gate.sh
+ M tests/gate-cap.sh
+
+$ git log --oneline -3
+d8ea45f Ban hand-run codex exec — the gate is the only sanctioned review loop (ADR-021)
+1352a5b Give the commit gate memory + project context + a convergence ceiling (ADR-019)
+61b0cd2 Move the Claude/Codex argument into a /ship pre-commit loop (ADR-018)
+
+$ cat VERSION
+0.13.1
+
+$ diff -q hooks/codex-review-gate.sh ~/.claude/hooks/codex-review-gate.sh
+(no output — IN-SYNC; the FIXED hook is already deployed locally)
+
+tests/gate-cap.sh  →  186 passed, 0 failed   (was 163; +23 checks, cases T37-T53)
+```
+
+**What was done (all UNCOMMITTED, stacked on d8ea45f):**
+1. **Security fix** `hooks/codex-review-gate.sh` — closed a FAMILY of review-target
+   hijacks (a commit message steering the gate at a clean decoy repo → silent
+   allow while the real diff commits unreviewed). The vectors, found round-by-round
+   by the toolkit's OWN two-brain review (Codex + fresh-context audit) over 8
+   rounds, each verified end-to-end then regression-locked (T37-T53):
+   - `-m "..."` message injection → `GITC_RE` now matches `$SCRUBBED` not raw `$CMD`
+     (**this is the CORE fix — the actual reported bug**; was the ONLY vector the
+     prior session knew).
+   - Heredoc body injection (`git commit -F- <<'EOF'`) → heredoc bodies scrubbed by
+     an awk pass with a shell-word delimiter lexer (queued/multi-heredoc; delimiter
+     parsed across quoted/unquoted/escaped segments — `END-MSG`, `<<'END@MSG'`,
+     `<<"END\"MSG"`, `<<E'OF'`, `<<'E'O"F"`; quote/comment-aware incl. `true;# <<EOF`
+     and `case x in x)# <<EOF`; awk-missing falls back to raw `$CMD`).
+   - Escaped-quote spill (`\"` inside `"..."`) → quote scrub is now escape-aware.
+   - `QUOTED`-sentinel collision (introduced by the first fix!) → a `-C` value that
+     is exactly `QUOTED`/`QUOTED/...` is discarded; a real path *containing* the
+     word (`/srv/QUOTED-project`) is kept (no over-discard).
+   Honest scope note (in CHANGELOG): the scrub is regex/line-based, a guardrail
+   vs accidental+casual redirection, NOT a sandbox vs an adversarial shell author.
+2. **tests/gate-cap.sh** — +23 cases T37-T53, EACH attack case proven RED against
+   its pre-fix gate before the fix landed.
+3. **Approved fix #1** — global `~/.claude/CLAUDE.md` gained the ADR-021 hand-run
+   `codex exec` ban (owner-local file, NOT in this repo diff).
+4. **Approved fix #2** — `docs/KNOWN-ISSUES.md` KI-003 (prose-only cap in /ship 4.5
+   + /before 5.6; real fix deferred to its own /before).
+5. **VERSION 0.13.0→0.13.1** + CHANGELOG `[0.13.1]`. `v0.13.0` was ALREADY tagged
+   (`1352a5b`) — prior handoff's "unreleased" was STALE — so the ADR-021 bullet was
+   MOVED into `[0.13.1]` and `[0.13.0]` restored to its tagged content (byte-verified),
+   date corrected 2026-07-22→2026-07-21 to match the tag.
+
+**Spec (drift-hunter ground truth):** `~/.claude/coderlap/specs/-root-claude-docs-toolkit.md`
+— final 186-check shape; Base `d8ea45f` is HEAD, armed.
+
+**THE OPEN ROUND-8 FINDING (what the override waives, or fix #2 above closes)** —
+`hooks/codex-review-gate.sh:269`: the heredoc delimiter lexer still doesn't do FULL
+Bash quote-removal — missing `$'...'` ANSI-C quoting, `#` treated as ordinary once
+a word has begun, backtick segments, and `\$`/backtick escapes inside `"..."`.
+Reachable ONLY by deliberately adversarial delimiters (`<<$'EOF'`, `<<EOF#MSG`,
+`<<"END\$MSG"`) — never by a real commit. If fixing (option 2), make the lexer
+spec-complete in ONE pass then override if a genuinely new class still appears;
+do NOT chase it round-by-round (that IS the KI-002 loop).
+
+**Was this the KI-002 loop? PARTLY — and that's the point.** The CORE message-inject
+fix converged fine. But the heredoc-operator-hiding sub-thread became a true
+KI-002-shaped trickle (8 rounds, one exotic parser edge each). The ceiling did its
+job: the agent refused to fix-and-recommit a 9th time and escalated to the owner
+rather than being the loop's off-switch. Landing = owner override (recommended) or
+a scoped, self-capped round-9 lexer completion.
+
+---
+
+## 2026-07-22 — ADR-021 hand-loop ban SHIPPED; found a gate review-BYPASS (unfixed); 2 approved fixes pending (context gate)
+
+**What shipped this session (committed, clean):**
+```
+d8ea45f Ban hand-run codex exec — the gate is the only sanctioned review loop (ADR-021)
+```
+Working tree is CLEAN (`git status --short` → empty). VERSION still `0.13.0`.
+
+**Origin of the session:** the user asked why a Claude↔Codex loop on alrafiq's
+career-floor regex ran R1→R5 without stopping. Root cause: the rounds were
+HAND-RUN `codex exec` calls OUTSIDE the gate — so no ledger, no round counter, no
+cap (the gate logged only `"round":1`). The anti-loop machinery all lives INSIDE
+codex-review-gate.sh and only counts gate rounds. Fix = ban hand-run codex exec
+(ADR-021, shipped). ADR-020 was written as a REJECTED note (an uncommitted
+hook change tried to downgrade a pre-ceiling `deny`→`ask`, which breaks ADR-019's
+"never weaken a material block below the cap" invariant — reverted).
+
+**★ NEW UNFIXED BUG — gate review BYPASS (security). START HERE next session. ★**
+`hooks/codex-review-gate.sh:229` — the `-C <dir>` extraction (`GITC_RE`) matches
+against the RAW `$CMD`; the DETECTION regex (`GIT_RE`, line 216) matches against
+the quote-SCRUBBED `$SCRUBBED`. So a `-C` inside a commit MESSAGE hijacks the
+review target repo. VERIFIED end-to-end: a commit whose message contains
+`; git -C <any-clean-repo> commit` makes the gate review the clean decoy repo
+(empty diff → silent allow) while the REAL repo's diff (an `eval()` backdoor in
+the repro) commits UNREVIEWED. Also fires ACCIDENTALLY — commit messages here
+routinely quote git commands.
+- **FIX (one line, verified):** change line 229 from `"$CMD" =~ $GITC_RE` to
+  `"$SCRUBBED" =~ $GITC_RE` — same as GIT_RE already does. Verified: kills the
+  bypass; legit unquoted `git -C /dir commit` still extracts; a quoted `-C "…"`
+  path safely degrades to the session cwd (same repo in practice).
+- The `cd` extraction (line 233) is anchored to string start (`^`) so a `cd`
+  inside a message can't match — SAFE, no change needed. Line 229 is the only
+  raw-`$CMD` regex that needed scrubbing.
+- **Add a regression test** to `tests/gate-cap.sh` (the message-`-C`-hijack case).
+
+**Two OWNER-APPROVED fixes still pending (not yet applied — context ran out):**
+1. **Gap 2** — add the hand-run-codex-exec ban to the GLOBAL `~/.claude/CLAUDE.md`
+   (grep shows `codex exec` count = 0 there). The ban currently lives only in the
+   toolkit's `two-brain-convergence.md` + `~/.codex/AGENTS.md`; a Claude session in
+   ANOTHER repo (e.g. alrafiq, where the loop happened) reads NEITHER. Global
+   CLAUDE.md is the one file every session loads. This closes the actual recurrence
+   path.
+2. **Gap 1 → KI-003** — ADR-019 claims /ship Step 4.5 and /before Step 5.6 "inherit"
+   the ledger+counter+cap, but they DON'T: grep of both SKILL.md files shows their
+   convergence loops call `codex exec` with NO machine round counter / ledger — the
+   "cap of 3" is PROSE only. This is the same failure class as the incident (a
+   capable agent ignoring a prose cap). The commit-time gate still bounds it, but
+   nothing machine-stops the pre-commit token burn. Log as KI-003; the real FIX
+   (wire the skills to the gate's rounds/ledger files) is a design change worth its
+   own /before, NOT a drive-by. (KNOWN-ISSUES.md currently has KI-001, KI-002.)
+
+**Recommended next-session order:** ground via /before → apply fix #3 (the bypass,
+line 229) + regression test → apply approved #1 (global CLAUDE.md) + #2 (KI-003) →
+commit through the gate (it'll now review itself correctly). Then bump VERSION +
+CHANGELOG for the security fix (0.13.0 is unreleased, per this repo's rule VERSION
+moves with CHANGELOG + tag via ./release.sh — never tag by hand).
+
+**Other open thread (not toolkit):** alrafiq `api/lib/career.ts` + the career-plan
+route are still UNCOMMITTED (`?? api/lib/career.ts`, `A api/.../career-plan/`) —
+the original regex work. It must ship THROUGH the gate (its first real counted
+review). Separate task; needs its own session.
+
+---
+
 ## 2026-07-21 (later 3) — ADR-018 SHIPPED; ADR-019 BUILT+VERIFIED+release-ready, staged, blocked only on the owner override (context gate)
 
 **THE ONE ACTION WAITING ON THE OWNER:** the entire ADR-019 change-set (7 files)

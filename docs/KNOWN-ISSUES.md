@@ -32,6 +32,89 @@ Rule / test / check that would catch this next time.
 
 ---
 
+## KI-004: the gate's security-severity policy made exotic findings block like real bugs — the round-8/9 lexer trickle
+
+**First seen:** 2026-07-22
+**Last seen:** 2026-07-22
+**Status:** CLOSED 2026-07-23 by ADR-022 (the [hardening]/Optional policy split)
+
+### Symptom
+Fixing the 0.13.1 review-target hijack spiralled into 8+ review rounds, each
+surfacing one more real-but-exotic shell-grammar corner (heredoc delimiter
+quoting, `$'...'` ANSI-C escapes, mid-word `#`, backtick segments, …). Every
+finding was tagged `[security]`, `[security]` can never be marginal, so each
+blocked the commit — the gate behaved like a penetration tester on every
+commit and the loop could not converge (trajectory `1->2->1->1->1->1->1->1`).
+
+### Root cause
+A SEVERITY-POLICY bug, not a lexer bug. The severity contract had no class for
+"security-relevant weakness with NO credible reachable high-impact path", so
+defense-in-depth gaps against adversarially-crafted pathological input (whose
+only 'attacker' is someone defeating a local guardrail in their own commit
+message) carried the same blocking weight as a reachable auth bypass. The
+surface of such exotica is infinite, so blocking on it can never converge —
+perfecting the lexer round-by-round (round 9, 213/213 checks) and relocating
+target resolution (cwd-only) were both tried and both just moved the trickle.
+
+### Fix
+ADR-022: the `[hardening]` marginal tag + the quality-gate default mode.
+Exotic no-reachable-impact findings route to a non-blocking "Optional Security
+Review" section and the commit allows in round 1; realistic-impact findings
+still block; `CODERV_GATE_SECURITY=1` (`/ship --security`) is the explicit
+deep-review opt-in where `[hardening]` blocks again. The round-9 lexer stays
+in-tree and active — it was correct work, it just no longer holds commits
+hostage.
+
+### Prevention
+Severity is classified by REACHABILITY + IMPACT, never craftedness or rarity
+(the governing rule is stated in the reviewer prompt and enforced by tests
+T65–T71). Any future "the gate keeps finding one more exotic corner" loop is
+a policy smell, not a fix-it-again task: check the finding's reachable impact
+before spending a round.
+
+### Related
+- ADR-022 (the fix), ADR-019 (the convergence machinery this rides on),
+  KI-002/KI-003 (sibling loop-class issues)
+
+---
+
+## KI-003: /ship Step 4.5 + /before Step 5.6 convergence loops have a PROSE-only cap
+
+**First seen:** 2026-07-22
+**Last seen:** 2026-07-22
+**Status:** open — real fix needs its own /before (a design change, not a drive-by)
+
+### Symptom
+ADR-019 claims `/ship` Step 4.5 and `/before` Step 5.6 "inherit" the gate's
+ledger + round counter + cap. They don't: both SKILL.md convergence loops call
+`codex exec` with no machine round counter and no ledger — their "cap of 3" is
+prose an agent is merely asked to obey.
+
+### Root cause
+The anti-loop machinery (rounds file, ledger, cap/ceiling enforcement) is
+implemented only inside `hooks/codex-review-gate.sh`. The skills describe the
+same discipline in words but share none of the state files, so nothing
+machine-stops a pre-commit loop that keeps finding one-more-thing. This is the
+same failure class as KI-002: a capable agent + a prose cap loses to the pull
+of "one more round". The commit-time gate still bounds the damage (the diff
+cannot land unreviewed), but nothing bounds the pre-commit token burn.
+
+### Fix
+Not yet applied. The real fix — wiring both skills to the gate's rounds/ledger
+files so skill-phase rounds are counted by the same machine state — is a design
+change worth its own `/before` session.
+
+### Prevention
+Until wired: treat the skills' round caps as hard personal limits (count rounds
+explicitly in the transcript, stop at 3). Mechanical-over-descriptive: any new
+convergence loop added anywhere must point at a machine counter, never a prose
+cap alone.
+
+### Related
+- KI-002 (same failure class, hand-run loop), ADR-021, ADR-019 (the machinery the skills don't actually share)
+
+---
+
 ## KI-002: hand-run `codex exec` reproduces the uncapped review loop the gate exists to prevent
 
 **First seen:** 2026-07-22
