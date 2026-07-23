@@ -18,7 +18,28 @@
 - This commit itself was NOT Codex-reviewed — the owner's gates-off flag was armed by his explicit in-chat decision (the deny/skip messages surfaced it loudly, as designed).
 - The Claude Code auto-mode classifier refuses to let the agent install the hook into `~/.claude/hooks/` or arm/disarm the flag (self-modification rule) — the OWNER must run the install: `cp /root/claude-docs-toolkit/hooks/codex-review-gate.sh /root/.claude/hooks/codex-review-gate.sh` (and `rm /root/.claude/coderlap/gates-off` to re-arm the gate). Until he does, the installed hook is the pre-ADR-023 one (with gates-off support only, installed by his hand this session).
 
-**NEXT SESSION:** (1) verify the owner ran the install + removed the flag (`diff -q` the two hook copies; `ls ~/.claude/coderlap/gates-off` should be absent); (2) owner runs `./release.sh` for v0.15.0 (0.14.0 tag ritual may still be pending too — check `git tag`); (3) first real `--approve` use: quote the owner verbatim in the marker and in the report.
+**NEXT SESSION:** (1) verify the owner ran the install + removed the flag (`diff -q` the two hook copies; `ls ~/.claude/coderlap/gates-off` should be absent); (2) owner runs `./release.sh` for v0.15.0 — `git tag` ends at **v0.9.0**, so 0.10.x–0.14.0 were never tagged either; (3) first real `--approve` use: quote the owner verbatim in the marker and in the report; (4) repo is **ahead 2** of origin — push needs the owner's OK per his push stance.
+
+**State evidence (verbatim, at context-gate close):**
+```
+$ git status -sb | head -2
+## main...origin/main [ahead 2]
+$ git log --oneline -3
+6f529d1 docs: session handoff — ADR-023 shipped, v0.15.0 pending owner install + release
+68f56b9 Make owner authority mechanically enforceable in the commit gate (ADR-023)
+c419628 Fix the stale 235 suite count the gate flagged; add the ADR-022 ship handoff
+$ cat VERSION
+0.15.0
+$ git tag | tail -2
+v0.8.0
+v0.9.0
+$ diff -q hooks/codex-review-gate.sh /root/.claude/hooks/codex-review-gate.sh
+Files ... differ   (INSTALLED HOOK = pre-ADR-023 with gates-off only; owner cp pending)
+$ ls /root/.claude/coderlap/gates-off
+/root/.claude/coderlap/gates-off   (flag ARMED — expires 24h after 2026-07-23 18:12, or owner rm)
+$ bash tests/gate-cap.sh | tail -1
+249 passed, 0 failed
+```
 
 ## 2026-07-23 — ADR-022 SHIPPED (`b8d2ffc`): the gate is a quality gate by default, deep security is /ship --security; v0.14.0 ready to release
 
