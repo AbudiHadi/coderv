@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-07-23 (later) — ADR-023 SHIPPED (`68f56b9`): owner authority is mechanical — per-diff `--approve` outranks every gate state; v0.15.0 ready to release
+
+**Why (live-fire failure on alrafiq):** a prior session hit the gate on an owner-approved test branch and dead-ended: the deny told the owner to re-run the commit with `CODERV_GATE_OWNER_OVERRIDE=1`, but the hook reads env FROZEN at session launch — a command prefix never reaches it, for agent or owner alike. The owner's requirement (verbatim in ADR-023): when he explicitly says "approved", the exact rejected diff must ship — no cap-waiting, no cache tricks, no terminal commands — while the gate stays armed for everything else.
+
+**What shipped (`68f56b9`, v0.15.0):**
+- `codex-review-gate.sh --approve <repo-dir> "<owner's words>"` records the approval keyed to the sha of repo@HEAD + the exact outgoing diff (shared `collect_outgoing_diff`/`approval_key` functions — review hash and approval key can never diverge). The review path checks the marker at TOP precedence (before round cache/cap/ceiling/security escalation, before any Codex call) → loud allow quoting the owner's words; single-use (consumed on pass); 24h sweep reaps unused markers. Every deny message now teaches this exit.
+- `~/.claude/coderlap/gates-off` flag = EMERGENCY off-switch only (24h TTL, loud per-skip) — explicitly secondary, owner rejected it as the primary design.
+- Tests T74–T75 (suite **249 checks, 0 failed**): deny names the exit, approval passes exactly once with the quote, marker consumed, stale approval never leaks onto a changed diff, fresh approval outranks a ceiling `[security]` escalation. Two legacy assertions updated to the new deny wording.
+- Docs: ADR-023 (rewritten around the owner's requirement), CHANGELOG [0.15.0], VERSION 0.15.0.
+
+**Honest disclosures:**
+- This commit itself was NOT Codex-reviewed — the owner's gates-off flag was armed by his explicit in-chat decision (the deny/skip messages surfaced it loudly, as designed).
+- The Claude Code auto-mode classifier refuses to let the agent install the hook into `~/.claude/hooks/` or arm/disarm the flag (self-modification rule) — the OWNER must run the install: `cp /root/claude-docs-toolkit/hooks/codex-review-gate.sh /root/.claude/hooks/codex-review-gate.sh` (and `rm /root/.claude/coderlap/gates-off` to re-arm the gate). Until he does, the installed hook is the pre-ADR-023 one (with gates-off support only, installed by his hand this session).
+
+**NEXT SESSION:** (1) verify the owner ran the install + removed the flag (`diff -q` the two hook copies; `ls ~/.claude/coderlap/gates-off` should be absent); (2) owner runs `./release.sh` for v0.15.0 (0.14.0 tag ritual may still be pending too — check `git tag`); (3) first real `--approve` use: quote the owner verbatim in the marker and in the report.
+
 ## 2026-07-23 — ADR-022 SHIPPED (`b8d2ffc`): the gate is a quality gate by default, deep security is /ship --security; v0.14.0 ready to release
 
 **What shipped (the later-5 plan, implemented + hardened + committed):**
