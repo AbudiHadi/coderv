@@ -327,7 +327,7 @@ for i in 1 2 3 4 5; do bump_diff "t13-$i"; OUT=$(run_gate); done
 is_deny "$OUT" && grep -q "ESCALATE TO THE OWNER" <<<"$(reason "$OUT")"; check "round 5 security -> CEILING escalation deny" $?
 OUT=$(run_gate)   # same diff, no bump, NO override
 is_deny "$OUT"; check "identical retry WITHOUT override stays denied" $?
-grep -q "CODERV_GATE_OWNER_OVERRIDE" <<<"$(reason "$OUT")"; check "deny names the owner-override signal" $?
+grep -q -- '--approve' <<<"$(reason "$OUT")"; check "deny names the owner --approve exit (ADR-023)" $?
 grep -q "escalation" <<<"$(sysmsg "$OUT")"; check "owner-visible systemMessage on the retry deny" $?
 OUT=$(CODERV_GATE_OWNER_OVERRIDE=1 run_gate)   # the owner's explicit call
 is_allow "$OUT"; check "owner override passes the identical retry" $?
@@ -770,7 +770,7 @@ is_allow "$OUT"; check "legacy below-CAP deny (round=1) retries -> ALLOW (escala
 printf 'denied round=3 material=1' > "$MKL"
 OUT=$(run_gate)
 is_deny "$OUT"; check "legacy at-CAP deny (round=3) -> DENIED (escalated inferred 1)" $?
-grep -q "CODERV_GATE_OWNER_OVERRIDE" <<<"$(reason "$OUT")"; check "legacy at-CAP deny names the owner override" $?
+grep -q -- '--approve' <<<"$(reason "$OUT")"; check "legacy at-CAP deny names the owner --approve exit (ADR-023)" $?
 
 echo "T29: findings ledger persists across rounds AND prior findings are injected into the prompt"
 new_head
@@ -1650,6 +1650,43 @@ jq -cn --arg cmd "git commit -m t" --arg cwd "$REPO" \
     '{tool_input:{command:$cmd}, cwd:$cwd}' \
   | CAPTURE_DIR="$CAPS" CODERV_GATE_SECURITY=1 bash "$GATE" >/dev/null
 grep -q "DEEP SECURITY REVIEW" "$CAPS/prompt"; check "opt-in prompt carries the adversarial deep-review brief" $?
+
+echo "T74: ADR-023 — owner-approval exit: the deny names it; --approve passes the exact diff once, loudly"
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t74; OUT=$(run_gate)
+is_deny "$OUT"; check "material finding denies (baseline)" $?
+grep -q -- '--approve' <<<"$(reason "$OUT")"; check "deny reason names the owner --approve exit" $?
+bash "$GATE" --approve "$REPO" "owner said: approved, ship exactly this" >/dev/null
+check "--approve records against the current diff (rc 0)" $?
+OUT=$(run_gate)
+is_allow "$OUT"; check "identical commit passes on the recorded approval" $?
+grep -q "OWNER-APPROVED" <<<"$(sysmsg "$OUT")"; check "systemMessage names the owner approval" $?
+grep -q "owner said: approved, ship exactly this" <<<"$(ctx "$OUT")"; check "the owner's words are quoted back verbatim" $?
+[[ -z "$(ls "$HOME/.claude/coderlap/codex-reviewed/" 2>/dev/null | grep '^owner-approval-')" ]]
+check "approval marker is single-use (consumed on the pass)" $?
+
+echo "T75: ADR-023 — approval is diff-scoped and outranks a ceiling security escalation"
+new_head
+printf '%s\n' "$SECURITY_REVIEW" > "$REVIEW_FILE"
+# CAP=1, MAX=2: two fresh security denies reach the ceiling -> durable
+# escalated stop (the strongest state the gate has).
+bump_diff t75a; OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
+bump_diff t75b; OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
+is_deny "$OUT"; check "security residue at the ceiling denies with escalation (baseline)" $?
+OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
+is_deny "$OUT"; check "identical retry over the open escalation still denies" $?
+# a STALE approval (recorded, then the diff changes) must not leak forward
+bash "$GATE" --approve "$REPO" "stale approval" >/dev/null
+bump_diff t75c; OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
+is_deny "$OUT"; check "an approval recorded for a DIFFERENT diff does not pass this one" $?
+# a fresh approval on the CURRENT diff is the owner's final word: it outranks
+# even the escalated security stop (the gate blocks agent decisions, never an
+# explicit owner decision).
+bash "$GATE" --approve "$REPO" "owner decision: ship it over the security stop" >/dev/null
+OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
+is_allow "$OUT"; check "owner approval outranks the ceiling security escalation" $?
+grep -q "owner decision: ship it over the security stop" <<<"$(ctx "$OUT")"; check "the overriding approval is quoted in the allow" $?
 
 echo
 echo "$PASS passed, $FAIL failed"

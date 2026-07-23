@@ -33,6 +33,44 @@ What did we decide?
 
 ---
 
+## ADR-023: Owner authority is mechanically enforceable — per-diff recorded approvals outrank every gate state
+
+**Date:** 2026-07-23
+**Status:** accepted
+**Decider(s):** owner (explicit requirement, verbatim in the session) + Claude
+
+### Context
+Live-fire on the alrafiq career-tone test branch exposed that the gate could overrule an explicit owner decision — the opposite of its charter. The owner's requirement, stated verbatim: *"I am the final authority; the gate advises and blocks autonomous agent decisions, but it must not overrule an explicit owner decision. When the gate raises a finding and I explicitly say approved, the agent must record my approval and execute the exact rejected diff without waiting for the cap, retrying through cache, or asking me to run terminal commands. The override must be scoped to that exact diff or finding, while the gate remains active for everything else."*
+
+Two mechanical failures made that impossible:
+
+1. **The documented owner exit was a dead end for everyone.** Deny messages instructed re-running the commit with `CODERV_GATE_OWNER_OVERRIDE=1`, but the hook reads that variable only from its own process environment — Claude Code's environment, frozen at session launch. An env prefix inside the command string (typed by the agent OR the owner via `!`) never reaches the hook. The "in-band pass" only worked from a bare terminal, where no hook runs and the variable is meaningless. A session burned a full round telling the owner to run a command the gate itself would then deny.
+2. **The only working owner decisions were all-or-nothing** (kill switches, hook uninstall) — global, unscoped, and mostly requiring a relaunch or a terminal. There was no way to say "ship exactly THIS, keep reviewing everything else."
+
+A note on attribution: any mechanism the agent can invoke, the agent could abuse — the hook file itself is agent-writable, so a hard cryptographic attribution boundary never existed. The real control is scope + audit + policy: key the authority to one exact diff, record the owner's words, make every use loud and logged, and forbid (in the prompt the gate itself emits) recording an approval the owner did not give.
+
+### Decision
+**`codex-review-gate.sh --approve <repo-dir> "<the owner's words>"`** — the owner-approval recorder:
+
+- **Exact-diff scope, mechanically enforced:** the approval key is a sha256 of repo@HEAD + the current outgoing diff (worktree delta + untracked — computed by the same `collect_outgoing_diff`/`approval_key` functions the review path hashes with, so writer and reader can never diverge). One changed byte → different key → normal review. Other diffs, other repos, later commits: gate fully armed.
+- **Top precedence:** the review path checks the approval marker before the round cache, cap, ceiling, and security-escalation states, and before any Codex call. An explicit owner decision is final — it outranks even a ceiling `[security]` stop (proven by test T75).
+- **Single-use + auditable + loud:** the marker stores the owner's quoted words and timestamp; it is consumed on the pass; unused markers are swept by the existing 24h TTL. The allow is a loud warning that quotes the approval and restates that open findings remain unresolved and must be surfaced (transparency rule). Every record and every use emits an event to the live-loop log.
+- **The deny messages teach the exit:** every deny (ordinary round-1, cap-reached, ceiling) now names the real flow — owner says "approved" in chat → agent records it with `--approve` → identical commit passes once. No cap-waiting, no cache tricks, no terminal commands for the owner.
+- **Demoted:** the `~/.claude/coderlap/gates-off` flag file (built earlier the same day) stays as a documented EMERGENCY switch only (24h TTL, loud) — explicitly not the primary owner exit, per the owner's requirement. The legacy `CODERV_GATE_OWNER_OVERRIDE` launch-env check remains for compatibility but is superseded.
+
+### Alternatives considered
+- **Per-diff recorded approval, top precedence (chosen)** — matches the owner's requirement word for word; scoped, auditable, self-expiring.
+- **Global 24h gates-off flag as primary** — built first, rejected by the owner: it disables review for everything, not the one decided diff. Kept as emergency-only.
+- **Command-prefix override parsing (`CODERV_GATE_OWNER_OVERRIDE=1` in the command text)** — implemented, then removed the same session: it only resolved the cap-escalation state (not an ordinary deny), carried no recorded owner quote, and was redundant next to `--approve`.
+- **Keep env-only override** — provably nonfunctional in-band (the failure that triggered this ADR).
+
+### Consequences
+- Positive: "owner says approved → it ships, exactly that, once" is now a mechanical guarantee; the gate can no longer overrule the owner; the loop's owner-escalation exit terminates in one chat sentence; regression-locked by tests T74–T75 (suite now 249 checks).
+- Negative / trade-off: the recorder is agent-invocable, so enforcement of "only on explicit owner approval" is policy + audit (quoted words in the marker, loud allow, event log), not cryptography. Accepted: see attribution note above.
+- Revisit if: Claude Code exposes user-attributed input to hooks — a real attribution boundary would let `--approve` demand proof the words came from the human.
+
+---
+
 ## ADR-022: Quality gate by default, deep security review by explicit opt-in — the severity-policy split that ends the trickle
 
 **Date:** 2026-07-23

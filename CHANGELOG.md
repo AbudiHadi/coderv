@@ -5,6 +5,18 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.15.0] — 2026-07-23
+
+> **Heads-up — reinstall required.** The commit gate's hook changed again.
+> Re-run `install.sh` after pulling so `~/.claude/hooks/` gets the new copy.
+
+### Added
+- **Owner authority is now mechanically enforceable: `codex-review-gate.sh --approve <repo-dir> "<the owner's words>"` (ADR-023).** When the gate denies a diff and the owner explicitly says "approved" in chat, the agent records that decision and retries the identical commit — it passes immediately, without waiting for the round cap, riding the retry cache, or asking the owner to run terminal commands. The approval is keyed to the **exact current outgoing diff** (repo@HEAD + worktree delta + untracked, hashed by the same functions the review path uses, so writer and reader can never diverge): one changed byte = a different key = normal review, and the gate stays fully armed for every other diff. It takes **top precedence** — checked before the round cache, cap, ceiling, and security-escalation states, and before any Codex call — because the gate exists to block autonomous agent decisions, never an explicit owner decision. Single-use (consumed on the pass), auditable (the marker stores the owner's quoted words + timestamp), loud (the allow quotes the approval and restates that open findings must still be surfaced), and logged (`approval_recorded` / `owner_approved_diff` events). Every deny message now teaches this exit. Regression-locked by tests T74–T75 (suite now **249 checks**), including: stale approvals never leak onto a changed diff, and a fresh approval outranks even a ceiling `[security]` escalation.
+- **`~/.claude/coderlap/gates-off` — emergency mid-session off-switch (secondary; ADR-023).** The env kill switches are read from Claude Code's environment, frozen at session launch, so they can't honour a mid-session owner decision. Touching this file skips ALL commit reviews — loudly, with a `gate_skipped/owner_gates_off` event per skip — until it is removed or expires 24h after creation. Explicitly NOT the primary owner exit (that is the per-diff `--approve` above); owner's explicit in-chat decision only.
+
+### Fixed
+- **The gate's documented owner-override was a dead end for everyone (ADR-023).** Deny messages instructed re-running the commit with `CODERV_GATE_OWNER_OVERRIDE=1`, but the hook only reads that variable from its own environment — frozen at session launch — so an env prefix typed in the command string never reached it, whether the agent ran it or the owner did via `!`. The variable check remains as a legacy launch-env pass, but the deny messages now point at the working, scoped `--approve` exit instead.
+
 ## [0.14.0] — 2026-07-23
 
 > **Heads-up — reinstall required.** The commit gate's hook changed (the

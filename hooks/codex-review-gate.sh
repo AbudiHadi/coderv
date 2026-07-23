@@ -87,14 +87,30 @@
 #   for them falls back to cd/session cwd (Claude uses -C or cd; the
 #   repo+HEAD+diff cache key keeps a wrong-repo review from being reused).
 #
-# Kill switch: CODERV_GATES_OFF=1 (all gates) or CODEX_REVIEW_OFF=1
+# Owner authority (ADR-023): the owner is the FINAL authority — the gate
+#   blocks autonomous agent decisions, never an explicit owner decision. When
+#   the owner explicitly approves shipping a denied diff AS-IS (in-chat), the
+#   decision is recorded per-diff and mechanically honoured:
+#       codex-review-gate.sh --approve <repo-dir> "<the owner's words>"
+#   keys the approval to the EXACT current outgoing diff; the identical commit
+#   then passes immediately — outranking round cache, cap, ceiling and
+#   security escalation — loudly, quoting the approval. Single-use (consumed
+#   on the pass, swept after 24h if unused); any other diff reviews normally.
+# Kill switch: CODERV_GATES_OFF=1 (all gates) or CODEX_REVIEW_OFF=1 — read
+#   from Claude Code's own environment, which is FROZEN at session launch, so
+#   they cannot be flipped mid-session. EMERGENCY mid-session switch
+#   (secondary — prefer the per-diff --approve above): `touch
+#   ~/.claude/coderlap/gates-off` skips ALL commit reviews loudly until the
+#   file is removed or expires 24h after creation. Owner's explicit in-chat
+#   decision only, never agent judgment.
 # Tunables: CODERV_GATE_ROUND_CAP (soft cap, default 3), CODERV_GATE_ROUND_MAX
 #   (hard ceiling, default 5, always > cap), CODERV_GATE_DIFF_BUDGET (cumulative
 #   transmitted-byte ceiling, default 800000), CODERV_GATE_SECURITY=1 (ADR-022
 #   deep-security opt-in: adversarial brief + [hardening] blocks; default is the
-#   quality-gate mode), CODERV_GATE_OWNER_OVERRIDE=1 (the owner's in-band pass
-#   over an open ceiling security escalation), CODERV_LOG_OFF=1 (silence the
-#   live-loop event log).
+#   quality-gate mode), CODERV_GATE_OWNER_OVERRIDE=1 (legacy launch-env-only
+#   pass over an open ceiling security escalation — superseded by the per-diff
+#   --approve, which works from inside a running session), CODERV_LOG_OFF=1
+#   (silence the live-loop event log).
 #
 # <!-- claude-docs-toolkit -->
 set -o pipefail
@@ -190,6 +206,79 @@ log_event() {
     } 2>/dev/null || true
     return 0
 }
+
+# --- ADR-023: owner-approval recorder + diff identity ----------------------
+# The owner is the FINAL authority: the gate exists to block AUTONOMOUS agent
+# decisions, never an explicit owner decision. When a review denies a diff and
+# the owner explicitly approves shipping it AS-IS (in-chat), that decision is
+# recorded mechanically:
+#     codex-review-gate.sh --approve <repo-dir> "<the owner's words>"
+# The approval is keyed to the EXACT current outgoing diff of <repo-dir>
+# (repo@HEAD + worktree delta + untracked — the same construction the review
+# path hashes), so it can never leak onto different work: one changed byte =
+# different key = normal review. The marker stores the owner's quoted words +
+# timestamp (auditable), is SINGLE-USE (consumed when the identical commit
+# passes), and is swept by the 24h cache TTL if unused. Record it ONLY on the
+# owner's explicit approval, never on agent judgment.
+collect_outgoing_diff() {
+    # <dir> -> the outgoing delta the review path sees: worktree diff vs HEAD
+    # (staged fallback for unborn HEAD / all-reverted tree) plus untracked.
+    local dir="$1" d u f ud
+    d=$(git -C "$dir" diff HEAD 2>/dev/null)
+    [[ -z "$d" ]] && d=$(git -C "$dir" diff --cached 2>/dev/null)
+    u=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)
+    if [[ -n "$u" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            ud=$(git -C "$dir" diff --no-index -- /dev/null "$f" 2>/dev/null)
+            [[ -n "$ud" ]] && d+=$'\n'"$ud"
+        done <<<"$u"
+    fi
+    printf '%s' "$d"
+}
+approval_key() {
+    # <dir> -> sha256 keying an owner approval to the exact outgoing diff.
+    # Mode-independent on purpose: the owner's "ship it as-is" covers the
+    # diff itself, whichever review brief denied it. Both the writer
+    # (--approve) and the reader (the review path) call THIS function, so the
+    # two can never diverge.
+    local dir="$1" repo base nl=$'\n'
+    repo=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)
+    base=$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo unborn)
+    sha256sum <<<"${repo}@${base}${nl}$(collect_outgoing_diff "$dir")${nl}owner-approval" | cut -d' ' -f1
+}
+# CLI recorder mode — must run BEFORE the env kill switches and the stdin
+# read: it is invoked as a command, not as a hook, and recording an approval
+# is meaningful even when other gate machinery is off.
+if [[ "${1:-}" == "--approve" ]]; then
+    A_DIR="${2:-}"; A_QUOTE="${3:-}"
+    [[ -n "$A_DIR" && -d "$A_DIR" ]] || { echo "usage: $0 --approve <repo-dir> \"<the owner's words>\"" >&2; exit 2; }
+    git -C "$A_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "--approve: $A_DIR is not a git repo" >&2; exit 2; }
+    [[ -n "${A_QUOTE//[[:space:]]/}" ]] || { echo "--approve: the owner's approval words are required (the record must be auditable)" >&2; exit 2; }
+    command -v jq >/dev/null 2>&1 || { echo "--approve: jq is required" >&2; exit 2; }
+    A_KEY=$(approval_key "$A_DIR")
+    A_CACHE="$HOME/.claude/coderlap/codex-reviewed"
+    mkdir -p "$A_CACHE" 2>/dev/null || { echo "--approve: cannot create $A_CACHE" >&2; exit 1; }
+    A_MARKER="$A_CACHE/owner-approval-$A_KEY"
+    A_TMP=$(mktemp "$A_MARKER.tmp.XXXXXX" 2>/dev/null) || { echo "--approve: cannot write marker" >&2; exit 1; }
+    if jq -n --arg quote "$A_QUOTE" \
+             --arg repo "$(git -C "$A_DIR" rev-parse --show-toplevel 2>/dev/null)" \
+             --arg base "$(git -C "$A_DIR" rev-parse HEAD 2>/dev/null || echo unborn)" \
+             --argjson ts "$(date +%s)" \
+             '{quote:$quote, repo:$repo, base:$base, ts:$ts}' > "$A_TMP" 2>/dev/null \
+       && mv -f "$A_TMP" "$A_MARKER" 2>/dev/null; then
+        REPO_ID=$(git -C "$A_DIR" rev-parse --show-toplevel 2>/dev/null)
+        log_event owner approval_recorded \
+            "$(jq -cn --arg q "$A_QUOTE" --arg k "$A_KEY" '{quote:$q, key:$k}')" "approve-$A_KEY"
+        echo "owner approval recorded for the exact current outgoing diff of $A_DIR"
+        echo "marker: $A_MARKER"
+        echo "retry the identical commit now — it passes this one time; any other diff reviews normally."
+        exit 0
+    fi
+    rm -f "$A_TMP" 2>/dev/null
+    echo "--approve: failed to write $A_MARKER" >&2
+    exit 1
+fi
 
 [[ "${CODERV_GATES_OFF:-0}" == "1" ]] && exit 0
 [[ "${CODEX_REVIEW_OFF:-0}" == "1" ]] && exit 0
@@ -666,16 +755,10 @@ publish_round_marker() {
 # What is about to be committed: PreToolUse fires before any `git add` in
 # the same command runs, so review the full working-tree delta, not just
 # the staged part — PLUS untracked files, which `git diff HEAD` misses.
-DIFF=$(git -C "$DIR" diff HEAD 2>/dev/null)
-[[ -z "$DIFF" ]] && DIFF=$(git -C "$DIR" diff --cached 2>/dev/null)  # unborn HEAD / all-reverted worktree
+# ADR-023: built by the shared collect_outgoing_diff so the review hash and
+# the owner-approval key can never disagree about what "this diff" means.
+DIFF=$(collect_outgoing_diff "$DIR")
 UNTRACKED=$(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
-if [[ -n "$UNTRACKED" ]]; then
-    while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        UDIFF=$(git -C "$DIR" diff --no-index -- /dev/null "$f" 2>/dev/null)
-        [[ -n "$UDIFF" ]] && DIFF+=$'\n'"$UDIFF"
-    done <<<"$UNTRACKED"
-fi
 # The viewer groups + de-dups by (xid, eid). A skip is a terminal one-event
 # exchange, so it needs its own xid. log_skip mints ONE eid, then emits the event
 # with that eid AND xid="skip-<reason>-<eid>" — the two stay correlated (spec
@@ -723,6 +806,26 @@ if [[ "$DOCS_ONLY" == "1" ]]; then
         "$(jq -cn --arg sub "$SUBCMD" --argjson files "$DOCS_FILES" \
             '{reason:"docs_only", subcmd:$sub, files:$files}')"
     exit 0
+fi
+
+# ADR-023 EMERGENCY owner off-switch (secondary — the per-diff --approve
+# above is the primary owner exit) — a FILE, because the env kill switches at
+# the top are read from Claude Code's environment, frozen at session launch:
+# an owner saying "skip the gate this session" mid-conversation has no way to
+# reach them. The flag file works immediately, expires 24h after creation (a
+# forgotten flag must never silently disable review forever — same TTL as the
+# cache sweep), and every skip it grants is LOUD, never silent. Checked AFTER
+# commit detection + docs-only so non-commit commands stay noise-free.
+GATES_OFF_FLAG="$HOME/.claude/coderlap/gates-off"
+if [[ -f "$GATES_OFF_FLAG" ]]; then
+    if [[ -n "$(find "$GATES_OFF_FLAG" -mmin -1440 2>/dev/null)" ]]; then
+        log_skip owner_gates_off \
+            "$(jq -cn --arg sub "$SUBCMD" '{reason:"owner_gates_off", subcmd:$sub}')"
+        allow_with_warning \
+            "⚠ codex-review-gate: OWNER GATES-OFF flag — commit NOT reviewed (rm ~/.claude/coderlap/gates-off to re-arm)" \
+            "CODEX REVIEW SKIPPED: the owner's gates-off flag file is present (~/.claude/coderlap/gates-off, expires 24h after creation). The flag exists to honour an explicit owner decision given in-chat — create it ONLY on such a decision, never on your own judgment — and the skip must be reported alongside the commit; per the AI workflow rules a skipped review never stays silent."
+    fi
+    rm -f "$GATES_OFF_FLAG" 2>/dev/null   # expired flag: reap it, the gate re-arms
 fi
 
 # ADR-022 review-policy mode — resolved BEFORE the cache key because the mode
@@ -792,6 +895,24 @@ while IFS= read -r swept; do
         *) rm -f "$swept" 2>/dev/null ;;
     esac
 done
+# ADR-023 scoped owner approval — TOP precedence, checked before every other
+# gate state (round cache, cap, ceiling, security escalation) and before any
+# Codex call: an explicit owner decision on THIS exact outgoing diff is
+# final. The gate blocks autonomous agent decisions; it never overrules the
+# owner. Single-shot: the marker is consumed here, so the recorded authority
+# spends itself on one pass; every other diff (one changed byte = a new key)
+# reviews normally, and the sweep above reaps unused markers after 24h.
+A_KEY=$(approval_key "$DIR")
+APPROVAL_MARKER="$CACHE/owner-approval-$A_KEY"
+if [[ -f "$APPROVAL_MARKER" ]]; then
+    A_QUOTE=$(jq -r '.quote // empty' < "$APPROVAL_MARKER" 2>/dev/null)
+    rm -f "$APPROVAL_MARKER" 2>/dev/null   # single-use: spent on this pass
+    log_event owner outcome "$(jq -cn --arg q "$A_QUOTE" \
+        '{result:"passed", owner_approved_diff:true, quote:$q}')"
+    allow_with_warning \
+        "⚠ codex-review-gate: OWNER-APPROVED DIFF — commit allowed on the owner's recorded decision (open findings, if any, remain unresolved)" \
+        "OWNER APPROVAL on record for this exact diff (quote: \"$A_QUOTE\"). The owner is the final authority: this commit passes regardless of open findings or escalations. Surface any unresolved findings alongside the commit (transparency rule — never silently dropped). The approval was single-use and is now consumed; the gate stays armed for every other diff."
+fi
 # Round-cap parameters + state location (two-brain-convergence.md CAP-STOPPED)
 # are computed HERE, before the cache fast-path, because both paths need them:
 # the fresh-review decision below, and the cached retry — which must stay LOUD
@@ -1004,8 +1125,8 @@ if [[ -f "$CACHE/$HASH" ]]; then
             '{result:"denied", cached:true, over_cap_escalation:true, state_unverified:($unv==1)}')"
         R_WHY="$R_MAT material finding(s) open at round $R_ROUND"
         (( R_UNVERIFIED )) && R_WHY="this diff's cache record is unreadable or could not be parsed — treated as an open escalation (conservative)"
-        jq -n --arg r "CAP-REACHED escalation is still OPEN for this repo@HEAD ($R_WHY). An identical-diff retry does NOT clear it. Options: fix the material findings (a changed diff gets a fresh review), or the OWNER explicitly overrides by re-running this exact commit with CODERV_GATE_OWNER_OVERRIDE=1 — the override is the owner's in-band decision signal; never set it on your own judgment." \
-              --arg msg "⛔ codex-review-gate: identical retry DENIED — CAP-REACHED escalation open ($R_WHY); owner override: CODERV_GATE_OWNER_OVERRIDE=1" '{
+        jq -n --arg r "CAP-REACHED escalation is still OPEN for this repo@HEAD ($R_WHY). An identical-diff retry does NOT clear it. Options: fix the material findings (a changed diff gets a fresh review), or the OWNER explicitly approves shipping this exact diff as-is (in-chat) — then record that decision and retry the identical commit: $0 --approve <repo-dir> \"<the owner's words>\" (ADR-023: keyed to this exact diff, passes it once, gate stays armed for everything else). Record it only on the owner's explicit approval, quoted verbatim — never on your own judgment." \
+              --arg msg "⛔ codex-review-gate: identical retry DENIED — CAP-REACHED escalation open ($R_WHY); owner exit: --approve (ADR-023)" '{
             systemMessage: $msg,
             hookSpecificOutput: {
                 hookEventName: "PreToolUse",
@@ -1931,9 +2052,11 @@ fix-and-recommit again on your own judgment: STOP and present the owner the
 findings below VERBATIM, plus the options (fix the security/data-loss findings /
 owner overrides the gate / park the work). The owner decides; you do not spend
 another round. (After the owner decides: either the findings get fixed — a
-changed diff earns a fresh review — or the OWNER re-runs this exact commit with
-CODERV_GATE_OWNER_OVERRIDE=1; the explicit override passes with a loud caveat and
-is never yours to set.) (two-brain-convergence.md: ceiling, ADR-019.)
+changed diff earns a fresh review — or, on the owner's explicit in-chat approval,
+the decision is recorded with $0 --approve <repo-dir> \"<the owner's words>\"
+and the identical commit is retried; the recorded approval passes it once, with
+a loud caveat, and is never yours to invent — ADR-023.) (two-brain-convergence.md:
+ceiling, ADR-019.)
 
 $REVIEW"
 else
@@ -1952,7 +2075,12 @@ exact diff will not be blocked again; a changed diff gets a fresh review.
 STOP and surface to the owner when the SAME unresolved finding has been rejected
 twice on substantially the same rationale (same underlying claim, same cited
 evidence, no materially new code or facts) — that is a loop, not convergence; the
-owner decides, you do not keep re-committing."
+owner decides, you do not keep re-committing.
+If the OWNER explicitly decides to ship this exact diff AS-IS (their words, in
+chat), you do not wait for the cap: record the decision and retry the identical
+commit — $0 --approve <repo-dir> \"<the owner's words>\" — the approval is keyed
+to this exact diff, passes it once, and the gate stays armed for everything else
+(ADR-023). Never record an approval the owner did not explicitly give."
     # ADR-022: in default mode, marginal findings riding along with a material
     # deny are RE-LISTED verbatim under the Optional section (not just counted)
     # so the owner never has to re-parse severity tags to see which findings
