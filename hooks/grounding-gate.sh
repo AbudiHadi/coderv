@@ -64,7 +64,17 @@ if len(rel_parts) > 1 and rel_parts[0] == "docs":
 if path.endswith(".md") and len(rel_parts) == 1:
     sys.exit(0)
 
+# The slug must be a legal FILENAME on every OS (0.15.1): Windows forbids
+# ':' in filenames, so a drive-rooted project (D:\...) used to produce an
+# unsatisfiable slug — no receipt could ever exist and the gate locked every
+# code edit in the project permanently. Both separators become dashes and
+# ':' is stripped; on Linux this is a byte-for-byte no-op. The /before,
+# /ship, /lint and /coderv slug snippets (cygpath -w + tr) resolve to this
+# same string — writer and reader must never disagree.
 slug = root.replace(os.sep, "-")
+if os.altsep:
+    slug = slug.replace(os.altsep, "-")
+slug = slug.replace(":", "")
 receipt = os.path.join(home, ".claude", "coderlap", "receipts", slug)
 
 def session_start_epoch():

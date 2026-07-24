@@ -126,7 +126,7 @@ tools look for everything before bothering the human.
 ```bash
 ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
 [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)
-SLUG=$(printf '%s' "$ROOT" | tr '/' '-')                # project-root key, same as all coderlap artifacts
+SLUG=$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':')                # project-root key, same as all coderlap artifacts
 cat ~/.claude/coderlap/state/lint-$SLUG 2>/dev/null      # last /lint date, written by /lint
 git status --short | head -5                              # work already in flight?
 # Newest handoff — read the whole ENTRY, not just its heading, so precedence

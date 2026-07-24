@@ -5,6 +5,15 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.15.1] — 2026-07-24
+
+> **Heads-up — Windows users must reinstall.** The grounding gate and the
+> coderlap slug formula changed. Re-run `install.sh` after pulling.
+
+### Fixed
+- **The grounding gate permanently locked every drive-rooted Windows project (`D:\...`).** The receipt filename was built by replacing path separators with dashes, which left the drive colon in place (`D:-...`) — and `:` is illegal in Windows filenames, so no receipt could ever be written or matched: the gate was mechanically unsatisfiable and blocked all code edits forever. Found live on a Windows machine (the agent proved it two independent ways). The slug is now legal on every OS: both separators (`\` and `/`) become dashes and `:` is stripped — a byte-for-byte no-op on Linux, so existing receipts/specs keep matching.
+- **Writer/reader slug agreement on Windows.** Git Bash sees `/d/...` while the hooks see `D:\...`, so even a legal slug could disagree between the `/before` receipt writer and the gate reader. Every slug snippet (`/before` receipt + spec, `/ship` spec lookups, `/lint` state, `/coderv`, and the commit gate's drift-hunter spec path) now canonicalises through `cygpath -w` first (a no-op on Linux, where cygpath does not exist) and applies the same `tr`/strip formula, so all nine slug sites resolve to the identical string on both OSes. Suite re-run after the change: 249 checks, 0 failed.
+
 ## [0.15.0] — 2026-07-23
 
 > **Heads-up — reinstall required.** The commit gate's hook changed again.

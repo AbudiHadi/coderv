@@ -35,7 +35,7 @@ If you skip, tell the user: `skipping /before — task is <reason>`, and **decla
 ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
 [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)   # key by project root, same as the gate
 mkdir -p ~/.claude/coderlap/receipts
-printf '{"mode":"skip","reason":"<why in a few words>"}' > ~/.claude/coderlap/receipts/$(printf '%s' "$ROOT" | tr '/' '-')
+printf '{"mode":"skip","reason":"<why in a few words>"}' > ~/.claude/coderlap/receipts/$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':')
 ```
 
 Then do the task directly.
@@ -142,7 +142,7 @@ sources, not recollections):
 # grounding-gate hook derives its key the same way, so cwd depth never matters.
 ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
 [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)
-SLUG=$(printf '%s' "$ROOT" | tr '/' '-')
+SLUG=$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':')
 mkdir -p ~/.claude/coderlap/receipts ~/.claude/coderlap/specs
 printf '{"mode":"full","task":"<task in a few words>","read":["CLAUDE.md","docs/<...>"],"prior_art":"<file:line or none>"}' \
   > ~/.claude/coderlap/receipts/$SLUG

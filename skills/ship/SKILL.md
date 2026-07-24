@@ -222,7 +222,7 @@ reviewer told to be exhaustive in ONE pass (this is what stops the trickle):
 
 ```bash
 OUT=$(mktemp)
-SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done; [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd); printf '%s' "$ROOT" | tr '/' '-').md
+SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done; [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd); printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':').md
 { printf '%s\n' \
     "You are the ENGINEERING QUALITY GATE in a two-model workflow." \
     "Review this outgoing git diff for correctness, edge cases, security, data" \
@@ -301,7 +301,7 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   name is keyed by project root:
   ```bash
   ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
-  cat ~/.claude/coderlap/specs/$(printf '%s' "$ROOT" | tr '/' '-').md
+  cat ~/.claude/coderlap/specs/$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':').md
   ```
 - an adversarial brief: **"Find what's wrong. For each spec item, verdict
   pass/fail with the diff lines proving it, quoted verbatim with file:line.
@@ -534,7 +534,7 @@ the same way, in one batch; it is a rare single event now, not the loop.)
    reconsidered against the same ground truth the gate measured it against:
    ```bash
    OUT=$(mktemp)
-   SPEC=~/.claude/coderlap/specs/$(printf '%s' "$ROOT" | tr '/' '-').md
+   SPEC=~/.claude/coderlap/specs/$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':').md
    { printf '%s\n' "You flagged: <finding>." \
        "Rebuttal: <why it is not a real issue — cite the code/convention>." \
        "Reconsider. If you still disagree, say so and why."

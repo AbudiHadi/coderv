@@ -89,5 +89,5 @@ a pipeline needs a lint first:
 ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done
 [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd)   # key by project root, same as all coderlap artifacts
 mkdir -p ~/.claude/coderlap/state
-date +%F > ~/.claude/coderlap/state/lint-$(printf '%s' "$ROOT" | tr '/' '-')
+date +%F > ~/.claude/coderlap/state/lint-$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':')
 ```

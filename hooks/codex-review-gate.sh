@@ -1176,7 +1176,11 @@ fi
 SPEC_ROOT="$DIR"
 while [[ "$SPEC_ROOT" != "/" && ! -f "$SPEC_ROOT/CLAUDE.md" ]]; do SPEC_ROOT=$(dirname "$SPEC_ROOT"); done
 [[ -f "$SPEC_ROOT/CLAUDE.md" ]] || SPEC_ROOT="$DIR"
-SPEC_FILE="$HOME/.claude/coderlap/specs/$(printf '%s' "$SPEC_ROOT" | tr '/' '-').md"
+# Windows (0.15.1): Git Bash sees /d/... while native tools see D:\... —
+# cygpath -w canonicalises to the native form (no-op on Linux, where cygpath
+# does not exist); '\' becomes a separator dash and ':' (illegal in Windows
+# filenames) is stripped, so writer and reader always agree on the slug.
+SPEC_FILE="$HOME/.claude/coderlap/specs/$(printf '%s' "$(cygpath -w "$SPEC_ROOT" 2>/dev/null || printf '%s' "$SPEC_ROOT")" | tr '/\\' '--' | tr -d ':').md"
 SPEC=""; DRIFT_NOTE=""
 if [[ -f "$SPEC_FILE" ]]; then
     SPEC_BASE=$(sed -n 's/^Base:[[:space:]]*//p' "$SPEC_FILE" | head -1)
