@@ -1688,6 +1688,48 @@ OUT=$(CODERV_GATE_ROUND_CAP=1 CODERV_GATE_ROUND_MAX=2 run_gate)
 is_allow "$OUT"; check "owner approval outranks the ceiling security escalation" $?
 grep -q "owner decision: ship it over the security stop" <<<"$(ctx "$OUT")"; check "the overriding approval is quoted in the allow" $?
 
+echo "T76: ADR-023 — the heredoc fail-closed deny (awk unavailable) no longer traps the owner"
+# The fail-closed heredoc deny fires BEFORE the review target is resolved, so
+# it used to precede every owner-escape check. It must now honor the global
+# gates-off flag (the ONLY owner escape that needs no target); the per-diff
+# --approve marker must NOT pass here (its diff identity is unknowable when the
+# scrub failed — honoring a cwd guess would pass a `git -C /other` decoy).
+new_head
+FAILAWK76="$TDIR/failbin76"; mkdir -p "$FAILAWK76"
+printf '#!/bin/sh\nexit 3\n' > "$FAILAWK76/awk"; chmod +x "$FAILAWK76/awk"
+HD_CMD76="git commit -F - <<'EOF'
+a message
+EOF"
+run_failclosed() {  # awk always fails + a heredoc is present
+    jq -cn --arg cmd "$HD_CMD76" --arg cwd "$REPO" \
+        '{tool_input:{command:$cmd}, cwd:$cwd}' | PATH="$FAILAWK76:$PATH" bash "$GATE"
+}
+GATES_OFF_FLAG76="$HOME/.claude/coderlap/gates-off"
+# Baseline: neither escape present -> still fails closed (deny), unchanged.
+rm -f "$GATES_OFF_FLAG76" 2>/dev/null
+OUT=$(run_failclosed)
+is_deny "$OUT"; check "no owner escape -> awk-fail+heredoc still denies (fail-closed intact)" $?
+grep -q "gates-off flag" <<<"$(reason "$OUT")"; check "fail-closed deny names the gates-off owner exit" $?
+# Adversarial (Codex finding 1): a --approve recorded for the cwd diff must NOT
+# pass the fail-closed path — the target is unknowable, so per-diff approval
+# cannot apply and the deny must stand.
+bump_diff t76approve
+bash "$GATE" --approve "$REPO" "owner: approved this diff" >/dev/null
+OUT=$(run_failclosed)
+is_deny "$OUT"; check "a cwd --approve marker does NOT pass the fail-closed heredoc path" $?
+rm -f "$HOME/.claude/coderlap/codex-reviewed/owner-approval-"* 2>/dev/null
+# The gates-off flag (global, target-independent) DOES pass it, loudly.
+: > "$GATES_OFF_FLAG76"
+OUT=$(run_failclosed)
+is_allow "$OUT"; check "a fresh gates-off flag passes the awk-fail+heredoc commit" $?
+grep -q "GATES-OFF" <<<"$(sysmsg "$OUT")"; check "the fail-closed gates-off allow is loud" $?
+# An EXPIRED flag must not pass (24h TTL, same as the normal site).
+touch -d '2 days ago' "$GATES_OFF_FLAG76" 2>/dev/null && {
+    OUT=$(run_failclosed)
+    is_deny "$OUT"; check "an expired gates-off flag does NOT pass the fail-closed path" $?
+}
+rm -f "$GATES_OFF_FLAG76" 2>/dev/null
+
 echo
 echo "$PASS passed, $FAIL failed"
 (( FAIL == 0 )) || exit 1

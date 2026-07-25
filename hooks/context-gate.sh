@@ -155,12 +155,15 @@ if ctx >= block_at and not os.path.exists(block_marker):
             f"CONTEXT GATE (coderlap): ~{ctx:,} tokens of context are in use — "
             f"past the {block_at:,}-token dumb-zone budget. Past this point "
             "quality degrades and compaction will corrupt state. Do NOT start "
-            "new work. The only sanctioned moves now: (1) finish the current "
+            "new work. The recommended moves now: (1) finish the current "
             "atomic step if one is mid-flight, (2) write the session handoff "
             "per /session — paste RAW command outputs (git status, git log, "
             "versions) VERBATIM, never paraphrase state — then (3) tell the "
             "user to start a fresh session, which resumes from the handoff. "
-            "This gate fires once per session (it re-arms after compaction)."
+            "This is a one-shot Stop nudge (it does not hard-block your next "
+            "action — a subsequent Stop proceeds normally); it fires once per "
+            "session and re-arms after compaction. The user is the final "
+            "authority and may tell you to continue in this session anyway."
         ),
     }))
     sys.exit(0)

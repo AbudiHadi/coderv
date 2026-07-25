@@ -33,6 +33,37 @@ What did we decide?
 
 ---
 
+## ADR-024: The heredoc fail-closed deny honours the owner gates-off flag — the last gate block that could trap the owner is closed
+
+**Date:** 2026-07-25
+**Status:** accepted
+**Decider(s):** owner (explicit "approved 100%" in-session) + Claude (plan converged with Codex, LGTM round 2)
+
+### Context
+An audit of "can any gate block the owner with no in-band escape?" found exactly one. `codex-review-gate.sh` fails CLOSED (a hard `deny`) when a commit contains a `<<` heredoc AND the `awk` command-scrub cannot run (awk missing/failing) — because a heredoc body could otherwise smuggle an unreviewed commit line past the scrub. That deny fires very early, *before* the review target repo is resolved, so it sat ahead of BOTH owner-escape checks: the emergency gates-off flag (previously at the normal skip site) and the ADR-023 per-diff `--approve` marker. Result: on an awk-less host, an owner who said "ship it" had no in-band way past the fail-closed deny — the exact "gate overrules the owner" failure ADR-023 exists to forbid, surviving in one un-audited corner. Reachability was low (awk present on the dev host three ways), but the charter violation was real: ADR-023 says an explicit owner decision outranks *every* gate state, and this was a state it did not outrank.
+
+### Decision
+Consult the owner's **gates-off flag** at the fail-closed point, before the deny — and *only* the gates-off flag:
+- A pure predicate `owner_gates_off_fresh()` + the `GATES_OFF_FLAG` path are defined once near the top of the hook (depending on nothing resolved later). The early fail-closed branch and the normal skip site both call it, so the two can never diverge (DRY). The early branch emits its own minimal `jq` allow (the `allow_with_warning`/`log_skip` helpers are defined later in the file); the deny message, when the flag is absent, now names the gates-off flag as the fail-closed owner exit.
+- **`--approve` is deliberately NOT honoured here.** It is keyed to a specific repo's exact diff, and at the fail-closed point the target repo can only come from the very command the scrub failed to sanitize. Resolving it to the session cwd would let a `git -C /other-repo commit -F - <<EOF` decoy pass on an unrelated cwd approval — the exact-diff guarantee broken (Codex's plan-review finding 1). gates-off is global ("skip ALL reviews this session"), needs no target, and is therefore the only owner escape that is *safe* before the target is known.
+- Fail-closed stays the default when no flag is present (T64 unchanged: awk-fail + heredoc still denies).
+
+Also corrected three stale references to the superseded `CODERV_GATE_OWNER_OVERRIDE` launch-env override, which a hook cannot read from a command prefix (ADR-023 already replaced it with `--approve`): the in-code comments at the CAP-ride branch, `two-brain-convergence.md`'s CAP-STOPPED escape wording, and — separately — the `context-gate` block message, which overstated a one-shot Stop nudge as the "only sanctioned move" when continuation is in fact allowed and the user is the final authority.
+
+### Alternatives considered
+- **Honour gates-off only at the fail-closed point (chosen)** — the one owner escape whose correctness does not depend on knowing the target diff; keeps ADR-023's exact-diff guarantee intact.
+- **Also honour `--approve` via the session cwd** — rejected (Codex finding 1): passes a `git -C /other` decoy on an unrelated cwd approval; silently breaks the exact-diff scope.
+- **Move the whole fail-closed block after target resolution** — rejected: the block exists *because* the command can't be trusted to resolve the target; you cannot safely resolve `-C <dir>` from text the scrub just failed on.
+- **Leave it (accept the low reachability)** — rejected: a charter violation in a corner is still a charter violation; the owner ordered it closed.
+
+### Consequences
+- Positive: there is now **no gate block that can trap the owner in-band** — every deny path has an owner escape (fail-closed → gates-off flag; every other → `--approve`). ADR-023's "owner outranks every gate state" is now literally true. Regression-locked by T76 (suite 255 checks).
+- Positive: the DRY predicate means the gates-off semantics (presence + 24h TTL) are defined once; the early and normal sites cannot drift.
+- Trade-off: on an awk-less host the owner's fail-closed escape is the *global* gates-off flag, not the per-diff `--approve` — coarser than elsewhere. Accepted and documented: per-diff scope is impossible when the diff identity is unknowable, and the safe honest option is the switch that needs no identity.
+- Revisit if: a future change makes the review target resolvable without trusting the command text at the fail-closed point — then per-diff `--approve` could safely apply there too.
+
+---
+
 ## ADR-023: Owner authority is mechanically enforceable — per-diff recorded approvals outrank every gate state
 
 **Date:** 2026-07-23

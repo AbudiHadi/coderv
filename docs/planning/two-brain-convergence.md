@@ -112,10 +112,14 @@ The cap is enforced BY THE MACHINE at the commit gate, not by prose:
   override CODERV_GATE_ROUND_CAP.
 - round >= cap AND >=1 material open -> DENY = THIS DOC's CAP-STOPPED end
   state: the loop is over, the owner decides. An identical-diff retry stays
-  DENIED until the owner asserts the explicit in-band override
-  (CODERV_GATE_OWNER_OVERRIDE=1 on the retried commit), which passes WITH a
-  loud caveat — the override is the owner's decision signal, never the
-  agent's, and it keeps the gate from ever hard-locking the owner out.
+  DENIED until the owner records an explicit in-band approval of that exact
+  diff (ADR-023: `codex-review-gate.sh --approve <repo-dir> "<the owner's
+  words>"`), which passes the identical commit ONCE, WITH a loud caveat and the
+  owner's words quoted — the approval is the owner's decision signal, never the
+  agent's, and it keeps the gate from ever hard-locking the owner out. (The
+  legacy `CODERV_GATE_OWNER_OVERRIDE=1` env var is superseded: a hook reads it
+  from the session's launch environment, so a prefix on the retried command
+  never reaches it — `--approve` is the mechanism that actually works in-band.)
 - round >= cap AND all findings marginal -> ALLOW with a loud caveat, the
   findings surfaced to the owner verbatim. This is a commit-phase refinement,
   NOT auto-CONVERGED: adjudication of the marginal residue passes to the
@@ -167,10 +171,14 @@ Four inputs, added at the commit gate (and inherited by /ship Step 4.5 and
    `CODERV_GATE_ROUND_MAX` (default 5) and a `CODERV_GATE_DIFF_BUDGET` (a
    cumulative bytes-reviewed proxy, default 800000). If fixes 1-3 work the loop
    converges around round 2-3 and the ceiling is never reached. At the ceiling,
-   ONLY a still-open [security] or [data-loss] finding may BLOCK — and that block
-   is the existing owner-escalation path (CODERV_GATE_OWNER_OVERRIDE=1), i.e. the
-   gate refusing to auto-merge a security hole, which is a safety decision, NOT a
-   human being asked to adjudicate ordinary code. Every non-security finding must
+   ONLY a still-open [security] or [data-loss] finding may BLOCK — the gate
+   refusing to auto-merge a security hole, which is a safety decision, NOT a
+   human being asked to adjudicate ordinary code. The owner's in-band exit from
+   that block is the exact-diff approval (ADR-023: `codex-review-gate.sh
+   --approve <repo-dir> "<owner words>"`), never the legacy launch-env
+   `CODERV_GATE_OWNER_OVERRIDE=1` (a hook reads that from the frozen session
+   environment, so a command prefix never reaches it — see the CAP-STOPPED note
+   above). Every non-security finding must
    have converged by the ceiling; if any [correctness]/untagged remains open at
    ROUND_MAX it is surfaced but the commit is ALLOWED-with-caveat (the loop
    self-terminates rather than escalating routine code to the human).

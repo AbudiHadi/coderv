@@ -5,6 +5,17 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.15.2] — 2026-07-25
+
+> **Heads-up — reinstall required.** The commit gate's hook changed. Re-run
+> `install.sh` after pulling so `~/.claude/hooks/` gets the new copy.
+
+### Fixed
+- **The last gate block that could trap the owner is closed (ADR-024).** The commit gate fails CLOSED (hard deny) when a commit uses a `<<` heredoc and the `awk` command-scrub can't run — a safety fallback, since a heredoc body could otherwise hide an unreviewed commit line. But that deny fired before the owner-escape checks, so on a host with no working `awk` an owner who said "ship it" had no in-band way past it — the one spot the gate could overrule the owner. It now honours the owner's gates-off flag (`~/.claude/coderlap/gates-off`) at that point, so the owner is never trapped. The per-diff `--approve` marker is deliberately *not* consulted here: when the scrub fails the target repo can only come from the very command that failed to parse, and a cwd-keyed guess would wrongly pass a `git -C /other-repo commit` decoy — so the global gates-off switch (which needs no target) is the only safe escape. With no flag present the path still denies (unchanged). Suite: 255 checks, 0 failed.
+
+### Changed
+- **Corrected stale references to the superseded `CODERV_GATE_OWNER_OVERRIDE`.** A hook reads that variable from the session's launch environment, so an env-prefix on a retried commit never reaches it — ADR-023's `--approve` is the mechanism that actually works in-band. Fixed the misleading in-code comments (the CAP-ride branch), the `two-brain-convergence.md` CAP-STOPPED escape wording, and the `context-gate` block message (which overstated a one-shot Stop nudge as the "only sanctioned move" — continuation is allowed, and the user is the final authority).
+
 ## [0.15.1] — 2026-07-24
 
 > **Heads-up — Windows users must reinstall.** The grounding gate and the

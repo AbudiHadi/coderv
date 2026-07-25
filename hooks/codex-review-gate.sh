@@ -247,6 +247,23 @@ approval_key() {
     base=$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo unborn)
     sha256sum <<<"${repo}@${base}${nl}$(collect_outgoing_diff "$dir")${nl}owner-approval" | cut -d' ' -f1
 }
+# ADR-023 EMERGENCY owner off-switch, as a PURE predicate (no logging, no emit,
+# no later-defined state) so it can be consulted at the earliest fail-closed
+# point AND at the normal skip site below — one definition, no divergence.
+# The flag is global (repo-independent) and grants a LOUD skip for 24h; a
+# forgotten flag must never silently disable review forever, so an expired flag
+# is reaped by the caller. This is the ONLY owner escape safe to honor before
+# the review target is resolved: the per-diff --approve marker is keyed to a
+# specific repo's diff, and at fail-closed time the target can only come from
+# the very command we could not sanitize — a cwd-keyed guess would wrongly pass
+# a `git -C /other-repo commit` decoy. gates-off means "skip ALL reviews this
+# session," which needs no target, so it is the honest fail-closed exit.
+GATES_OFF_FLAG="$HOME/.claude/coderlap/gates-off"
+owner_gates_off_fresh() {
+    # 0 = flag present AND < 24h old (honor it); 1 = absent or expired.
+    [[ -f "$GATES_OFF_FLAG" ]] || return 1
+    [[ -n "$(find "$GATES_OFF_FLAG" -mmin -1440 2>/dev/null)" ]]
+}
 # CLI recorder mode — must run BEFORE the env kill switches and the stdin
 # read: it is invoked as a command, not as a hook, and recording an approval
 # is meaningful even when other gate machinery is off.
@@ -556,9 +573,27 @@ AWK_RC=$?
 # safe fallback, so fail CLOSED (deny loudly), mirroring the jq-missing path.
 if [[ -z "$SCRUBBED" || $AWK_RC -ne 0 ]]; then
     if [[ "$CMD" == *'<<'* ]]; then
+        # ADR-023: the owner is never trapped. This deny is the ONLY place a
+        # gate block precedes the owner-escape checks below (819/906), because
+        # it fires before the review target is resolved. An explicit owner
+        # gates-off decision still overrides it — honored here, loudly. (The
+        # per-diff --approve marker is deliberately NOT consulted at this point:
+        # it is keyed to a specific repo's diff, and the target can only come
+        # from the command we just failed to sanitize; honoring a cwd-keyed
+        # guess would wrongly pass a `git -C /other-repo commit` decoy. gates-off
+        # is global, so it is the safe fail-closed owner exit.)
+        if owner_gates_off_fresh; then
+            jq -n \
+              --arg msg "⚠ codex-review-gate: OWNER GATES-OFF flag — heredoc commit NOT reviewed (awk unavailable; rm ~/.claude/coderlap/gates-off to re-arm)" \
+              --arg ctx "CODEX REVIEW SKIPPED: awk could not sanitize the heredoc, but the owner's gates-off flag is present (an explicit in-chat decision to skip ALL reviews this session, expires 24h after creation). Honouring it here so the fail-closed path can never trap the owner. Report the skip alongside the commit; per the AI workflow rules a skipped review never stays silent." '{
+                systemMessage: $msg,
+                hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: $ctx }
+            }'
+            exit 0
+        fi
         jq -n \
           --arg msg "⛔ codex-review-gate: heredoc present but awk could not sanitize it — commit BLOCKED (not reviewed). Install awk (mawk/gawk) or rewrite the commit without a heredoc, then retry." \
-          --arg r "A heredoc (<<) is present and the command-scrub pass (awk) failed or is unavailable. A heredoc body could hide an unreviewed command line past the scrub, so there is no safe fallback — per the AI workflow rules a review that cannot run must fail CLOSED, never silently allow. Fix: install awk, or re-run the commit without a heredoc (e.g. -m/-F <file>)." '{
+          --arg r "A heredoc (<<) is present and the command-scrub pass (awk) failed or is unavailable. A heredoc body could hide an unreviewed command line past the scrub, so there is no safe fallback — per the AI workflow rules a review that cannot run must fail CLOSED, never silently allow. Fix options: (1) install awk; (2) re-run the commit without a heredoc (e.g. -m/-F <file>); (3) if the owner has explicitly approved skipping review this session, the fail-closed owner exit is the gates-off flag: touch ~/.claude/coderlap/gates-off (per-diff --approve cannot apply here — the review target is unresolved when the scrub fails)." '{
             systemMessage: $msg,
             hookSpecificOutput: {
                 hookEventName: "PreToolUse",
@@ -815,10 +850,13 @@ fi
 # reach them. The flag file works immediately, expires 24h after creation (a
 # forgotten flag must never silently disable review forever — same TTL as the
 # cache sweep), and every skip it grants is LOUD, never silent. Checked AFTER
-# commit detection + docs-only so non-commit commands stay noise-free.
-GATES_OFF_FLAG="$HOME/.claude/coderlap/gates-off"
+# commit detection + docs-only so non-commit commands stay noise-free. Uses the
+# same owner_gates_off_fresh predicate the early fail-closed path consults
+# (defined once near the top, GATES_OFF_FLAG with it) so the two can never
+# diverge; this site adds the log_skip + owner-facing allow the early path
+# cannot (its logging/emit helpers are not defined yet).
 if [[ -f "$GATES_OFF_FLAG" ]]; then
-    if [[ -n "$(find "$GATES_OFF_FLAG" -mmin -1440 2>/dev/null)" ]]; then
+    if owner_gates_off_fresh; then
         log_skip owner_gates_off \
             "$(jq -cn --arg sub "$SUBCMD" '{reason:"owner_gates_off", subcmd:$sub}')"
         allow_with_warning \
@@ -1102,18 +1140,22 @@ if [[ -f "$CACHE/$HASH" ]]; then
             ;;
         *)
             # Unknown / torn / truncated marker: never a fall-through allow.
-            # Treated as an open escalation (conservative) — the owner override
-            # is the only in-band pass, same as an unparseable denial.
+            # Treated as an open escalation (conservative) — the owner clears it
+            # with --approve (ADR-023), same as an unparseable denial.
             CAP_RIDE=1; R_UNVERIFIED=1
             ;;
     esac
     fi   # MARKER_READ_OK
     if (( CAP_RIDE )); then
-        # An open (or unverifiable) CAP-REACHED escalation is NOT cleared by
-        # an identical retry. The ONLY in-band pass is the owner's explicit
-        # override signal — an agent must never set it on its own judgment.
-        # This is the owner-override mechanism the durable escalation state
-        # requires: machine-checkable, loud, and attributable to the human.
+        # An open (or unverifiable) CAP-REACHED escalation is NOT cleared by an
+        # identical retry. The real in-band owner exit is --approve (ADR-023),
+        # named in the deny message below — it works from inside a running
+        # session and is keyed to this exact diff. The legacy
+        # CODERV_GATE_OWNER_OVERRIDE check below is retained only for
+        # compatibility: it is read from Claude Code's launch environment
+        # (frozen at session start), so an env-prefix on the retried command
+        # never reaches this hook — it can only pass when the variable was
+        # exported before the session began. Not the in-band exit; --approve is.
         if [[ "${CODERV_GATE_OWNER_OVERRIDE:-0}" == "1" ]]; then
             log_event system outcome "$(jq -cn --argjson unv "$R_UNVERIFIED" \
                 '{result:"passed", cached:true, over_cap_escalation:true, owner_override:true, state_unverified:($unv==1)}')"
