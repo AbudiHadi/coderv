@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-07-25 — ADR-024 SHIPPED + RELEASED (`5dc1e39`, v0.15.2): the last gate block that could trap the owner is closed
+
+**Why:** owner asked for an audit — "does anything block me or my commands, and is every block escapable in-band?" Audited all 23 ADRs + the 4 live gate hooks, cross-checked with Codex (read-only advisory, not a diff review). Result: every gate deny had a clean owner escape EXCEPT one — the commit gate's **heredoc fail-closed deny** (fires when a `<<` heredoc commit can't be awk-sanitized) sat *before* the owner-escape checks, so on an awk-less host an owner saying "ship it" had no in-band way past it. The one spot the gate could overrule the owner — a direct ADR-023 charter violation, surviving in an un-audited corner.
+
+**What shipped (v0.15.2, released clean):**
+- **The fail-closed deny now honours the gates-off flag** (`~/.claude/coderlap/gates-off`) via a pure `owner_gates_off_fresh()` predicate defined early (before the branch that calls it), shared with the normal skip site (DRY). `--approve` is deliberately NOT honoured there: when the scrub fails the target repo can only come from the untrusted command, so a cwd-keyed guess could pass a `git -C /other-repo` decoy (Codex plan-review finding 1). gates-off is global → the only safe fail-closed escape.
+- **Fixed all stale `CODERV_GATE_OWNER_OVERRIDE` references** — the gate's own commit-time review caught a SECOND one in two-brain-convergence.md:175 my first pass missed (round-2 [DRIFT] finding, fixed in one batch → round-3 LGTM). A hook can't read an env-prefix from a command; `--approve` is the real in-band exit. Legacy runtime check retained (compat), re-documented as launch-env-only.
+- **context-gate** "only sanctioned move" softened → one-shot Stop nudge, user is final authority.
+- ADR-024, VERSION 0.15.2, CHANGELOG, T76 (suite **255/0**). Hooks installed live this session; `./release.sh` ran clean (tagged+pushed+website synced).
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+5dc1e39 Honour the owner gates-off flag at the heredoc fail-closed deny (ADR-024)
+e0b96b4 Fix the coderlap slug on Windows - the grounding gate locked drive-rooted projects forever
+36ca01e Docs: queue the read-only-agent handoff rule for the next session (owner order); note v0.15.0 install+release completed
+$ git status -sb
+## main...origin/main
+$ cat VERSION
+0.15.2
+$ git ls-remote --tags origin | grep v0.15.2
+dedd913fbcedf10c421abd9749557b470a41b18b	refs/tags/v0.15.2
+$ bash tests/gate-cap.sh | tail -1
+255 passed, 0 failed
+```
+
+**Gotchas the next session should know:**
+- Owner-authority escape map is now: ordinary/cap/ceiling denies → per-diff `--approve`; awk-fail+heredoc fail-closed deny → global gates-off flag. `CODERV_GATE_OWNER_OVERRIDE=1` NEVER works in-band (frozen launch env) — never suggest it.
+- Optional leftover: the GitHub Release *page* was NOT created (`gh release create v0.15.2 ...`, command printed by release.sh). The tag itself is live on remote; the page is cosmetic.
+- The `read-only-agent handoff rule` queued in `36ca01e` (2026-07-23) is STILL not implemented — only queued in docs. Wire it into /session + context-gate + MASTER/skills.md when picked up.
+
+**Next session should probably:**
+- Either create the GitHub release page (one command), OR pick up the still-pending read-only-agent handoff rule from `36ca01e`.
+
+---
+
 ## 2026-07-23 (later) — ADR-023 SHIPPED (`68f56b9`): owner authority is mechanical — per-diff `--approve` outranks every gate state; v0.15.0 ready to release
 
 **Why (live-fire failure on alrafiq):** a prior session hit the gate on an owner-approved test branch and dead-ended: the deny told the owner to re-run the commit with `CODERV_GATE_OWNER_OVERRIDE=1`, but the hook reads env FROZEN at session launch — a command prefix never reaches it, for agent or owner alike. The owner's requirement (verbatim in ADR-023): when he explicitly says "approved", the exact rejected diff must ship — no cap-waiting, no cache tricks, no terminal commands — while the gate stays armed for everything else.
