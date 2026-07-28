@@ -196,6 +196,12 @@ Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemi
 
 ---
 
+## Credits
+
+Several ideas in v0.16.0 were adapted from [Matt Pocock](https://www.mattpocock.com)'s [`mattpocock/skills`](https://github.com/mattpocock/skills) (MIT): the project-vocabulary file (`CONTEXT.md`), the bug-diagnosis red-repro loop, the effort map for multi-session planning, grill mode, and the code-smell baseline in `/ship`'s review. They were woven into the existing seven commands rather than added as new ones — the adoption reasoning, including what was deliberately not adopted, is recorded in `docs/DECISIONS.md` (ADR-025, ADR-026).
+
+---
+
 ## Licence
 
 CoderLap Source-Available Licence v1.0 — see [LICENCE](./LICENCE).
