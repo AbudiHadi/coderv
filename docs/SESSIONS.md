@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-07-28 (later) — v0.16.0 SHIPPED + RELEASED end-to-end: /ship loop (13 fixes), README credit, install, tag, website, release pages
+
+**What shipped:**
+- `6d08143` — the full v0.16.0 diff (15 files) after the /ship pre-commit loop: Codex 3 rounds + fresh-context reviewer produced **13 fixes on top of the built release** — effort-map lifecycle strand (fog left an emptied map `active` forever), /before's `/ship`-time map-update promise now backed by a real /ship Step 4 checklist item, chart-mode skip re-keyed to one-sitting fit (not fog absence), Decisions-so-far links-only (gist removed), selection-rule ask-which scoped vs /session's record-all, chart-grill scoped vs /before's opt-in, docify's `templates/CONTEXT.md` runtime dangle reworded, /ship's ADR pointer numbered+scoped (ADR-025, toolkit repo), SESSIONS counts corrected, ADR-025 merge-conflicts line annotated with the ADR-026 forward pointer, /lint vocab grep hardened twice (exclude `docs/`, search the **anchor** not the term). Loop end-state was honestly CAP-STOPPED (cap 3, last micro-edit unreviewed) — and the commit-time gate then earned its backstop: round 1 caught `--exclude-dir` placed AFTER `--` (file operand, not option; reproduced with a live grep before fixing), retry LGTM.
+- `ea3f155` — README **Credits** section: Matt Pocock's `mattpocock/skills` (MIT) named as the source of the v0.16.0 adoptions, pointing at ADR-025/026.
+- **Released v0.16.0 the whole way:** `./release.sh` clean (tag `v0.16.0` pushed to github.com/AbudiHadi/coderv, website site.ts→0.16.0, astro rebuilt, site repo committed `a52db42`, :3070 serving 0.16.0 verified) + `gh release create v0.16.0` page. Skills force-reinstalled to `~/.claude/skills/` (run-books live).
+
+**In flight (not yet shipped):**
+- Nothing in this repo — tree clean, everything released.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -4
+ea3f155 docs: credit mattpocock/skills in the README
+6d08143 v0.16.0: adopt the best of mattpocock/skills across the existing commands (ADR-025, ADR-026)
+c0074ec docs: rotate SESSIONS.md — move older entries to archive (keep newest 10)
+e3dee7c docs: session handoff — ADR-024 shipped + released (v0.15.2)
+$ git status --short
+(clean)
+$ cat VERSION ; git describe --tags
+0.16.0
+v0.16.0
+$ bash tests/gate-cap.sh | tail -1 ; bash tests/mint-eid.sh | tail -1
+255 passed, 0 failed
+21 passed, 0 failed
+```
+
+**Gotchas the next session should know:**
+- **Bare `./install.sh` silently SKIPS existing skill dirs** ("exists — use --force"). Updating live skills after a toolkit commit requires `./install.sh --force` — it bit this session (run-books didn't land until the force rerun).
+- The "v0.15.2 GitHub release page missing" claim in the previous handoff was STALE — the page has existed since 2026-07-26 (`gh release create` 422'd on it; verified with `gh release list`). Nothing owed there.
+- In /lint's stale-vocabulary check, remember WHY the grep is shaped `grep -rFln --exclude-dir={docs,...} -- '<anchor>' .`: options after `--` become file operands (gate finding, reproduced), `docs/` self-matches the glossary row, and the ANCHOR identifier is what must hit code — the term is only for reporting.
+- The spec + skip-receipt under `~/.claude/coderlap/` for this task are now stale (task shipped) — /lint's "stale coderlap artifacts" check will rightly offer cleanup next run.
+
+**Open architecture findings (if any):**
+- none (no ARCH-REVIEW file in this repo)
+
+**Next session should probably:**
+- **OWNER DECISION PARKED:** keep the toolkit vs switch to popular community skill repos. Recommendation already given and recorded (keep the gated toolkit — enforcement is the moat community markdown can't ship — and absorb community ideas periodically, v0.16.0-style); owner said "I will decide later". Don't start new toolkit feature work until this lands.
+- If the toolkit stays: the read-only-agent handoff rule queued in `36ca01e` (2026-07-23, owner-ordered) is still docs-only — wire into /session + context-gate + MASTER/skills.md.
+
+---
+
 ## 2026-07-28 — v0.16.0 BUILT, NOT COMMITTED (context gate): mattpocock/skills adoption, both waves — resume at /ship
 
 **Why:** owner evaluated [mattpocock/skills](https://github.com/mattpocock/skills) (~192k stars), goal stated explicitly: *"the target is not show my tools as the best… I am looking for something [that] deliver[s] a clean code to me."* All 17 of his engineering+productivity skills were read in full; the best of them adopted in two waves, everything woven into the existing 7 commands (no new command, no hook changes). Both waves went through /before with Codex plan review (wave 1: 2 rounds → CONVERGED; wave 2: 2 rounds → CONVERGED).
