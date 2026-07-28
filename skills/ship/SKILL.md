@@ -178,6 +178,15 @@ Offer to draft the entry yourself from the diff.
 - [ ] Mark the relevant section: `Status: shipped YYYY-MM-DD (commit: <hash>)`
 - **Never delete** the section. Preserve history.
 
+### If the diff resolves an open question on an active effort map
+
+- [ ] Active map naming this topic (`grep -l '^Status: active' docs/PLAN-*.md`)?
+  Move the resolved question out of *Open questions*, add the ADR link to
+  *Decisions so far*, and if that emptied the frontier run the map's Done
+  lifecycle — per the effort-map run-book in the `coderv` skill. This is the
+  `/ship`-time update `/before` Step 3 promises; without it the map's frontier
+  goes stale.
+
 ### If a milestone hit
 
 - [ ] Update `CLAUDE.md` status section if the project tracks phases there.
@@ -307,6 +316,33 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   pass/fail with the diff lines proving it, quoted verbatim with file:line.
   Run the build and tests if the project has them; paste raw output. Flag
   anything in the diff the spec never asked for."**
+- the **smell baseline** below, pasted into the brief in full (the subagent has
+  no other access to it): *"Also match the diff against these smells (Fowler,
+  Refactoring ch.3). Each hit is a labelled judgement call — 'possible Feature
+  Envy' — never a hard violation. A rule documented in the project's CLAUDE.md
+  overrides the baseline; skip anything the project's tooling already enforces."*
+
+  | Smell | What it is → how to fix |
+  |---|---|
+  | Mysterious Name | name doesn't reveal what it does/holds → rename; if no honest name comes, the design's murky |
+  | Duplicated Code | same logic shape in 2+ hunks/files of the change → extract the shared shape |
+  | Feature Envy | method reaches into another object's data more than its own → move it onto the data it envies |
+  | Data Clumps | same few fields/params keep travelling together → bundle into one type |
+  | Primitive Obsession | primitive standing in for a domain concept → give the concept its own small type |
+  | Repeated Switches | same `switch`/`if`-cascade on the same type recurs → polymorphism, or one shared map |
+  | Shotgun Surgery | one logical change forces scattered edits across many files → gather what changes together |
+  | Divergent Change | one module edited for several unrelated reasons → split per reason |
+  | Speculative Generality | abstraction/hooks for needs the spec doesn't have → delete; inline until a real need shows |
+  | Message Chains | long `a.b().c().d()` navigation → hide the walk behind one method |
+  | Middle Man | class/function that mostly delegates onward → cut it, call the target direct |
+  | Refused Bequest | implementer ignores most of what it inherits → drop inheritance, compose |
+
+  Smell hits land in the report as advisory notes for the user, **never** as
+  scorecard gates — the scorecard measures the spec, the baseline improves the
+  code. (The baseline is adopted from mattpocock/skills' code-review; the
+  skill around it was rejected — see ADR-025 in the toolkit's
+  docs/DECISIONS.md — because an ungated second review loop is exactly what
+  the codex-review-gate bounds.)
 
 When the reviewer returns, **machine-verify its quotes before believing it**:
 each quoted line must literally exist at its cited location —

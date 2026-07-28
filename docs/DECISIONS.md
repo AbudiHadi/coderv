@@ -33,6 +33,76 @@ What did we decide?
 
 ---
 
+## ADR-026: Wave-2 adoptions from mattpocock/skills — effort maps without a tracker, grill mode, merge-conflict rule; the reviewer split is rejected on re-analysis
+
+**Date:** 2026-07-28
+**Status:** accepted (updates one line-item of ADR-025)
+**Decider(s):** Hadi (CoderLap author), Claude (with Codex plan review, 2 rounds → CONVERGED)
+
+### Context
+After ADR-025 shipped, the owner asked whether the remaining unadopted items could be adopted "in an extremely smart way", then asked for a re-analysis with honest confidence scores. The re-analysis found: (a) wayfinder's tracker dependency was never essential — his own setup offers a local-files mode, so the *decision-map discipline* is adoptable on plain markdown; (b) grilling's one-question-at-a-time discipline has a clean opt-in home inside `/before`; (c) ADR-025's dismissal of `resolving-merge-conflicts` as "generic" conflated the *skill* (still not worth adopting) with its distilled *rule* (one CLAUDE.md line); (d) my own wave-2 proposal to split `/ship`'s reviewer into two subagents (his Standards/Spec separation) scored only 68% under re-analysis and is rejected below.
+
+### Decision
+Three adoptions (same release, v0.16.0):
+
+1. **🗺 Effort maps** — a new `/coderv` shape (ADR-014 pattern) driven by `skills/coderv/effort-map.md`: one `docs/PLAN-<topic>.md` per multi-session effort with `Status: active|done`, Destination, Decisions-so-far, Open questions, fog ("Not yet specified"), and Out of scope. Two invariants close the hazards Codex and self-review found: **the map is an index, never a store** — decisions live only as ADRs, the map links them (two homes for one decision is the contradiction `/lint` hunts); and **selection is deterministic** — `grep -l '^Status: active' docs/PLAN-*.md`, with multiple actives always asked about, never guessed. `/before` reads the active map as prior art; `/session` hands off the frontier; `/lint` flags a >30-day-untouched active map as rot.
+2. **Grill mode** — opt-in Step 4.5 in `/before` for requests with open *decisions* (not missing facts): one question per message, each with a recommended answer; facts are looked up, never asked; scout findings are settled facts and never re-asked; exit into the normal plan, answers landing in the spec checklist.
+3. **`coderlap:rule:merge-conflicts`** in `templates/CLAUDE.md` — resolve from primary sources; both intents where compatible, the merge's stated goal where they conflict; never invent behaviour; `--abort` is not the default exit. This **updates ADR-025's line-item**: the *skill* stays rejected (thin), the distilled *rule* is adopted — recorded here so it reads as a considered status change, not a silent reversal.
+
+**Rejected: the two-subagent reviewer split** (Spec axis and Standards axis in separate clean contexts). Re-analysis: the masking problem it solves is *merged rankings* — and `/ship`'s scorecard already keeps spec gates and advisory smell notes structurally separate, with the codex gate as an independent second context besides. The residual benefit doesn't justify doubling reviewer-subagent tokens on every commit. Revisit if smell notes ever start drowning spec verdicts in the single reviewer's report.
+
+**Still not adopted** (unchanged from ADR-025): a real issue tracker (maps deliberately stay local markdown), `to-spec`/`handoff`/`implement` (duplicates of stronger toolkit parts), his persona/content skills.
+
+### Alternatives considered
+- **Adopt the discipline, keep local markdown** (chosen) — the value of wayfinder is the decision-map shape, not the tracker plumbing; local files keep the toolkit's no-server grain and `/lint` can police the map like any doc.
+- **Adopt wayfinder verbatim with a tracker** — rejected: infrastructure the flow doesn't run, and per-ticket child issues would fight DECISIONS.md for ownership of decisions.
+- **Build all four wave-2 items** — rejected: shipping a 68%-confidence item into a minimal-surface toolkit is how surfaces bloat; the rejection is recorded with its revisit trigger instead.
+
+### Consequences
+- Positive: multi-session efforts (career hub, migrations) get a persistent decision frontier that survives session boundaries instead of living in "next session should…" prose; vague requests get a cheap alignment loop; every conflict resolution has a written discipline.
+- Negative / trade-off: one more run-book to maintain; a map only helps if work-through mode actually gets invoked — `/coderv`'s bare-scan proposal (precedence slot 4) is the mechanism that keeps it alive.
+- Revisit if: maps stay `active` untouched for months across projects (the discipline isn't sticking — simplify or drop), or the single-reviewer report shows smells crowding out spec verdicts (reopen the split).
+
+---
+
+## ADR-025: Adopt mattpocock/skills' clean-code substance, woven into the 7 commands — reject its review loop and tracker machinery
+
+**Date:** 2026-07-28
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude (with Codex plan review, 2 rounds → CONVERGED)
+
+### Context
+The owner evaluated [mattpocock/skills](https://github.com/mattpocock/skills) (MIT, ~192k stars) against the toolkit and set the goal explicitly: *not* defending the toolkit — "I am looking for something [that] deliver[s] a clean code to me." A full read of all 17 engineering + productivity skills found genuinely superior articulations of several clean-code disciplines the toolkit lacked — alongside machinery that would break the toolkit's hard-won invariants: his `code-review` is an ungated second review loop (no ledger, no cap, no ceiling — exactly what ADR-019/021/022/023/024 exist to bound), and `wayfinder`/`triage`/`to-tickets` are built on issue-tracker infrastructure this flow doesn't run. The `never-unrequested` 7-command cap and the ADR-014 precedent (weave capabilities through existing commands, never a new slot) constrain *how* anything gets adopted.
+
+### Decision
+Adopt the **substance** of seven items, each woven into an existing command (v0.16.0):
+
+1. **`docs/CONTEXT.md` project vocabulary** — new `templates/CONTEXT.md`; generated by `/docify` through the normal drafts-first flow; read by `/before` Step 3 (position 2); lint-checked deterministically (every Terms row carries a code anchor verified like any citation; the Domain-only section is anchor-exempt by design).
+2. **`coderlap:rule:tests`** in `templates/CLAUDE.md` — expected values from an independent source of truth (never recomputed the code's way); vertical slices by default, with regression/characterization tests as named exceptions.
+3. **`coderlap:rule:design`** in `templates/CLAUDE.md` — deep modules, the deletion test, accept-dependencies-don't-create-them, one-adapter-hypothetical/two-real; scoped to core logic, with adapters/handlers/glue as named exceptions. `/before`'s detailed plan now names the seam being touched.
+4. **Fowler smell baseline** (12 smells, name → fix) — into `/ship`'s fresh-context reviewer *brief* only; advisory notes, never scorecard gates; repo-documented standards override.
+5. **Prototype discipline** — `/before` Step 5 may plan a "prototype first" step for open design questions (throwaway-marked, one command, no persistence, verdict via `/decision`, never lands on main).
+6. **Bug-diagnosis run-book** — `skills/coderv/bug-diagnosis.md` (sibling of `architecture-review.md`, per ADR-014's run-book pattern), driven by the 🐛 shape: a red-capable repro loop is mandatory *before* any hypothesis.
+7. This ADR itself, so the rejections below survive future "should we adopt X?" re-debates.
+
+**Rejected: his `code-review` skill.** Its two-axis *insight* is already native (the codex gate is the standards/defect axis; the fresh-context subagent verdicts each spec item and flags unrequested diff content — the Spec axis; they are reported separately and never reranked). What the skill would add is the loop: a second, ungated reviewer with no memory, no cap, and no self-termination — re-creating precisely the failure the gate's ledger/cap/ceiling machinery closed. The smell *baseline* carries the remaining value without the loop.
+
+**Not adopted (recorded so they aren't re-litigated):** `wayfinder`/`triage`/`to-tickets` (tracker infrastructure the flow doesn't run; SESSIONS.md + specs serve the multi-session role — revisit only if a tracker enters the flow); `handoff` (weaker than `/session`'s git-verified claims, ADR-001); `to-spec` (`/before` Step 5.5); `improve-codebase-architecture` (ADR-014's audit, whose CDN-based HTML report also violates the toolkit's grain); `research`/`implement`/`resolving-merge-conflicts` (thin or generic; the
+merge-conflicts line-item was later updated by ADR-026 — skill stays rejected,
+a one-line distillation was adopted).
+
+### Alternatives considered
+- **Weave the substance, reject the machinery** (chosen) — clean code was the goal; every adopted item acts directly on code being written or committed, and nothing touches a hook or adds a command.
+- **Install his repo as a Claude Code plugin alongside** — rejected: duplicate front doors (`grill-with-docs`/`wayfinder` claim the same triggers as `/before`, splitting the router's HIGH-confidence path), his `code-review` would run ungated, and his setup skill writes a parallel docs tree (`docs/agents/`, `CONTEXT-MAP.md`) beside the toolkit's.
+- **Adopt nothing** — rejected by the owner's stated goal; the test/design/vocabulary articulations are genuinely better than what the toolkit had.
+
+### Consequences
+- Positive: every project scaffolded or docified from the toolkit now carries test-honesty and module-depth rules; every `/ship` diff gets a smell pass; every hard bug gets a repro-loop discipline; naming drifts get a canonical vocabulary that `/lint` can mechanically police.
+- Negative / trade-off: `templates/CLAUDE.md` grows (~30 lines) — every downstream session pays that context; the smell baseline adds reviewer-subagent tokens per `/ship`; CONTEXT.md is only as alive as its lint cadence.
+- Revisit if: a real issue tracker enters the owner's flow (wayfinder becomes worth a fresh look), or the smell notes prove noisy enough that the baseline needs a diff-size floor.
+
+---
+
 ## ADR-024: The heredoc fail-closed deny honours the owner gates-off flag — the last gate block that could trap the owner is closed
 
 **Date:** 2026-07-25

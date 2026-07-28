@@ -1,7 +1,7 @@
 ---
 name: docify
 description: |
-  Generate a professional docs/ folder from an existing codebase. Scans the project, detects the stack, and writes CLAUDE.md + architecture.md + api.md + components.md + database.md + integrations.md + overview.md — all grounded in file+line citations so docs never lie. Preserves custom CLAUDE.md rules when it already exists.
+  Generate a professional docs/ folder from an existing codebase. Scans the project, detects the stack, and writes CLAUDE.md + architecture.md + api.md + components.md + database.md + integrations.md + overview.md + CONTEXT.md (project vocabulary) — all grounded in file+line citations so docs never lie. Preserves custom CLAUDE.md rules when it already exists.
 
   TRIGGER — suggest this skill (even without /docify prefix) when the user says the words "docs", "doc", "documentation", "readme", "README" — OR any of these phrases: "write docs", "write documentation", "create docs", "generate docs", "make docs", "make a doc", "make a full docs", "need docs", "no docs exist", "this project has no README", "document this project", "explain the codebase", "document what we have", "make docs for X", "I need docs", "our docs are outdated", "fresh docs", "bootstrap docs", "docs are missing", "docs outdated".
 
@@ -105,6 +105,7 @@ Reply `go` to start, or say "details" to see the full file list and what each wi
 | 🧩 `docs/components.draft.md` | <K> components with props |
 | 🗄️ `docs/database.draft.md` | <M> models + relationships |
 | 🔌 `docs/integrations.draft.md` | External services |
+| 🗣️ `docs/CONTEXT.draft.md` | Project vocabulary — term → meaning → code anchor |
 | 📋📝🐛 Empty scaffolds | DECISIONS, SESSIONS, KNOWN-ISSUES |
 
 **Won't touch:**
@@ -166,6 +167,9 @@ coderlap:rule:suggest-followups  — suggest /decision /ship /session at the rig
 coderlap:rule:prevention-rules   — non-obvious bug fixes get prevention rules in KNOWN-ISSUES
 coderlap:rule:validate-citations — docs must cite src: lines; verify on /ship
 coderlap:rule:claude-md-stable   — CLAUDE.md edits are explicit, not auto
+coderlap:rule:tests              — expected values from an independent source of truth; vertical slices by default
+coderlap:rule:design             — deep modules; deletion test; accept dependencies; return results over side effects
+coderlap:rule:merge-conflicts    — resolve from primary sources; goal wins on conflict; never invent behaviour
 ```
 
 ## Step 4 — Generate each doc (draft form)
@@ -237,6 +241,20 @@ Group by folder. Skip routes Claude can't parse confidently — mark them `<!-- 
   - Imports in services
 - For each: what it's used for (read the service file), env vars needed, link to provider docs
 
+### docs/CONTEXT.draft.md
+The project vocabulary (structure below, like every other doc section —
+`templates/CONTEXT.md` in the toolkit repo is the reference scaffold):
+- Harvest terms from the code itself: domain nouns in model/entity names, service names,
+  recurring identifiers, README/domain docs. Only terms the project actually uses — never
+  invent vocabulary.
+- Each term row: **term → one-line meaning → code anchor** (`file:line` citation or a
+  grep-able identifier). Same citation grounding as every other doc.
+- Terms with no code counterpart go in the **Domain-only terms** section (no anchors —
+  `/lint` skips anchor-checks there by design).
+- Glossary only: no specs, no implementation decisions, no scratch notes.
+- Normal drafts-first flow — promoted with `/docify approve CONTEXT`, refreshed with
+  `/docify --refresh CONTEXT`, like any generated doc.
+
 ### docs/DECISIONS.md, KNOWN-ISSUES.md, SESSIONS.md
 - Empty headers + usage hint. Created as real files (not drafts) since they have no content to verify.
 
@@ -275,6 +293,7 @@ Line ranges allowed (`42-58`), not just single lines. Use the smallest range tha
 | 🧩 docs/components.draft.md | <N> lines | <N> components, <X> source refs |
 | 🗄️ docs/database.draft.md | <N> lines | <N> models, <X> source refs |
 | 🔌 docs/integrations.draft.md | <N> lines | <N> services, <X> source refs |
+| 🗣️ docs/CONTEXT.draft.md | <N> lines | <N> terms anchored, <M> domain-only |
 | 📋📝🐛 DECISIONS / SESSIONS / KNOWN-ISSUES | empty | ready for use |
 
 **TODOs flagged** (worth a 30-second look before approve):

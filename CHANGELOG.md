@@ -5,6 +5,21 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.16.0] — 2026-07-28
+
+> No hook changes — no reinstall of `~/.claude/hooks/` needed. Re-run
+> `install.sh` only to refresh the skill copies under `~/.claude/skills/`.
+
+### Added
+- **`docs/CONTEXT.md` — the project vocabulary (ADR-025).** New `templates/CONTEXT.md`; `/docify` now generates `docs/CONTEXT.draft.md` (term → meaning → code anchor, normal drafts-first flow), `/before` reads it right after CLAUDE.md and surfaces term conflicts instead of silently picking a side, and `/lint` checks it deterministically: anchored terms get the standard citation check, the "Domain-only terms" section is anchor-exempt by design. Adapted from mattpocock/skills' ubiquitous-language idea.
+- **Two new CLAUDE.md rule markers shipped to every project** (`templates/CLAUDE.md` + docify's marker list): `coderlap:rule:tests` — expected values come from an independent source of truth, never recomputed the code's way; vertical slices by default with regression/characterization tests as named exceptions — and `coderlap:rule:design` — deep modules, the deletion test, accept-dependencies-don't-create-them, one-adapter-hypothetical/two-real; scoped to core logic with adapters/handlers/glue as named exceptions.
+- **Fowler smell baseline in `/ship`'s fresh-context reviewer brief** — 12 smells (name → fix) matched against every diff as labelled judgement calls; advisory notes only, never scorecard gates; repo-documented standards override. The baseline is adopted from mattpocock/skills' code-review; the skill around it was rejected (ADR-025) — an ungated second review loop is what the codex-review-gate exists to bound.
+- **`skills/coderv/bug-diagnosis.md` run-book** for the 🐛 shape (sibling of `architecture-review.md`): a red-capable repro command is mandatory *before* any hypothesis — then minimise, 3–5 falsifiable hypotheses shown to the user, tagged instrumentation, regression test at a correct seam, prevention rule via KNOWN-ISSUES.
+- **Prototype-first planning in `/before`** — when an open design question blocks the plan, it may include a throwaway prototype step (marked, one command to run, no persistence); the verdict lands via `/decision`, the prototype never lands on main. `/before`'s detailed plan also names the **seam** each change goes through.
+- **🗺 Effort maps — multi-session planning without a tracker (ADR-026).** New `/coderv` shape driven by `skills/coderv/effort-map.md`: a loose idea too big for one session gets one `docs/PLAN-<topic>.md` (`Status: active|done`) holding the destination, the open decision questions, the fog, and links — never copies — of resolved decisions (ADRs stay the single home). Chart mode creates it; work-through mode resolves one question per session; `/before` reads the active map as prior art, `/session` hands off the frontier, `/lint` flags a stale active map, and bare `coderv` proposes the next question. Adapted from mattpocock/skills' wayfinder, on local markdown.
+- **Grill mode in `/before` (opt-in, Step 4.5).** For requests with open *decisions*: one question per message, each with a recommended answer; facts are looked up, never asked; answers land in the spec checklist. Adapted from mattpocock/skills' grilling.
+- **`coderlap:rule:merge-conflicts`** in `templates/CLAUDE.md` — resolve conflicts from primary sources; preserve both intents where compatible, the merge's stated goal where they clash; never invent behaviour. (Updates ADR-025's line-item: the skill stays rejected, its distilled rule is adopted — ADR-026.)
+
 ## [0.15.2] — 2026-07-25
 
 > **Heads-up — reinstall required.** The commit gate's hook changed. Re-run

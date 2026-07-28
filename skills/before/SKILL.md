@@ -68,15 +68,23 @@ If the user says no, continue with the task using just what you can learn from t
 Read in this order:
 
 1. `CLAUDE.md` — rules, patterns, principles.
-2. `docs/MASTER.md` (or `docs/MASTER-INDEX.md`) if it exists — the docs entry-point map. `MASTER.md` orients you to the top-level docs areas; `MASTER-INDEX.md` (when present) adds a "Task → Doc Map" — find the rows that match.
-3. Any docs named in that map, in order.
-4. If `docs/DECISIONS.md` exists — grep it for terms related to the task. If any ADR applies, read it.
-5. If `docs/KNOWN-ISSUES.md` exists — grep it. If there's a prior bug in this area, note the prevention rule.
-6. If `docs/SESSIONS.md` exists — read the last entry. It may have "next session should probably…" hints or in-flight context.
-7. If a `docs/ARCH-REVIEW-*.md` exists — read the newest one. Its **open P0/P1
+2. `docs/CONTEXT.md` if it exists — the project vocabulary. Use its terms in the plan, the spec, and everything you name; if the task's wording conflicts with a glossary term, surface the conflict in Step 5 instead of silently picking one.
+3. `docs/MASTER.md` (or `docs/MASTER-INDEX.md`) if it exists — the docs entry-point map. `MASTER.md` orients you to the top-level docs areas; `MASTER-INDEX.md` (when present) adds a "Task → Doc Map" — find the rows that match.
+4. Any docs named in that map, in order.
+5. If `docs/DECISIONS.md` exists — grep it for terms related to the task. If any ADR applies, read it.
+6. If `docs/KNOWN-ISSUES.md` exists — grep it. If there's a prior bug in this area, note the prevention rule.
+7. If `docs/SESSIONS.md` exists — read the last entry. It may have "next session should probably…" hints or in-flight context.
+8. If a `docs/ARCH-REVIEW-*.md` exists — read the newest one. Its **open P0/P1
    findings are prior art**: if the file you're about to change is named in one,
    plan around it (surface it as a "heads-up" row in Step 5), so you don't
    re-introduce or worsen a known structural problem.
+9. If an **active effort map** exists (`grep -l '^Status: active' docs/PLAN-*.md`;
+   several hits → list and ask which, never guess) and the task touches its
+   topic — read it. Mapped decisions are prior art (they link ADRs); a task that
+   contradicts one is a "heads-up" row in Step 5, and a task that resolves one
+   of its open questions should say so — the map gets updated at `/ship` time
+   (its Step 4 checklist carries the matching item, so the update is gated,
+   not remembered).
 
 ## Step 4 — Find prior art in the code
 
@@ -88,6 +96,26 @@ find . -path ./node_modules -prune -o -type f -name "*<keyword>*" -print 2>/dev/
 ```
 
 If similar code exists — **read it** before writing new code. Match the existing style. Don't reinvent what already exists.
+
+## Step 4.5 — Grill mode (opt-in, for vague or large requests)
+
+When the request leaves **decisions** open that the plan can't be built without
+— not missing *facts*, missing *choices* — offer once: *"This has a few open
+decisions. Want me to grill you first — one question at a time, each with my
+recommendation?"* Never auto-run it; on "no", plan under stated assumptions.
+
+Rules of the grill (adapted from mattpocock/skills `grilling`, MIT — ADR-026):
+
+- **Facts are never questions.** Anything the code, docs, or a read-only look
+  can answer is looked up, not asked. (When `/coderv` scouted first, its
+  findings are settled facts — never re-ask them.) Only genuine *decisions* go
+  to the user.
+- **One question per message**, hardest-dependency first, each with **your
+  recommended answer** — the user says "yes" or corrects, which is cheap;
+  deciding from scratch is expensive.
+- **Exit** when the decisions the plan needs are answered, or the user says
+  "enough" — then continue to Step 5. Each answer lands in the Step 5.5 spec
+  checklist as a verifiable line, so nothing agreed in the grill gets lost.
 
 ## Step 5 — State the plan (terse by default)
 
@@ -123,10 +151,20 @@ That's it. No big tables in the default response. The user usually just wants to
 **Files I expect to touch:**
 - `<path>` — <one-line why>
 
+**Seam:** <the public interface this change is made and tested through — an existing one by name, or the new one being introduced and why an existing seam can't carry it>
+
 **Heads-up:** <anything surprising, or ✅ nothing>
 ```
 
 Always end with **a recommendation**, in both default and detailed form. Never ask "approve to proceed?" with no opinion.
+
+**Prototype-first option.** When the plan hinges on an open design question — a
+state model that's hard to reason about on paper, a UI direction nobody has seen
+yet — the plan may include a **"prototype first"** step instead of guessing:
+throwaway code that answers exactly that question. Rules: named/located so a
+casual reader sees it's a prototype, one command to run, no persistence, no
+polish. When the question is answered, the verdict is logged via `/decision`
+and only the validated decision lands on main — the prototype itself never does.
 
 ## Step 5.5 — Write the grounding receipt + spec (to disk, before coding)
 

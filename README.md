@@ -47,7 +47,7 @@ Seven slash commands + four always-on gates that help devs keep extremely clear 
 ## The loop
 
 ```
-/docify                # once per project (generates CLAUDE.md + 6 docs)
+/docify                # once per project (generates CLAUDE.md + 7 docs incl. CONTEXT.md vocabulary)
                        # ↓ every task after that:
 /coderv <request>      # the front door — assembles and drives the rest:
   → /session last      #   what was I doing?

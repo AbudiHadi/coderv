@@ -55,8 +55,9 @@ Pick the proposal by this precedence — first hit wins:
 1. **Uncommitted work** in flight → propose `/ship` it.
 2. **Unfinished handoff** ("next session should…") → propose resuming it.
 3. **Open gap / known-issue** flagged as next → propose tackling it.
-4. **Stale docs** (lint >14 days) and nothing else pending → propose `/lint`.
-5. Nothing pending → ask the one-liner: "Clean slate — what are we building?"
+4. **Active effort map** (`grep -l '^Status: active' docs/PLAN-*.md` — exactly one; several → list and ask, never guess) with an unblocked open question → propose resolving the next one (work-through mode, `effort-map.md`).
+5. **Stale docs** (lint >14 days) and nothing else pending → propose `/lint`.
+6. Nothing pending → ask the one-liner: "Clean slate — what are we building?"
 
 **Independent of the pick above:** if the scan found an open ARCH-REVIEW whose
 map is not yet drawn, **also offer to draw it** in the proposal (a one-liner
@@ -87,11 +88,12 @@ Read the argument and pick ONE shape:
 | Shape | Signals | Pipeline |
 |---|---|---|
 | 🏗 **Feature / change** | "build", "add", "integrate", "refactor", "improve" | lint? → /before → work → **verify** → /ship |
-| 🐛 **Bug** | "bug", "broken", "error", "doesn't work", "crashes" | lint? → /before (greps KNOWN-ISSUES) → fix → **verify** → /ship |
+| 🐛 **Bug** | "bug", "broken", "error", "doesn't work", "crashes" | lint? → /before (greps KNOWN-ISSUES) → fix (non-trivial cause → **bug-diagnosis.md** run-book: red repro loop BEFORE any hypothesis) → **verify** → /ship |
 | ❓ **Question** | "how does", "why is", "what happens", "explain" | answer from docs + code — no pipeline, no edits |
 | 👋 **Wrap-up** | "done", "wrapping up", "stopping", "end of day" | /session |
 | 🧹 **Docs health** | "are docs fresh", "audit docs" | /lint alone |
 | 🏛 **Architecture / system audit** | "review architecture", "audit the system", "check all integrations", "is anything left running", "server left alone", "tech debt", "is this well-structured", "tight coupling" | **architecture-review.md** run-book → findings + system map (all services/modules at integration granularity, gaps highlighted) → (on yes) /before → work → verify → /ship |
+| 🗺 **Big effort** | a loose idea too big for one session — "I want to build <big thing>", "plan the migration", "we should eventually…", "continue the <topic> map" | **effort-map.md** run-book: chart mode (create `docs/PLAN-<topic>.md`) or work-through mode (resolve the next open question → ADR → update map). Planning only — when the map is done, slices hand into the normal 🏗 pipeline |
 
 The 🏛 shape is driven by the `architecture-review.md` run-book beside this
 file: a read-only scout, then a **parallel fan-out** over seven dimensions

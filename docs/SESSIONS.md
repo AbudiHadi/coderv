@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-07-28 — v0.16.0 BUILT, NOT COMMITTED (context gate): mattpocock/skills adoption, both waves — resume at /ship
+
+**Why:** owner evaluated [mattpocock/skills](https://github.com/mattpocock/skills) (~192k stars), goal stated explicitly: *"the target is not show my tools as the best… I am looking for something [that] deliver[s] a clean code to me."* All 17 of his engineering+productivity skills were read in full; the best of them adopted in two waves, everything woven into the existing 7 commands (no new command, no hook changes). Both waves went through /before with Codex plan review (wave 1: 2 rounds → CONVERGED; wave 2: 2 rounds → CONVERGED).
+
+**What was built (uncommitted — 11 modified + 3 new files; this handoff entry makes SESSIONS.md the 12th modified, 15 dirty total):**
+- **Wave 1 (ADR-025):** `templates/CONTEXT.md` project-vocabulary template + /docify generates `docs/CONTEXT.draft.md` (drafts-first) + /before reads it (Step 3 pos 2) + /lint deterministic anchor check; `coderlap:rule:tests` + `coderlap:rule:design` markers (scoped, named exceptions); Fowler 12-smell baseline in /ship's fresh-context reviewer brief (advisory only, never scorecard gates); prototype-first option + Seam row in /before Step 5; `skills/coderv/bug-diagnosis.md` run-book (red repro loop BEFORE any hypothesis) wired to the 🐛 shape.
+- **Wave 2 (ADR-026):** `skills/coderv/effort-map.md` run-book + 🗺 Big effort shape — `docs/PLAN-<topic>.md` per multi-session effort, `Status: active|done`, map is an INDEX never a store (decisions live only as ADRs, map links them), deterministic selection (`grep -l '^Status: active' docs/PLAN-*.md`, several → ask never guess); /before Step 3 item 9 reads it, /session hands off the frontier, /lint flags >30-day-stale active maps, bare-coderv proposes the next question (precedence slot 4); grill mode = /before Step 4.5 (opt-in, one question at a time with recommendations, scout facts never re-asked); `coderlap:rule:merge-conflicts`.
+- **Rejected on paper:** his `code-review` skill (ungated loop vs ADR-019/021–024 — smell baseline adopted, loop not; ADR-025) and my own two-subagent reviewer split (68% confidence — scorecard already separates axes; revisit trigger recorded; ADR-026). Not adopted: wayfinder-with-tracker, triage, to-tickets, handoff, to-spec, research, implement, his persona/content skills — all with reasons in the two ADRs.
+- VERSION 0.15.2 → 0.16.0; CHANGELOG `[0.16.0] — 2026-07-28` (no hook changes → no hook reinstall needed).
+
+**Self-audit ran clean before the gate fired:** every spec item grep-verified present; TRIGGER/SKIP intact on all 7 skills; no stale "6 docs" claim anywhere; `git status --porcelain hooks/` = 0 changes.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+c0074ec docs: rotate SESSIONS.md — move older entries to archive (keep newest 10)
+e3dee7c docs: session handoff — ADR-024 shipped + released (v0.15.2)
+5dc1e39 Honour the owner gates-off flag at the heredoc fail-closed deny (ADR-024)
+$ git status -sb
+## main...origin/main
+ M CHANGELOG.md
+ M README.md
+ M VERSION
+ M docs/DECISIONS.md
+ M skills/before/SKILL.md
+ M skills/coderv/SKILL.md
+ M skills/docify/SKILL.md
+ M skills/lint/SKILL.md
+ M skills/session/SKILL.md
+ M skills/ship/SKILL.md
+ M templates/CLAUDE.md
+?? skills/coderv/bug-diagnosis.md
+?? skills/coderv/effort-map.md
+?? templates/CONTEXT.md
+$ cat VERSION
+0.16.0
+$ bash tests/gate-cap.sh | tail -1
+255 passed, 0 failed
+```
+
+**Gotchas the next session should know:**
+- The spec at `~/.claude/coderlap/specs/-root-claude-docs-toolkit.md` covers BOTH waves (base `c0074ec`, stamped 2026-07-28) — it is the ground truth /ship's reviewer + the gate's drift-hunter will audit this exact diff against. Don't rewrite it, don't /before again — the plan phase is fully done (both Codex rounds CONVERGED).
+- All 15 dirty files (the 14 release files + this SESSIONS.md handoff) belong to ONE release — commit as one. The gate reviews the whole dirty tree; nothing unrelated is mixed in (verified: hooks/ untouched).
+- ADR-026 explicitly UPDATES one line of ADR-025 (merge-conflicts: skill rejected, distilled rule adopted). If lint ever flags them as contradicting, that's the resolution.
+- `~/.claude/skills/` live copies are now OLDER than source — run `install.sh` after commit (skills only; hooks unchanged, no hook reinstall).
+- Still pending from 2026-07-25: the GitHub release *page* for v0.15.2 (`gh release create`, cosmetic) and the read-only-agent handoff rule (queued `36ca01e`, still unimplemented).
+
+**Next session should probably:**
+- `/ship` this diff (first live run of the smell baseline, fittingly) → then `install.sh` → then owner decides on `./release.sh` for v0.16.0.
+
+---
+
 ## 2026-07-25 — ADR-024 SHIPPED + RELEASED (`5dc1e39`, v0.15.2): the last gate block that could trap the owner is closed
 
 **Why:** owner asked for an audit — "does anything block me or my commands, and is every block escapable in-band?" Audited all 23 ADRs + the 4 live gate hooks, cross-checked with Codex (read-only advisory, not a diff review). Result: every gate deny had a clean owner escape EXCEPT one — the commit gate's **heredoc fail-closed deny** (fires when a `<<` heredoc commit can't be awk-sanitized) sat *before* the owner-escape checks, so on an awk-less host an owner saying "ship it" had no in-band way past it. The one spot the gate could overrule the owner — a direct ADR-023 charter violation, surviving in an un-audited corner.

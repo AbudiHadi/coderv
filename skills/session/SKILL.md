@@ -122,6 +122,12 @@ $ git status --short
 - <paste open P0/P1 rows from the newest `docs/ARCH-REVIEW-*.md`, or "none">
   <!-- so a structural problem found by an audit doesn't rot between sessions -->
 
+**Active effort map (if any):**
+- <for the active map (`grep -l '^Status: active' docs/PLAN-*.md`; several → list each):
+  its name, open-question count, and the next unblocked question — e.g.
+  "PLAN-career-hub: 3 open, next: Q2 — entitlement model". Or omit the section.>
+  <!-- so a charted effort keeps moving — the frontier never rots in a closed session -->
+
 **Next session should probably:**
 - <suggested next step>
 
