@@ -52,7 +52,10 @@ while len(d) > 1 and d != home:
     if os.path.isfile(os.path.join(d, "CLAUDE.md")) and os.path.isdir(os.path.join(d, "docs")):
         root = d
         break
-    d = os.path.dirname(d)
+    parent = os.path.dirname(d)
+    if parent == d:  # drive/UNC root: dirname("D:\\") == "D:\\" — would spin forever
+        break
+    d = parent
 if root is None:
     sys.exit(0)  # no doc system here — the gate does not apply
 

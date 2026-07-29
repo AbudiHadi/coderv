@@ -32,6 +32,52 @@ Rule / test / check that would catch this next time.
 
 ---
 
+## KI-005: grounding gate spun forever on Windows for files outside the home drive — froze the whole CLI
+
+**First seen:** 2026-07-29
+**Last seen:** 2026-07-29
+**Status:** fixed in v0.16.1 (2026-07-29)
+
+### Symptom
+On Windows, the first Edit/Write to any file on a drive other than the home
+drive (or any path with no `CLAUDE.md` + `docs/` ancestor) froze Claude Code
+completely: Ctrl-C dead, terminal had to be killed. An orphaned `python.exe -`
+process kept spinning at 100% CPU even after the freeze, because the hook
+timeout kills the bash wrapper but not its Python child.
+
+### Root cause
+The project-root walk in `hooks/grounding-gate.sh` stepped upward with
+`d = os.path.dirname(d)` until `len(d) <= 1` or `d == home`. On Windows,
+`os.path.dirname("D:\\")` returns `"D:\\"` unchanged — the path never shrinks
+(`len` stays 3) and home on `C:` is never reached, so the loop never
+terminates. Linux was immune only by accident: `dirname("/")` is also a fixed
+point, but `len("/") > 1` is false so the guard fired first.
+
+### Fix
+The walk now breaks as soon as `dirname` stops making progress
+(`parent == d` → drive/UNC root reached). On Linux the only behavioural change
+is that pathological `//`-rooted walks (POSIX `dirname("//")` is also a fixed
+point, and `len("//") > 1` passed the old guard) now terminate too. Verified
+against Windows semantics with `ntpath`: the bug case terminates in 3 steps.
+The same-family bash walk in `hooks/codex-review-gate.sh` (spec-root
+derivation, guarded only by `!= "/"` — `dirname "."` is `"."`, reachable from
+a native-form Windows path) got the same no-progress guard in the same
+commit.
+
+### Prevention
+Any upward directory walk must terminate on "`dirname` made no progress"
+(`parent == d`), never on a length or home-directory comparison alone — both
+are host-specific accidents. When reviewing hook code that walks paths, replay
+the loop with `ntpath` (and a non-home-drive path like `D:\x\y`) before
+trusting it; Linux `os.path` cannot reproduce Windows fixed points. Same
+family as KI-004's lesson: `\` vs `/` and drive letters make Windows paths a
+recurring blind spot — see also the 0.15.1 drive-colon slug bug.
+
+### Related
+- 0.15.1 CHANGELOG entry (drive-colon receipt slug — the previous Windows path bug in this same hook)
+
+---
+
 ## KI-004: the gate's security-severity policy made exotic findings block like real bugs — the round-8/9 lexer trickle
 
 **First seen:** 2026-07-22

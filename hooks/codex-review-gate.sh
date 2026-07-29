@@ -1216,7 +1216,9 @@ fi
 # claim a review that did not happen). Slug derivation mirrors /before and
 # the /ship reviewer exactly (project root = nearest dir with CLAUDE.md).
 SPEC_ROOT="$DIR"
-while [[ "$SPEC_ROOT" != "/" && ! -f "$SPEC_ROOT/CLAUDE.md" ]]; do SPEC_ROOT=$(dirname "$SPEC_ROOT"); done
+# KI-005: terminate on "dirname made no progress", not on the '/'-only check —
+# Windows-form paths (D:/x, D:\x) walk to '.' and dirname "." is "." forever.
+while [[ "$SPEC_ROOT" != "/" && ! -f "$SPEC_ROOT/CLAUDE.md" ]]; do P=$(dirname "$SPEC_ROOT"); [[ "$P" == "$SPEC_ROOT" ]] && break; SPEC_ROOT="$P"; done
 [[ -f "$SPEC_ROOT/CLAUDE.md" ]] || SPEC_ROOT="$DIR"
 # Windows (0.15.1): Git Bash sees /d/... while native tools see D:\... —
 # cygpath -w canonicalises to the native form (no-op on Linux, where cygpath

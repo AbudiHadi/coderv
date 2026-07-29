@@ -5,6 +5,18 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.16.1] — 2026-07-29
+
+> **Heads-up — Windows users must reinstall.** The grounding gate's and the
+> commit gate's hooks changed. Re-run `install.sh` after pulling so
+> `~/.claude/hooks/` gets the new copies, and kill any leftover `python.exe -`
+> process still spinning from the old bug (Task Manager or
+> `Get-Process python | Stop-Process`).
+
+### Fixed
+- **The grounding gate spun forever on Windows for files outside the home drive (KI-005).** The project-root walk stepped upward with `d = os.path.dirname(d)` until it reached the user's home directory or a path shorter than 2 characters — but on Windows `os.path.dirname("D:\\")` returns `"D:\\"` unchanged, so for any edited file on a non-home drive (or any path with no `CLAUDE.md` + `docs/` ancestor) the loop never shrank and never terminated. The orphaned `python.exe -` child spun at 100% CPU and froze the whole Claude Code CLI: the hook timeout kills the bash wrapper but not the Python child. The walk now stops as soon as `dirname` stops making progress (drive/UNC root reached); on Linux the only behavioural change is that pathological `//`-rooted walks (POSIX `dirname("//")` is also a fixed point) now terminate too. Verified against Windows path semantics via `ntpath`: the bug case now terminates in 3 steps.
+- **The commit gate's spec-root walk carried the same latent fixed-point hang.** Its bash walk up to the nearest `CLAUDE.md` terminated only on `!= "/"` — but a native-form Windows path (`D:/x`, `D:\x`) walks to `"."`, and `dirname "."` is `"."` forever. Same no-progress guard applied; unreachable on Linux (a `D:...` string never passes `-d`).
+
 ## [0.16.0] — 2026-07-28
 
 > No hook changes — no reinstall of `~/.claude/hooks/` needed. Re-run
