@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-07-29 — v0.16.1 SHIPPED + RELEASED end-to-end: the Windows dirname fixed-point hang (KI-005), both walks guarded
+
+**What shipped:**
+- `c600e6a` — the KI-005 fix: on Windows `os.path.dirname("D:\\")` returns `"D:\\"` unchanged, so grounding-gate's project-root walk never terminated for any edited file outside the home drive — the orphaned `python.exe -` child spun at 100% CPU and froze the whole CLI (the hook timeout kills the bash wrapper, not the Python child). The walk now breaks when `dirname` stops making progress (`hooks/grounding-gate.sh:55-58`). The fresh-context reviewer then falsified the "no other hook has this pattern" claim: the commit gate's bash spec-root walk (`hooks/codex-review-gate.sh`, guarded only by `!= "/"`) had the same latent fixed point (`dirname "."` is `"."`, reachable from a native-form Windows path) — same guard applied in the same commit. Plus VERSION 0.16.1, CHANGELOG entry, docs/KNOWN-ISSUES.md KI-005 with the prevention rule (walks terminate on "dirname made no progress", replay under `ntpath` before trusting).
+- **Released v0.16.1 the whole way:** `./release.sh` clean (tag pushed, website site.ts→0.16.1, rebuilt, site repo committed) + `gh release create v0.16.1` page. Both changed hooks copied to `/root/.claude/hooks/`.
+- /ship loop trajectory: round 1 Codex caught a real CHANGELOG regression (the 0.16.1 edit had *replaced* the `## [0.16.0]` header, absorbing its notes — "never delete history" violation); round 2 LGTM; fresh-context audit added the bash-twin + separator + "no-op on Linux is overstated (POSIX `//` also hung)" findings; round 3 LGTM, hash-stable → CONVERGED. Commit-time gate: LGTM first try. Suite 255/255 after the gate-hook edit.
+
+**In flight (not yet shipped):**
+- Nothing in this repo. The **owner's Windows machine still runs the buggy hooks**: pull + `./install.sh` there (hooks changed → reinstall required), and kill any leftover `python.exe -` process (Task Manager or `Get-Process python | Stop-Process`).
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+c600e6a v0.16.1: fix the Windows dirname fixed-point infinite loop in both upward walks
+570b2ab docs: session handoff — v0.16.0 shipped + released end-to-end; toolkit-vs-community decision parked with owner
+ea3f155 docs: credit mattpocock/skills in the README
+$ git status --short
+(clean)
+$ cat VERSION
+0.16.1
+$ bash tests/gate-cap.sh | tail -1
+255 passed, 0 failed
+```
+
+**Gotchas the next session should know:**
+- Linux was never fully immune: the old walk also hung on POSIX `//`-rooted paths (`posixpath.dirname("//") == "//"` and `len("//") > 1` passed the guard). The new break fixes that too — don't re-describe the bug as Windows-only in future docs.
+- The `tests/gate-cap.sh` suite does NOT cover grounding-gate at all — its verification here was manual (`ntpath` replay + live hook run). A grounding-gate termination test would make the KI-005 prevention rule machine-checked.
+
+**Next session should probably:**
+- Confirm the owner's Windows machine pulled v0.16.1 + reinstalled (the freeze stays live there until then), then consider a small `tests/grounding-gate.sh` termination suite.
+
+---
+
 ## 2026-07-28 (later) — v0.16.0 SHIPPED + RELEASED end-to-end: /ship loop (13 fixes), README credit, install, tag, website, release pages
 
 **What shipped:**
