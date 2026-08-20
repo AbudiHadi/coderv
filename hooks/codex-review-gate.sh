@@ -19,15 +19,25 @@
 # every reviewed-with-findings round for the same (repo, HEAD) is counted in a
 # flock-guarded state file; each deny prints the round number + finding-count
 # trajectory. The reviewer tags every finding with an IMPACT severity — MATERIAL
-# = [data-loss]/[security]/[correctness]/untagged, MARGINAL = [edge]/
-# [theoretical]/[hardening].
+# = [data-loss]/[security]/[correctness]/[compatibility]/[release-integrity]/
+# untagged, MARGINAL = [edge]/[theoretical]/[hardening].
+#
+# ADR-028 practical-impact rule: every finding ALSO declares [blocker] or [debt].
+# BLOCKER = a material impact on users, data, security/privacy, correctness,
+# compatibility, or release integrity; DEBT = small/defensive/theoretical/
+# cosmetic/low-probability. Only BLOCKERs deny; a debt-only review passes
+# immediately and the reviewer is told to stop looking for smaller issues. The
+# declaration is a CROSS-CHECK, never a lever: severity always wins (see the
+# precedence block at the severity contract), so [debt] cannot demote a real
+# defect and a category-less [blocker] still blocks as malformed. The ceiling
+# STOPS the loop but no longer overrides a blocker.
 #
 # ADR-022 policy split — quality gate by default, deep security by opt-in:
 # in DEFAULT mode the review is an ENGINEERING QUALITY GATE: realistic-impact
 # defects (correctness/regression/data-loss/reachable security) block; exotic
 # adversarially-crafted-input findings are tagged [hardening] and, together
 # with [edge]/[theoretical], ALLOW IMMEDIATELY (round 1, not cap-gated) under
-# a non-blocking "Optional Security Review" section — surfaced, never dropped.
+# the "Non-blocking debt" section — surfaced, never dropped.
 # CODERV_GATE_SECURITY=1 (/ship --security) is the explicit deep-review mode:
 # full adversarial brief, [hardening] blocks like material, and the cap-gated
 # marginal semantics below apply unchanged.
@@ -869,8 +879,8 @@ fi
 # ADR-022 review-policy mode — resolved BEFORE the cache key because the mode
 # is part of the review's identity (see HASH below). DEFAULT (unset) =
 # engineering QUALITY GATE: realistic-impact defects block; marginal findings
-# ([edge]/[theoretical]/[hardening]) never block — they allow immediately with
-# a non-blocking "Optional Security Review" section, so a healthy commit
+# ([edge]/[theoretical]/[hardening]) never block — they allow immediately and
+# are surfaced under the "Non-blocking debt" section, so a healthy commit
 # converges in ONE round. CODERV_GATE_SECURITY=1 = explicit DEEP SECURITY
 # REVIEW opt-in (/ship --security): the full adversarial brief, [hardening]
 # treated as material, and the pre-0.14.0 cap-gated marginal semantics.
@@ -1382,9 +1392,29 @@ fi
 # ADR-022: [hardening] joins the marginal group in default mode; the grouping
 # paragraph is mode-dependent (default = Optional-Security-Review routing,
 # security mode = the pre-0.14.0 cap semantics with [hardening] material).
-SEVERITY_RULES='Tag EVERY finding with exactly ONE impact severity in square
-brackets, chosen by REACHABILITY + IMPACT — never by likelihood, and never by
-how crafted the triggering input is (real injection is usually crafted input;
+SEVERITY_RULES='GOVERNING PRINCIPLE (practical impact, not theoretical
+perfection): Ignore atomic, theoretical, defensive, or extremely low-impact
+findings that do not materially affect the user. Do NOT block a commit for
+issues that have no realistic user-facing impact, do not affect correctness in
+normal use, do not risk data loss or corruption, do not create a security or
+privacy issue, do not break compatibility, release integrity, or core
+contracts, or are only speculative hardening, cosmetic debt, comment wording,
+micro-cleanup, or unlikely edge cases. Once the implementation is materially
+correct and verified, STOP — do not keep searching for increasingly smaller
+issues. Practical impact is the stopping rule.
+
+DECLARE every finding as exactly one of:
+  [blocker] = there is a MATERIAL impact on users, data, security/privacy,
+              correctness, compatibility, or release integrity.
+  [debt]    = a small, defensive, theoretical, cosmetic, or low-probability
+              issue. NON-BLOCKING DEBT.
+A [blocker] MUST also name its harm category with one of the severity tags
+below. If you cannot identify a realistic material harm in one of those six
+categories, the finding is [debt] by construction.
+
+Then tag EVERY finding with exactly ONE impact severity in square brackets,
+chosen by REACHABILITY + IMPACT — never by likelihood, and never by how
+crafted the triggering input is (real injection is usually crafted input;
 craftedness must not downgrade a reachable failure):
   [data-loss]   = loss or corruption of user data.
   [security]    = confidentiality, integrity, authorization, or any other
@@ -1392,7 +1422,18 @@ craftedness must not downgrade a reachable failure):
                   use OR a credible attacker against the real trust boundary —
                   can actually REACH.
   [correctness] = any reachable wrong user-visible or externally observable
-                  result not covered by the two above.
+                  result not covered by the two above. This is also the tag for
+                  a material USER-IMPACT harm — a user hits a wrong or broken
+                  result in normal use.
+  [compatibility] = a reachable break of a core contract with something outside
+                  this change: a published interface, config format, on-disk
+                  or wire format, documented flag/behavior, or a supported
+                  platform. Breaking a caller that legitimately depends on the
+                  old behavior is [compatibility], not [edge].
+  [release-integrity] = a defect in what ships or how it ships: version /
+                  CHANGELOG / tag disagreement, an installer or release gate
+                  that would emit or publish the wrong artifact, or a shipped
+                  file that does not match what the release claims.
   [edge]        = bounded, recoverable misbehavior on unlikely input.
   [theoretical] = proven unreachable under supported real-world execution
                   (not merely unlikely).
@@ -1406,33 +1447,47 @@ craftedness must not downgrade a reachable failure):
                   reachability wins over rarity.
 GOVERNING RULE for ALL marginal tags: [edge], [theoretical], and [hardening]
 are valid ONLY when the defect has no credible reachable high-impact
-consequence. A rare-but-reachable data-loss, security, or wrong-result defect
-MUST take a MATERIAL tag regardless of rarity, recoverability, or blast radius.
+consequence. A rare-but-reachable data-loss, security, compatibility,
+release-integrity, or wrong-result defect MUST take a MATERIAL tag regardless
+of rarity, recoverability, or blast radius.
 A finding with no severity tag is treated as material.
+PRECEDENCE — the severity tag always wins over the [blocker]/[debt]
+declaration; the declaration can only CONFIRM it, never override it:
+  * [debt] on a material severity does NOT demote it — it still blocks.
+  * [blocker] with no severity tag is MALFORMED and still blocks (it is not
+    downgraded to debt; "no category named" is not a free pass).
+  * [blocker] on a marginal severity blocks on the higher claim.
+Every disagreement is reported to the owner as a mislabel. Classify honestly
+in ONE pass: the labels are a contract, not a lever.
 Place the severity tag at the VERY START of the finding, in the leading
 bracket cluster (immediately after [BUG]/[DRIFT]) — a tag appearing only in
 the body text does not count, and more than one severity tag on a finding is
 treated as untagged.'
 if (( SECURITY_MODE )); then
     SEVERITY_RULES+='
-The two groups and their consequences (DEEP SECURITY REVIEW mode): MATERIAL =
-[data-loss] | [security] | [correctness] | [hardening] | untagged — blocks the
-commit while the loop is still converging (in this opt-in mode hardening gaps
-block like real bugs). MARGINAL = [edge] | [theoretical] — may be allowed-with-
-caveat once the round cap is reached. At the hard convergence ceiling, ONLY a
-still-open [security] or [data-loss] finding blocks (escalates to the owner) —
-every other residue is allowed-with-caveat so the loop self-terminates without
-escalating routine code to the human; so tag [security]/[data-loss] precisely
-(that tag is the only one that can hold a commit at the ceiling).'
+The two groups and their consequences (DEEP SECURITY REVIEW mode): MATERIAL
+(BLOCKER) = [data-loss] | [security] | [correctness] | [compatibility] |
+[release-integrity] | [hardening] | untagged — blocks the commit while the loop
+is still converging (in this opt-in mode hardening gaps block like real bugs,
+so a [debt][hardening] finding still blocks here). MARGINAL (DEBT) = [edge] |
+[theoretical] — may be allowed-with-caveat once the round cap is reached. At
+the hard convergence ceiling, ANY still-open MATERIAL finding blocks and
+escalates to the owner for a decision (ADR-028) — the ceiling stops the review
+loop, it does not override a blocker. Only marginal residue self-terminates
+with a caveat, so tag precisely.'
 else
     SEVERITY_RULES+='
-The two groups and their consequences (quality-gate mode): MATERIAL =
-[data-loss] | [security] | [correctness] | untagged — blocks the commit while
-the loop is still converging. MARGINAL = [edge] | [theoretical] | [hardening] —
-NEVER blocks: marginal findings are surfaced to the owner under a non-blocking
-"Optional Security Review" section and the commit proceeds. Tag precisely in
-BOTH directions: a marginal tag on a reachable high-impact defect lets a real
-bug through; a material tag on an exotic guardrail gap blocks a healthy commit.'
+The two groups and their consequences (quality-gate mode): MATERIAL (BLOCKER) =
+[data-loss] | [security] | [correctness] | [compatibility] |
+[release-integrity] | untagged — blocks the commit while the loop is still
+converging, and still blocks at the hard ceiling, where it escalates to the
+owner for a decision (ADR-028). MARGINAL (DEBT) = [edge] | [theoretical] |
+[hardening] — NEVER blocks: debt findings are surfaced to the owner under a
+the "Non-blocking debt" section and the commit proceeds. If only debt
+remains, the review is DONE — say so and stop; do not go looking for smaller
+issues. Tag precisely in BOTH directions: a marginal tag on a reachable
+high-impact defect lets a real bug through; a material tag on an exotic
+guardrail gap blocks a healthy commit.'
 fi
 SEVERITY_RULES+='
 Output ONLY the findings list — no preamble, no closing summary. Any prose
@@ -1450,13 +1505,15 @@ and block in this mode."
 else
     ROLE_LINE="You are the ENGINEERING QUALITY GATE in a two-model workflow."
     MODE_BRIEF="This is a quality gate, not a penetration test. Prioritize
-correctness bugs, regressions, data loss, broken logic, and other
-high-confidence defects a user would actually hit. Report realistic security
-issues — a credible attacker can reach the path and the impact is high — those
-block. Do NOT recursively harden against increasingly exotic,
-adversarially-crafted, or extremely-low-frequency input: tag such
-deep-hardening/parser-corner findings [hardening] so they route to the
-non-blocking Optional Security Review section instead of blocking."
+correctness bugs, regressions, data loss, broken logic, compatibility breaks,
+release-integrity defects, and other high-confidence problems a user would
+actually hit. Report realistic security issues — a credible attacker can reach
+the path and the impact is high — those block. Do NOT recursively harden
+against increasingly exotic, adversarially-crafted, or extremely-low-frequency
+input: tag such deep-hardening/parser-corner findings [hardening] so they route
+to the \"Non-blocking debt\" section instead of blocking. Once the change is
+materially correct and verified, STOP — a review that reaches that state and
+reports only debt is COMPLETE, not unfinished."
 fi
 
 if [[ -n "$SPEC" ]]; then
@@ -1709,15 +1766,81 @@ sev_label() {
     while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
         t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
         case "$t" in
-            data-loss|security|correctness|edge|theoretical|hardening)
+            data-loss|security|correctness|compatibility|release-integrity|edge|theoretical|hardening)
                 sev="$t"; n=$(( n + 1 )) ;;
-            *) ;;   # non-severity tags ([bug]/[drift]/…) just pass through
+            *) ;;   # non-severity tags ([bug]/[drift]/[blocker]/[debt]) pass through
         esac
     done
     if (( n == 1 )); then printf '%s' "$sev"; else printf 'untagged'; fi
 }
-# ADR-019 finding 16: at the ceiling only a [security]/[data-loss] finding may
-# BLOCK; everything else self-terminates. `sev_label` returns 'untagged' for a
+
+# ADR-028: the DECLARATION tag the reviewer must state on every finding —
+# [blocker] or [debt] — read from the same leading bracket cluster as sev_label.
+# It is a cross-check on the severity tag, never a substitute for it: the
+# precedence rules below let a declaration only ever CONFIRM the severity, so a
+# reviewer cannot demote a real defect by typing [debt] nor promote a nit by
+# typing [blocker].
+#
+# A CONTRADICTORY cluster ([blocker] AND [debt] both present) must resolve the
+# same direction every other ambiguity in this file resolves: toward BLOCKING.
+# Returning 'undeclared' there would fail OPEN — the marginal arms below test
+# for `blocker`, so dropping a stated [blocker] on an [edge]/[theoretical]
+# finding silently discards the higher claim and ALLOWS the commit, which is the
+# very evasion this cross-check exists to catch. (A [debt] alongside it changes
+# nothing on its own: [debt] can never demote anything.) So `blocker` is detected
+# by whether the cluster CONTAINS it — contains, not equals — mirroring
+# sec_in_cluster() below, which already handles this same multi-tag hazard. Only
+# the leading cluster is scanned, so a tag quoted in later evidence cannot vote.
+#
+# A contradictory cluster is ALSO reported: `decl_contradictory()` answers it
+# separately, so the owner is told the reviewer declared both ways on ANY
+# severity. Folding that into the return value would mean re-teaching every
+# severity arm a fourth state; asking a second question keeps each arm's test
+# (`== blocker` / `== debt`) exactly as it reads today.
+decl_label() {
+    local first t decl="" saw_blocker=0 n=0
+    first=${1%%$'\n'*}
+    first=$(tr '[:upper:]' '[:lower:]' <<<"$first")
+    first=${first#"${first%%[![:space:]]*}"}
+    first=${first#\*\*}
+    while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
+        t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
+        case "$t" in
+            blocker) saw_blocker=1; decl="$t"; n=$(( n + 1 )) ;;
+            debt) decl="$t"; n=$(( n + 1 )) ;;
+            *) ;;
+        esac
+    done
+    # Fail closed: any cluster naming [blocker] keeps the blocking claim, even
+    # when contradicted or repeated. Otherwise a single tag stands; anything else
+    # (neither tag, or a repeated [debt]) is 'undeclared' and the severity alone
+    # decides — the pre-existing, already-fail-closed behaviour.
+    if (( saw_blocker )); then printf 'blocker'
+    elif (( n == 1 )); then printf '%s' "$decl"
+    else printf 'undeclared'; fi
+}
+# Did the leading cluster declare BOTH ways? Echoes 1/0. Kept separate from
+# decl_label so the verdict logic stays two-valued while the owner still learns
+# the reviewer contradicted itself — on a MATERIAL severity the attempted [debt]
+# demotion would otherwise go unreported, because decl_label (correctly) resolves
+# the cluster to `blocker` and the material arm only notes a lone [debt].
+decl_contradictory() {
+    local first t b=0 d=0
+    first=${1%%$'\n'*}
+    first=$(tr '[:upper:]' '[:lower:]' <<<"$first")
+    first=${first#"${first%%[![:space:]]*}"}
+    first=${first#\*\*}
+    while [[ "$first" =~ ^\[([a-z-]+)\][[:space:]]*(.*)$ ]]; do
+        t="${BASH_REMATCH[1]}"; first="${BASH_REMATCH[2]}"
+        case "$t" in blocker) b=1 ;; debt) d=1 ;; *) ;; esac
+    done
+    (( b && d )) && printf 1 || printf 0
+}
+# ADR-019 finding 16 / ADR-028: at the ceiling ANY material finding now blocks,
+# so this no longer decides IF the ceiling blocks — it decides HOW. A still-open
+# [security]/[data-loss] finding produces a DURABLE escalation (escalated=1,
+# survives identical-diff retries); other material residue denies without the
+# durable escalation, so fixing it and retrying is enough. `sev_label` returns 'untagged' for a
 # MULTI-severity cluster like [security][correctness], which would hide the
 # security tag — so security presence is detected SEPARATELY, by whether the
 # leading bracket cluster CONTAINS a security/data-loss tag (contains, not
@@ -1735,16 +1858,57 @@ sec_in_cluster() {
     done
     printf 0
 }
-MATERIAL_COUNT=0; SEV_SUMMARY=""; SEC_COUNT=0
+MATERIAL_COUNT=0; SEV_SUMMARY=""; SEC_COUNT=0; MISLABELED=""
 for fitem in "${FINDINGS[@]}"; do
     lbl=$(sev_label "$fitem")
+    dcl=$(decl_label "$fitem")
+    # A cluster declaring BOTH ways is surfaced on EVERY severity path. The
+    # per-severity arms below key off the resolved `$dcl`, which is `blocker` for
+    # a contradictory cluster — so without this the attempted [debt] demotion on
+    # a material finding would block correctly but silently, and the owner would
+    # never learn the reviewer contradicted its own contract.
+    contradictory=$(decl_contradictory "$fitem")
+    [[ "$contradictory" == 1 ]] && MISLABELED+="${MISLABELED:+; }[blocker] and [debt] both declared on a [$lbl] finding — contradictory declaration, blocking on the higher claim"
+    # ADR-028 precedence — FAIL-CLOSED in every ambiguous case. The severity tag
+    # decides materiality; the declaration tag can only agree with it. Any
+    # disagreement resolves toward BLOCKING and is recorded in MISLABELED so the
+    # owner sees that the reviewer classified against the contract.
     case "$lbl" in
-        edge|theoretical) ;;
+        edge|theoretical)
+            # Marginal severity. [blocker] on marginal severity means the
+            # reviewer believes there IS material harm but tagged the severity
+            # wrong — trust the higher claim and block (mislabeled, surfaced).
+            if [[ "$dcl" == blocker ]]; then
+                MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+                # Skip when already reported as contradictory above — one finding
+                # earns one mislabel note, not two overlapping ones.
+                [[ "$contradictory" == 1 ]] || MISLABELED+="${MISLABELED:+; }[blocker] declared on a [$lbl] finding — blocking on the higher claim"
+            fi ;;
         hardening)
-            # ADR-022: marginal by default (Optional Security Review), material
-            # under the explicit deep-security opt-in.
-            (( SECURITY_MODE )) && MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
-        *) MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 )) ;;
+            # ADR-022: marginal by default (non-blocking debt), material under
+            # the explicit deep-security opt-in — so [debt][hardening] still
+            # blocks with /ship --security, as that mode intends.
+            if (( SECURITY_MODE )); then
+                MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+            elif [[ "$dcl" == blocker ]]; then
+                MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+                [[ "$contradictory" == 1 ]] || MISLABELED+="${MISLABELED:+; }[blocker] declared on a [hardening] finding — blocking on the higher claim"
+            fi ;;
+        untagged)
+            # Anti-evasion floor, unchanged: no parseable harm category means
+            # the reviewer never tied this to material harm. It still counts
+            # MATERIAL and still blocks — a [blocker] with no category is
+            # malformed, and is NEVER downgraded to debt on that basis.
+            MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+            [[ "$dcl" == blocker ]] && MISLABELED+="${MISLABELED:+; }[blocker] names no harm category — malformed, blocking"
+            [[ "$dcl" == debt ]] && MISLABELED+="${MISLABELED:+; }[debt] on an untagged finding — no harm category to justify it, blocking" ;;
+        *)
+            # Material severity: data-loss | security | correctness |
+            # compatibility | release-integrity. Always blocks. A [debt]
+            # declaration here is an attempted demotion of a real defect and is
+            # refused outright.
+            MATERIAL_COUNT=$(( MATERIAL_COUNT + 1 ))
+            [[ "$dcl" == debt ]] && MISLABELED+="${MISLABELED:+; }[debt] declared on a [$lbl] finding — a material defect cannot be demoted, blocking" ;;
     esac
     [[ "$(sec_in_cluster "$fitem")" == 1 ]] && SEC_COUNT=$(( SEC_COUNT + 1 ))
     SEV_SUMMARY+="${SEV_SUMMARY:+,}$lbl"
@@ -1955,8 +2119,9 @@ fi
 # actually reach ROUND_MAX (finding 7). Escalation (a durable owner stop) fires
 # ONLY at the ceiling and ONLY for a still-open [security]/[data-loss] finding
 # (SEC_COUNT>0, findings 16/17) — the gate refusing to auto-merge a security
-# hole. Every non-security residue at the ceiling ALLOWS-with-caveat, so routine
-# code is never escalated to the human.
+# hole. ADR-028 widens that stance: ANY material (BLOCKER) residue at the
+# ceiling now denies and goes to the owner, not just security/data-loss. Only
+# marginal (DEBT) residue self-terminates with a caveat.
 AT_CEILING=0
 if [[ -n "$ROUND" ]] && (( ROUND >= CAP )); then
     if (( ROUND >= ROUND_MAX )) || (( CUM_BYTES >= DIFF_BUDGET )); then
@@ -1965,7 +2130,7 @@ if [[ -n "$ROUND" ]] && (( ROUND >= CAP )); then
 fi
 
 # --- Allow-with-caveat: (a) marginal-only at/above CAP (the classic CAP-STOPPED
-# path), OR (b) at the ceiling with NO open security/data-loss finding. Both
+# path), OR (b) at the ceiling with NO open material finding (ADR-028). Both
 # surface every finding to the owner verbatim; the commit just stops being held
 # hostage — (a) by edge/theoretical residue, (b) by non-security residue the
 # convergence loop could not clear before the hard stop. Material findings below
@@ -1981,18 +2146,30 @@ fi
 # round 1, not cap-gated, and independent of round-tracking health (the round
 # number plays no part in the verdict; a flock failure must not turn a
 # non-blocking review into a deny). The findings are surfaced under a labeled
-# "Optional Security Review (non-blocking)" section — never silently dropped.
+# "Non-blocking debt" section — never silently dropped.
 OPT_ALLOW=0
 if (( ! SECURITY_MODE )) && (( FINDING_COUNT > 0 )) && (( MATERIAL_COUNT == 0 )); then
     OPT_ALLOW=1
 fi
+# ADR-028 (owner correction to ADR-019's blanket ceiling allow): the ceiling
+# STOPS the loop, it does not override a material blocker. A BLOCKER — any
+# MATERIAL finding — still denies at the ceiling and escalates to the owner for
+# a decision; only MARGINAL (DEBT) residue self-terminates with a caveat. The
+# old blanket allow existed because routine code could be held hostage by an
+# endless trickle of exotic findings; ADR-028's classification rule removes that
+# risk at the source (theoretical/defensive/cosmetic/edge findings MUST be
+# tagged DEBT, and DEBT can never keep the loop alive), so the valve is no
+# longer load-bearing and its cost — auto-merging a real correctness,
+# compatibility, user-impact, data, security, or release-integrity defect purely
+# because the round counter ran out — is no longer paid.
 CEIL_ALLOW=0
-if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT == 0 )) && (( FINDING_COUNT > 0 )); then
+if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT == 0 )) \
+   && (( MATERIAL_COUNT == 0 )) && (( FINDING_COUNT > 0 )); then
     CEIL_ALLOW=1
 fi
 if (( OPT_ALLOW )) || { [[ -n "$ROUND" ]] && (( FINDING_COUNT > 0 )) && { { (( ROUND >= CAP )) && (( MATERIAL_COUNT == 0 )); } || (( CEIL_ALLOW )); }; }; then
     if (( OPT_ALLOW )); then
-        HDR="✓ quality gate PASSED — $FINDING_COUNT non-blocking finding(s) routed to Optional Security Review"
+        HDR="✓ quality gate PASSED — $FINDING_COUNT non-blocking finding(s) routed to Non-blocking debt"
         # Deliberately NO cache marker for an optional-notes pass: a marker can
         # only carry counts, so a cached retry — possibly in a FRESH session
         # that never saw this review — could not re-surface the findings
@@ -2006,7 +2183,7 @@ if (( OPT_ALLOW )) || { [[ -n "$ROUND" ]] && (( FINDING_COUNT > 0 )) && { { (( R
 defect found — every open finding is MARGINAL ([hardening]/[edge]/
 [theoretical]), so the commit is ALLOWED in this round.
 
-Optional Security Review (non-blocking):
+Non-blocking debt:
 $REVIEW
 
 Surface the findings above to the owner VERBATIM alongside the commit
@@ -2027,6 +2204,10 @@ deep-security review, rerun via /ship --security (CODERV_GATE_SECURITY=1)."
         # marginal-only cap stop; ceiling=K>0 means K non-security material findings
         # self-terminated at the hard ceiling. Appended as a new field so a legacy
         # "cap_stopped round=N findings=M" marker (no ceiling=) still parses.
+        # ADR-028: CEIL_ALLOW now requires MATERIAL_COUNT==0, so a NEW marker can
+        # only ever carry ceiling=0. The field and its reader stay for markers
+        # written by pre-ADR-028 versions of this hook, which can still be sitting
+        # in a cache directory on this machine.
         CEIL_MAT=0; (( CEIL_ALLOW )) && CEIL_MAT="$MATERIAL_COUNT"
         publish_round_marker "$CACHE/$HASH" "$(printf 'cap_stopped round=%s findings=%s ceiling=%s' "$ROUND" "$FINDING_COUNT" "$CEIL_MAT")" "$ROUND"
         log_event system cap_stopped "$(jq -cn --argjson round "$ROUND" \
@@ -2055,8 +2236,14 @@ fi
 # the middle tier (CAP<=ROUND<ROUND_MAX) and below the cap, a material finding is
 # an ORDINARY retry-deny — Claude+Codex keep converging. Changed diffs always get
 # fresh reviews; the gate never hard-locks the owner's work.
+# ADR-028: escalation at the ceiling is no longer security-only. Any material
+# BLOCKER that survives to the ceiling must escalate DURABLY — with escalated=0
+# the identical retry re-passes per the adjudicate-then-retry contract, so a
+# ceiling deny would be a one-round speed bump and the blocker would ship on the
+# second attempt. "Surface that blocker to the owner for a decision" requires the
+# deny to persist until the owner acts (fix the diff, or --approve it).
 CAP_ESCALATED=0
-if [[ -n "$ROUND" ]] && (( AT_CEILING )) && (( SEC_COUNT > 0 )); then
+if [[ -n "$ROUND" ]] && (( AT_CEILING )) && { (( SEC_COUNT > 0 )) || (( MATERIAL_COUNT > 0 )); }; then
     CAP_ESCALATED=1
 fi
 # Record this diff's own outcome in its marker so a cached retry acts on THIS
@@ -2089,15 +2276,29 @@ log_event system outcome "$(jq -cn --argjson n "$FINDING_COUNT" \
     '{result:"denied", findings:$n, material:$mat, round:$round, trajectory:$traj, cap_escalated:($esc==1)}')"
 
 if (( CAP_ESCALATED )); then
-    REASON="CEILING-REACHED SECURITY STOP — ESCALATE TO THE OWNER (round $ROUND at
+    # ADR-028: the ceiling escalates on ANY material BLOCKER, so the headline and
+    # the finding-class sentence adapt — a non-security blocker must not be
+    # reported to the owner as a "security stop".
+    if (( SEC_COUNT > 0 )); then
+        CEIL_KIND="SECURITY STOP"
+        CEIL_WHICH="$SEC_COUNT of $FINDING_COUNT open finding(s) are
+[security]/[data-loss] — the gate will NOT auto-merge a security or data-loss
+hole"
+    else
+        CEIL_KIND="BLOCKER STOP"
+        CEIL_WHICH="$MATERIAL_COUNT of $FINDING_COUNT open finding(s) are
+BLOCKERs (material impact on users, data, security/privacy, correctness,
+compatibility, or release integrity) — the ceiling stops the review loop, it
+does NOT override a blocker (ADR-028)"
+    fi
+    REASON="CEILING-REACHED $CEIL_KIND — ESCALATE TO THE OWNER (round $ROUND at
 the hard ceiling: round_max $ROUND_MAX / budget ${CUM_BYTES}B of ${DIFF_BUDGET}B;
 findings trajectory: $TRAJECTORY).
-$SEC_COUNT of $FINDING_COUNT open finding(s) are [security]/[data-loss] — the
-gate will NOT auto-merge a security or data-loss hole, so this attempt is DENIED
-and the review loop is OVER. This is the ONLY finding class that blocks at the
-ceiling (all other residue self-terminates and is allowed). Do NOT
+$CEIL_WHICH, so this attempt is DENIED
+and the review loop is OVER. Only non-blocking DEBT residue self-terminates and
+is allowed at the ceiling. Do NOT
 fix-and-recommit again on your own judgment: STOP and present the owner the
-findings below VERBATIM, plus the options (fix the security/data-loss findings /
+findings below VERBATIM, plus the options (fix the blocking findings /
 owner overrides the gate / park the work). The owner decides; you do not spend
 another round. (After the owner decides: either the findings get fixed — a
 changed diff earns a fresh review — or, on the owner's explicit in-chat approval,
@@ -2136,19 +2337,36 @@ to this exact diff, passes it once, and the gate stays armed for everything else
     if (( ! SECURITY_MODE )) && (( FINDING_COUNT > MATERIAL_COUNT )); then
         MARG_LIST=""
         for fitem in "${FINDINGS[@]}"; do
+            # ADR-028: a marginal severity carrying a [blocker] declaration was
+            # counted MATERIAL above, so it must NOT be re-listed here as
+            # non-blocking — the two lists would contradict each other and the
+            # owner would be told a blocking finding needs no fix.
+            [[ "$(decl_label "$fitem")" == blocker ]] && continue
             case "$(sev_label "$fitem")" in
                 edge|theoretical|hardening) MARG_LIST+="- $fitem"$'\n' ;;
             esac
         done
-        REASON+="
+        # Count what was actually listed, not the arithmetic difference: the
+        # [blocker]-declared marginals skipped above are material and must not
+        # be counted as debt.
+        MARG_N=$(grep -c '^- ' <<<"$MARG_LIST" 2>/dev/null || printf 0)
+        if [[ -n "${MARG_LIST//[[:space:]$'\n']/}" ]]; then
+            REASON+="
 
-Optional Security Review (non-blocking): the $(( FINDING_COUNT - MATERIAL_COUNT ))
-marginal finding(s) below do NOT block and need no fix for the retry; this deny
-is for the $MATERIAL_COUNT material finding(s) only. Marginal findings go to the
-owner at their discretion (or via the /ship --security deep review):
+Non-blocking debt: the $MARG_N finding(s) below do NOT block and need no fix
+for the retry; this deny is for the $MATERIAL_COUNT material finding(s) only.
+Debt findings go to the owner at their discretion (or via the /ship --security
+deep review):
 $MARG_LIST"
+        fi
     fi
 fi
+# ADR-028: a declaration that disagreed with its severity tag is never silently
+# resolved — the owner sees that the reviewer classified against the contract.
+[[ -n "$MISLABELED" ]] && REASON+="
+
+Mislabeled finding(s) (severity tag wins over the [blocker]/[debt]
+declaration): $MISLABELED"
 [[ -n "$TRUNC_NOTE" ]] && REASON+=$'\n\n'"$TRUNC_NOTE"
 [[ -n "$HIST_NOTE" ]] && REASON+=$'\n\n'"$HIST_NOTE"
 [[ -n "$DRIFT_NOTE" ]] && REASON+=$'\n\n'"$DRIFT_NOTE"
@@ -2156,8 +2374,19 @@ if (( CAP_ESCALATED )); then
     # The escalation must be OWNER-visible, not only agent-context: a
     # systemMessage rides alongside the deny so the human sees the cap state
     # in the transcript without relying on the agent to relay it.
+    # ADR-028: this line must track CEIL_KIND. Hardcoding "SECURITY STOP" and
+    # $SEC_COUNT reported a correctness/compatibility/release-integrity ceiling
+    # blocker to the owner as a security stop with "0 security/data-loss
+    # finding(s) still open" — i.e. the one owner-visible line said nothing was
+    # wrong at the exact moment a real blocker needed a decision. Same defect
+    # the deny REASON above already fixed; the systemMessage was missed.
+    if (( SEC_COUNT > 0 )); then
+        CEIL_MSG_WHICH="$SEC_COUNT security/data-loss finding(s) still open"
+    else
+        CEIL_MSG_WHICH="$MATERIAL_COUNT blocker(s) still open (material impact — not security)"
+    fi
     jq -n --arg r "$REASON" \
-        --arg msg "⛔ codex-review-gate CEILING SECURITY STOP: round $ROUND/$ROUND_MAX, $SEC_COUNT security/data-loss finding(s) still open — owner decision required (trajectory: $TRAJECTORY)" '{
+        --arg msg "⛔ codex-review-gate CEILING $CEIL_KIND: round $ROUND/$ROUND_MAX, $CEIL_MSG_WHICH — owner decision required (trajectory: $TRAJECTORY)" '{
         systemMessage: $msg,
         hookSpecificOutput: {
             hookEventName: "PreToolUse",

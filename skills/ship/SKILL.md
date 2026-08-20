@@ -26,10 +26,38 @@ parser-hardening review; use it when the owner asks for a security pass.
 **Default (no flag) = engineering QUALITY GATE mode.** Realistic
 correctness / regression / data-loss / reachable-security defects block as
 always; exotic adversarially-crafted-input findings are tagged `[hardening]`
-and land in a non-blocking **"Optional Security Review"** section instead of
-blocking — a normal dev commit converges in ONE round. Surface any Optional
+and land in a non-blocking **"Non-blocking debt"** section instead of
+blocking — a normal dev commit converges in ONE round. Surface any debt
 findings to the owner verbatim (transparency rule); they never block and never
 oblige another round.
+
+<!-- coderlap:rule:practical-impact -->
+### The practical-impact rule (ADR-028)
+
+> Ignore atomic, theoretical, defensive, or extremely low-impact findings that
+> do not materially affect the user. Do not block a commit or release for
+> issues that have no realistic user-facing impact, do not affect correctness
+> in normal use, do not risk data loss or corruption, do not create a
+> security/privacy issue, do not break compatibility, release integrity, or
+> core contracts, or are only speculative hardening, cosmetic debt, comment
+> wording, micro-cleanup, or unlikely edge cases.
+
+Every finding is declared **`BLOCKER`** or **`DEBT`**:
+
+| | Meaning | Effect |
+|---|---|---|
+| 🚫 **BLOCKER** | Material impact on **users, data, security/privacy, correctness, compatibility, or release integrity** — and it must NAME which one | Blocks |
+| 📋 **DEBT** | Small, defensive, theoretical, cosmetic, or low-probability | Never blocks |
+
+If the reviewer cannot identify a realistic material harm in one of those six
+categories, the finding is **DEBT by construction**. When only DEBT remains the
+review is **done** — report it and stop; do not go looking for smaller issues.
+Practical impact is the stopping rule, not theoretical perfection.
+
+**The label never overrides the severity.** `[debt]` on a real defect does not
+demote it, and a `[blocker]` that names no category still blocks as malformed —
+so the classification cannot be used to smuggle a bug past the gate, in either
+direction.
 
 ## Step 1 — Look at the diff
 
@@ -240,8 +268,14 @@ SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f 
     "high-confidence defects a user would actually hit; report realistic security" \
     "issues (a credible attacker can reach the path, high impact). Do NOT" \
     "recursively harden against exotic or adversarially-crafted input — tag such" \
-    "deep-hardening findings [hardening]: they are NON-BLOCKING (Optional Security" \
-    "Review), not grounds for another round." \
+    "deep-hardening findings [hardening]: they are NON-BLOCKING debt, not grounds" \
+    "for another round." \
+    "Declare EVERY finding [blocker] or [debt]. A [blocker] must name a material" \
+    "harm to users, data, security/privacy, correctness, compatibility, or release" \
+    "integrity; if you cannot name one, it is [debt] by construction. Ignore" \
+    "atomic, theoretical, defensive, cosmetic, or negligible-impact issues. Once" \
+    "the change is materially correct and verified, STOP — a review reporting only" \
+    "debt is COMPLETE, not unfinished." \
     "Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe" \
     "first — holding one back for a later round is a FAILURE (it wastes a converged" \
     "retry and lets real bugs hide behind cosmetic ones). file:line + the concrete" \
@@ -271,8 +305,10 @@ phase and the gate; `docs/planning/two-brain-convergence.md`):
 
 - **CONVERGED — requires BOTH** (a) the unresolved-**material** set is empty
   (ADR-022: in default mode `[hardening]`/`[edge]`/`[theoretical]` findings are
-  NOT material — list them for the owner under "Optional Security Review" and
-  converge; with `--security`, `[hardening]` counts as material)
+  NOT material — list them for the owner under "Non-blocking debt" and
+  converge; with `--security`, `[hardening]` counts as material. ADR-028: a
+  **DEBT-only** round IS convergence — do not spend another round trying to
+  turn debt into something blocking)
   **AND** (b) the snapshot you just reviewed is the snapshot you are about to
   commit: `SNAP_HASH` (the diff Codex saw) **equals** a freshly re-assembled
   diff hash. A round can resolve every finding yet **change the bytes** (the fix

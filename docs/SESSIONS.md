@@ -4,6 +4,331 @@
 
 ---
 
+## 2026-08-20 — ADR-028 BLOCKER/DEBT practical-impact rule BUILT + VERIFIED (**not committed**, context gate); CI-green work SHIPPED as `874c994`
+
+Owner's rule: *"Ignore atomic, theoretical, defensive, or extremely low-impact
+findings that do not materially affect the user."* Classify every finding
+BLOCKER vs DEBT; only BLOCKERs deny; stop searching once materially correct.
+
+### State (verbatim)
+
+```
+$ date "+%Y-%m-%d %H:%M"
+2026-08-20 07:56
+
+$ git log --oneline -3
+874c994 Verify required CI per job, not per run (ADR-027)
+7b2c3a5 docs: session handoff — v0.16.1 shipped + released end-to-end (KI-005, both walks); Windows machine owes pull + reinstall
+c600e6a v0.16.1: fix the Windows dirname fixed-point infinite loop in both upward walks
+
+$ git status --porcelain
+ M docs/DECISIONS.md
+ M docs/SESSIONS.md
+ M hooks/codex-review-gate.sh
+ M skills/ship/SKILL.md
+ M tests/gate-cap.sh
+
+$ git status -sb | head -1
+## main...origin/main [ahead 1]
+
+$ cat VERSION
+0.16.1
+
+$ git diff --stat
+ docs/DECISIONS.md          |  85 +++++++++++++
+ docs/SESSIONS.md           | 158 ++++++++++++++++++++++++
+ hooks/codex-review-gate.sh | 295 +++++++++++++++++++++++++++++++++++----------
+ skills/ship/SKILL.md       |  48 +++++++-
+ tests/gate-cap.sh          | 245 ++++++++++++++++++++++++++++++-------
+ 5 files changed, 718 insertions(+), 113 deletions(-)
+```
+
+Nothing is staged. `874c994` is committed but **NOT pushed** (ahead 1).
+
+### Step 1 — the CI-green backlog SHIPPED (`874c994`)
+
+The previous session's 5 staged files landed as one isolated commit. The
+escalated gate finding (*"devkit/.coderv-ci.json missing from the diff"*) was
+adjudicated by the owner, who approved the commit conditionally on scope; the
+staged set was machine-verified to be exactly the CI-green work first, then the
+approval was recorded verbatim via `codex-review-gate.sh --approve` (ADR-023,
+single-use, now consumed). **The finding remains factually wrong and unresolved
+by design** — devkit is a separate repo; git cannot include paths outside the
+worktree.
+
+### Step 2 — ADR-028 built (uncommitted)
+
+- `hooks/codex-review-gate.sh` — owner's wording verbatim as the prompt's
+  GOVERNING PRINCIPLE; `[blocker]`/`[debt]` declaration + new `decl_label()`;
+  new `[compatibility]` + `[release-integrity]` severity tags; fail-closed
+  precedence; "Optional Security Review" → "Non-blocking debt".
+- `skills/ship/SKILL.md` — the rule under a new `coderlap:rule:practical-impact`
+  marker; Step 4.5 scorecard treats DEBT-only as CONVERGED.
+- `tests/gate-cap.sh` — T77–T83 new; T5/T15b/T15c/T21/T22/T22b/T25/T32/T36b
+  rewritten to the corrected ceiling rule.
+- `docs/DECISIONS.md` — ADR-028.
+
+**Precedence (fail-closed, the load-bearing rule):** severity ALWAYS wins over
+the declaration. `[debt]` on a material tag still blocks; a `[blocker]` naming
+no category still blocks as malformed; `[blocker]` on a marginal tag blocks on
+the higher claim. Anti-evasion floor (untagged/prose/preamble = material) is
+untouched. The declaration can only ever CONFIRM the severity.
+
+### The owner's ceiling correction (supersedes ADR-019's blanket allow)
+
+ADR-019 auto-allowed ANY non-security material residue at the hard ceiling.
+Owner reversed it: *"The ceiling should stop the loop, not override a material
+blocker."* Safe because exotic/defensive findings must now be DEBT, and DEBT
+can never keep the loop alive.
+
+**Two latent defects this exposed, fixed beyond the plan:**
+
+1. **`CAP_ESCALATED` was security-only.** A non-security blocker at the ceiling
+   denied once with `escalated=0`, so the *identical retry re-passed* — the
+   blocker would ship on attempt two. Now any material finding escalates
+   durably.
+2. **The ceiling message hardcoded "SECURITY STOP."** A correctness or
+   compatibility blocker was reported to the owner as a security stop. Now
+   `BLOCKER STOP`, naming the real category.
+
+### Verification
+
+```
+tests/gate-cap.sh        295 passed, 0 failed
+tests/ci-green-check.sh   71 passed, 0 failed
+bash -n on both changed shell files: OK
+```
+
+**Three holes were found at `/ship` time and fixed before the commit landed**
+(T84, T85 — full write-up in ADR-028):
+
+1. The `/ship` fresh-context reviewer caught `decl_label()` dropping a
+   `[blocker]` claim on a contradictory `[blocker][debt]` cluster — a
+   fail-OPEN that ALLOWED a commit it should have blocked.
+2. The Codex gate — reviewing this very change — caught the owner-visible
+   ceiling `systemMessage` still hardcoding "SECURITY STOP" with `$SEC_COUNT`,
+   so a correctness blocker at the ceiling told the owner "0 security/data-loss
+   finding(s) still open" at the moment a decision was needed.
+3. Codex's second pass caught the follow-on: with the cluster resolving to
+   `blocker`, a contradictory declaration on a MATERIAL severity blocked
+   silently. Diagnostic-only (verdict was always right), so it is DEBT by
+   ADR-028's own rule — fixed anyway, being cheap and in-scope.
+
+(1) and (2) are mutation-tested — each assertion fails against the pre-fix code
+and passes after. The 279 → 295 delta is these regression tests.
+
+Lesson worth keeping: **the ADR was handed off as "fully verified" and all
+three holes still existed.** A rule stated in the prompt and on the deny path
+is not the same as a rule carried to every place that decides or reports the
+outcome. The gate caught its own bugs — which is the point of it.
+
+Live prompt inspected via `CODERV_GATE_CAPTURE_DIR` — the owner's wording
+reaches the reviewer verbatim.
+
+**Mutation-tested (6 mutants, all killed).** Two SURVIVED the first pass and
+were real coverage gaps, now closed:
+
+- **Dropping both new tags from the `sev_label` whitelist left T81 fully
+  green** — unknown tags fall through to `untagged`, which also denies, so
+  "it denied" never proved the tag was parsed. T81 now asserts via the
+  mislabel wording, which only the recognized path can produce.
+- **The blocker/debt contradiction guard was never exercised** — the debt list
+  only emits when `FINDING_COUNT > MATERIAL_COUNT`, so a single-finding review
+  never reaches it. T79 now uses a MIXED fixture.
+
+### Gotchas for the next session
+
+- **Cache markers are written with `printf '%s'` — NO trailing newline**, and
+  the readers are `$`-anchored on exact bytes. A hand-forged marker with `\n`
+  reads as corrupt (conservatively an open escalation), not as the legacy form.
+- **`latest_marker()` is defined ~line 409**; a test using it must sit after
+  that, not before (T15c had to be relocated).
+- **No single fixture can straddle the ceiling any more** — material denies on
+  both sides, marginal allows in round 1. T36b now asserts the real invariant
+  (exactly one review CROSSES) and runs in security mode with `[hardening]`,
+  the only class that is material yet non-security.
+- `MIXED_MARGINAL_REVIEW` is defined at ~line 1600 — unusable by earlier tests.
+
+### Next session — pick up here
+
+1. `/ship` the 4 changed files (+ this handoff). Expect the gate to review the
+   change to itself; the suite is green and mutation-checked.
+2. `./install.sh --force` — hooks changed; bare install SKIPS existing files.
+3. `git push` — `874c994` is committed but unpushed.
+4. Separately: `devkit/.coderv-ci.json` still untracked in
+   `/home/appuser/apps/devkit`, needs its own commit in that repo.
+5. **Parked, owner's explicit decision:** `~/.claude/skills/release-review/`
+   exists installed (Jul 21, carries the installer marker) but has **NO source
+   in this repo and NO git history** — an orphan. `install.sh` globs
+   `skills/*/`, so `--force` will NOT restore it. Whether it belongs in the
+   repo is a separate decision; the owner scoped it OUT of ADR-028.
+
+### Not done, on purpose
+
+- **No CHANGELOG entry / VERSION bump** — `release.sh:35` hard-fails unless
+  VERSION == CHANGELOG top entry. Release-time step.
+- Nothing pushed; no release.
+
+---
+
+## 2026-08-10 — required-CI green enforcement BUILT + VERIFIED, **NOT committed** (context gate); ONE gate finding escalated to the owner
+
+Two repos are dirty and nothing is committed or pushed. The work is finished and
+verified; it is blocked on **one owner decision**, not on more engineering.
+
+### State (verbatim)
+
+```
+$ date "+%Y-%m-%d %H:%M"
+2026-08-10 18:00
+
+$ git -C /root/claude-docs-toolkit log --oneline -3
+7b2c3a5 docs: session handoff — v0.16.1 shipped + released end-to-end (KI-005, both walks); Windows machine owes pull + reinstall
+c600e6a v0.16.1: fix the Windows dirname fixed-point infinite loop in both upward walks
+570b2ab docs: session handoff — v0.16.0 shipped + released end-to-end; toolkit-vs-community decision parked with owner
+
+$ git -C /root/claude-docs-toolkit status --porcelain
+M  docs/DECISIONS.md
+A  hooks/ci-green-check.sh
+M  install.sh
+M  skills/ship/SKILL.md
+A  tests/ci-green-check.sh
+
+$ git -C /root/claude-docs-toolkit status -sb | head -1
+## main...origin/main
+
+$ git -C /home/appuser/apps/devkit log --oneline -3
+8f2c56e docs: session handoff - Windows CI fixed, CI green on all 5 jobs
+d440526 test: scope the page permission assertion to POSIX platforms
+4e795eb docs: session handoff - Phase 1 committed, not pushed
+
+$ git -C /home/appuser/apps/devkit status --porcelain
+?? .coderv-ci.json
+```
+
+Toolkit files are **staged** (`git add` ran); the commit was refused by the gate.
+devkit's single file is still untracked. VERSION is `0.16.1`, unchanged.
+
+### What was built
+
+"Green on one platform is not green" existed only as prose in
+`devkit/docs/SESSIONS.md:108`. Nothing read it, and devkit shipped twice
+believing CI was green after Linux-only validation. Now enforced by a machine:
+
+- `hooks/ci-green-check.sh` (new) — enumerates **per-job** results for HEAD's
+  commit against required `{workflow, job}` identities declared per-repo.
+- `tests/ci-green-check.sh` (new) — 71 assertions, gate-cap.sh pattern
+  (throwaway `$HOME`, shimmed `gh`, canned fixtures, no network).
+- `skills/ship/SKILL.md` — one new scorecard gate (Gate 10).
+- `install.sh` — `TOOL_ROSTER`: skill-invoked tools copied per host, **not**
+  wired into settings.json (nothing triggers them on an event).
+- `docs/DECISIONS.md` — **ADR-027**.
+- `devkit/.coderv-ci.json` (new, other repo) — devkit's real five jobs.
+
+### The ONE open item — owner decision required
+
+The commit gate denied twice; trajectory **3 → 1**. Two findings were real,
+fixed, and verified (below). The survivor is **factually wrong** and has now
+returned three times on identical evidence, which is the documented escalation
+condition — do NOT re-commit to argue it a fourth time.
+
+The finding claims `devkit/.coderv-ci.json` is missing from the outgoing diff.
+Machine-verified rebuttal:
+
+```
+$ ls -l /home/appuser/apps/devkit/.coderv-ci.json
+-rw-r--r-- 1 root root 363 Aug 10 10:04 /home/appuser/apps/devkit/.coderv-ci.json
+
+$ git -C /root/claude-docs-toolkit rev-parse --show-toplevel
+/root/claude-docs-toolkit
+$ git -C /home/appuser/apps/devkit rev-parse --show-toplevel
+/home/appuser/apps/devkit
+$ git -C /home/appuser/apps/devkit remote get-url origin
+git@github.com:AbudiHadi/devkit.git
+```
+
+devkit is a **separate repository**; git cannot include a path outside the
+worktree, and Codex only ever sees the toolkit diff. The owner instructed
+separate focused commits per repo, so this is correct by design.
+
+**Next session, if the owner agrees the finding is wrong**, the gate's own
+documented exit is a per-diff approval (ADR-023):
+
+```
+/root/.claude/hooks/codex-review-gate.sh --approve /root/claude-docs-toolkit "<the owner's exact words>"
+```
+
+Then commit toolkit (5 staged files), then commit `devkit/.coderv-ci.json`
+separately. Never record an approval the owner did not explicitly give.
+
+### Gate findings that WERE real and are fixed
+
+- **`--dir`/`--sha` with no value hung forever.** `shift 2` fails with one arg
+  left, `|| true` kept the list unchanged, the parser spun. Confirmed by
+  `timeout 5` returning `Terminated`. Same class as KI-005. Now exits `3`;
+  T21 covers it **under `timeout`** so a regression fails instead of hanging.
+- **The tool installed for Claude only, while `/ship` installs to Codex and
+  Gemini too** (`install.sh:528,532`). Gate 10 would have read "unavailable"
+  forever on two of three hosts — a gate that silently never runs. Now
+  installed/uninstalled per host; `/ship` probes all three homes.
+
+### Earlier Codex round (pre-commit, Step 4.5) — 5 findings, 4 fixed 1 rejected
+
+Fixed: 100-run window → `gh run list --commit <sha>`; a **NUL byte** that made
+the script binary to git (from a shell round-trip) plus a separator-less
+duplicate key → `unique_by([.workflow, .job])`; prefix sha matching → resolve via
+`rev-parse --verify --quiet <sha>^{commit}` then match by equality;
+`timed_out|action_required|stale|neutral` → FAILED, unknown conclusion →
+UNVERIFIED. Rejected: the same devkit finding above. Round 2 returned **LGTM**.
+
+### Verification (all re-run on the final tree)
+
+```
+tests/ci-green-check.sh   71 passed, 0 failed
+tests/gate-cap.sh        255 passed, 0 failed
+install round-trip        installed+executable in .claude/.codex/.gemini; removed from all three
+```
+
+Live, from a neutral cwd (NOT inside devkit — that hid a real `--repo` bug once):
+
+```
+$ ci-green-check.sh --dir /home/appuser/apps/devkit --sha 4e795eb
+{"verdict":"NOT GREEN","exit":1,"failed":["go-verify (windows-latest, stable)"]}
+
+$ ci-green-check.sh --dir /home/appuser/apps/devkit
+{"verdict":"GREEN","exit":0,"n":5}
+```
+
+`4e795eb` is the real commit that shipped believing it was green.
+
+### Gotchas for the next session
+
+- **Mutation-test before trusting a green suite.** Six mutants were killed
+  (partial-matrix blindness, unrelated-workflow consultation, vacuous empty
+  config, unpinned `gh run view`, global-window query, resolution bypass).
+- **One equivalent mutant exists and is NOT a coverage gap**: loosening the
+  `^[0-9a-f]{40}$` guard to `{7,40}` changes nothing, because `rev-parse`
+  always returns 40 chars on both paths. Do not add dead code chasing it.
+- **`grep -qa $'\x00'` cannot detect NUL** — bash strips it, the pattern becomes
+  empty and matches everything. Use `tr -dc '\000' | wc -c`.
+- **jq exits 0 on parse errors piped through `head`** — check `$?` of jq itself.
+  The real vacuous-pass risk is `?` absorbing a missing/empty key on valid JSON.
+- **Run the checker from OUTSIDE the target repo** when testing; `gh` resolves
+  the repo from cwd unless `--repo` is passed.
+- **Toolkit deliberately has NO `.coderv-ci.json`** — it has no GitHub Actions
+  workflow, so declaring one would be false coverage. Gate 10 correctly scores
+  ✖ "required jobs undeclared". Owner decision, not an oversight.
+
+### Deliberate follow-ups (NOT done, on purpose)
+
+- **No CHANGELOG entry.** `release.sh:35` hard-fails unless VERSION == CHANGELOG
+  top entry, and history shows CHANGELOG moves **with** a version bump
+  (`c600e6a` = `v0.16.1:`). Adding one now without bumping VERSION would break
+  the release gate. Do it at release time.
+- Nothing pushed. Owner did not authorize a push.
+
+---
+
 ## 2026-07-29 — v0.16.1 SHIPPED + RELEASED end-to-end: the Windows dirname fixed-point hang (KI-005), both walks guarded
 
 **What shipped:**

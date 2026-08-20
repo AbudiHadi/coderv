@@ -33,6 +33,129 @@ What did we decide?
 
 ---
 
+## ADR-028: Practical impact is the stopping rule — every finding declares BLOCKER or DEBT, and the ceiling stops the loop without overriding a blocker
+
+**Date:** 2026-08-20
+**Status:** accepted
+**Decider(s):** owner (rule + the ceiling correction) + Claude (mechanism); plan peer-reviewed by Codex (3 findings, all material, all accepted)
+
+### Context
+ADR-022 fixed the round-8/9 lexer trickle (KI-004) by splitting severity along
+reachability + impact: `[hardening]`/`[edge]`/`[theoretical]` stopped blocking
+in default mode. That solved the *security* half of "the gate behaves like a
+penetration tester", but the contract still had gaps the owner hit in practice:
+
+1. **No vocabulary for two real harm classes.** The tags covered data-loss,
+   security, and correctness. A compatibility break or a release-integrity
+   defect had to be forced into `[correctness]` or left untagged (which blocks
+   as material) — so the reviewer had no honest way to name what it saw.
+2. **The classification was descriptive, not declared.** MATERIAL/MARGINAL were
+   inferred from a severity tag. Nothing forced the reviewer to state, in one
+   token, whether it believed the finding should block — so "is this worth
+   blocking for?" stayed a judgment re-made per round.
+3. **The ceiling auto-allowed real defects.** ADR-019's valve allowed ANY
+   non-security material residue at the hard ceiling so routine code was never
+   escalated. That traded a real correctness/compatibility bug shipping for
+   loop termination — a trade only justified while an infinite trickle could
+   still keep the loop alive.
+
+### Decision
+The reviewer declares **`[blocker]`** or **`[debt]`** on every finding, and the
+owner's practical-impact wording is the stated principle in the prompt: ignore
+atomic, theoretical, defensive, or extremely low-impact findings; do not block
+for issues with no realistic user-facing impact; once the implementation is
+materially correct and verified, STOP.
+
+1. **A `[blocker]` must NAME a harm category** — users, data, security/privacy,
+   correctness, compatibility, or release integrity. Two new severity tags,
+   `[compatibility]` and `[release-integrity]`, make all six representable
+   (users → `[correctness]`, data → `[data-loss]`, security/privacy →
+   `[security]`). If the reviewer cannot name one, the finding is `[debt]` by
+   construction.
+2. **Only BLOCKERs deny.** A debt-only review allows in round 1 (unchanged
+   ADR-022 mechanism, `MATERIAL_COUNT == 0`), debt is surfaced under a
+   "Non-blocking debt" section, and the reviewer is told the review is COMPLETE
+   — no permanent bookkeeping file is written at commit time.
+3. **The declaration is a CROSS-CHECK, never a lever — severity always wins.**
+   `[debt]` on a material severity does not demote it; a `[blocker]` naming no
+   category is malformed and still blocks; `[blocker]` on a marginal severity
+   blocks on the higher claim. Every disagreement is surfaced as a mislabel.
+   The anti-evasion floor (untagged / prose-unparsed / preamble = material) is
+   untouched.
+4. **The ceiling stops the loop; it does not override a blocker** (owner
+   correction to ADR-019). Any material residue at the hard ceiling now DENIES
+   and escalates durably (`escalated=1`) so the owner decides; only debt residue
+   self-terminates with a caveat. This does not recreate the trickle: exotic,
+   defensive, and cosmetic findings must now be classified `[debt]`, and debt
+   can never keep the loop alive.
+5. **`--security` is unchanged in spirit:** `[hardening]` stays material there,
+   so `[debt][hardening]` still blocks under the explicit opt-in.
+
+### Alternatives
+- **Prose-only instruction** (rejected) — the owner's own prior lesson
+  (`feedback_mechanical_over_descriptive`): a described quality loses to a
+  capable model's judgment. The rule is enforced by a parser and a count.
+- **Let a category-less `[blocker]` fall back to debt** (rejected, and it was
+  the plan's original line) — Codex's review caught that it opens an evasion
+  path: omit the category and a real defect stops blocking. Fail-closed
+  instead.
+- **Keep ADR-019's blanket ceiling allow** (rejected by the owner) — it
+  auto-merges a real defect purely because a counter ran out.
+
+### Consequences
+- Positive: a normal commit with only debt converges in one round and says so;
+  the reviewer has honest names for compatibility and release-integrity harm;
+  a real blocker can no longer ship by exhausting the round counter.
+- Trade-off: a blocker at the ceiling now reaches the owner instead of
+  self-terminating. That is the intended cost — the escape is the same
+  documented per-diff `--approve` (ADR-023).
+- Trade-off: `ceiling=K>0` markers can no longer be produced; their READ path
+  stays for markers written by pre-ADR-028 hooks (T15c).
+- Verified by: `tests/gate-cap.sh` — T77–T85 (the precedence matrix, the new
+  tags, the security-mode carve-out, the prompt contract, the fixes below),
+  plus the ADR-019 ceiling tests rewritten to the new rule (T5, T15b, T15c,
+  T21, T22, T22b, T25, T32, T36b). 295 passed, 0 failed;
+  `tests/ci-green-check.sh` 71 passed, 0 failed.
+
+### Fail-open holes found at `/ship` time (fixed before the commit landed)
+
+Both were found by the `/ship` fresh-context reviewer and the Codex gate
+reviewing this very change — the mechanism reviewing itself. Both are the same
+species: a rule stated correctly in one place and **not carried to a second
+place that decides the outcome**. Each is mutation-tested (assert fails against
+the pre-fix code, passes after).
+
+1. **`decl_label()` failed OPEN on a contradictory cluster (T84).** It returned
+   `undeclared` whenever the leading cluster held BOTH `[blocker]` and `[debt]`
+   (`n != 1`). The marginal arms test for `blocker`, so `[blocker][debt][edge]`
+   silently DROPPED the reviewer's blocking claim and ALLOWED in round 1 — the
+   exact evasion this cross-check was added to catch. Its sibling
+   `sec_in_cluster()` already solved the same multi-tag hazard with
+   contains-not-equals; `decl_label` had diverged. Now any cluster naming
+   `[blocker]` keeps the blocking claim, while a repeated `[debt]` is still
+   never promoted.
+2. **The owner-visible ceiling `systemMessage` hardcoded "SECURITY STOP" (T85).**
+   The deny *reason* correctly gained `CEIL_KIND`/`BLOCKER STOP`, but the
+   `systemMessage` — the one line the human actually reads in the transcript —
+   still said `CEILING SECURITY STOP` with `$SEC_COUNT`. A correctness blocker
+   at the ceiling therefore reported "0 security/data-loss finding(s) still
+   open" at the precise moment a real blocker needed an owner decision. It now
+   tracks `CEIL_KIND` and reports the material count; a genuine security
+   ceiling keeps its original wording.
+3. **A contradictory declaration blocked SILENTLY on material severities
+   (T84).** Follow-on from fix 1, caught by the Codex gate's second pass: once
+   `decl_label()` resolves `[blocker][debt]` to `blocker`, the material arm's
+   lone-`[debt]` mislabel note stops firing, so the attempted demotion was
+   never reported. Verdict was always correct — this was a lost diagnostic, so
+   by ADR-028's own principle it is DEBT, not a blocker (Codex tagged it
+   `[blocker][correctness]`; the severity was overstated). Fixed anyway because
+   it is cheap and in-scope: a separate `decl_contradictory()` reports the
+   contradiction on EVERY severity path, while `decl_label()` stays two-valued
+   so no severity arm needs a fourth state. The generic higher-claim note is
+   suppressed when the contradiction note already fired — one finding, one note.
+
+---
+
 ## ADR-027: Green is per-job, never per-run — required CI is declared in-repo and verified by enumeration
 
 **Date:** 2026-08-10

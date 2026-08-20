@@ -231,13 +231,16 @@ is_deny "$OUT"; check "material stays blocked in the middle tier" $?
 [[ -z "$(sysmsg "$OUT")" ]]; check "no owner-visible systemMessage in the middle tier" $?
 ! grep -q '"type":"cap_escalated"' "$HOME/.claude/coderlap/loop-events.jsonl"; check "no cap_escalated logged in the middle tier" $?
 
-echo "T5: NON-security residue AT the ceiling (round 5 = ROUND_MAX) -> self-terminate, ALLOW with caveat"
-# Round 5 hits ROUND_MAX. A [correctness] finding is non-security residue, so the
-# loop self-terminates: allow-with-caveat, NOT an escalation to the human.
+echo "T5: MATERIAL residue AT the ceiling (round 5 = ROUND_MAX) -> the loop STOPS but still DENIES (ADR-028)"
+# ADR-028 reverses ADR-019's blanket ceiling allow. A [correctness] finding is a
+# BLOCKER: the ceiling stops further review rounds, it does NOT override the
+# blocker. The commit is denied and the finding goes to the owner for a
+# decision. (Pre-ADR-028 this asserted allow-with-caveat.) The trickle risk that
+# justified the old valve is removed at the source: theoretical/defensive/
+# cosmetic findings must now be tagged DEBT, and DEBT can never reach here.
 bump_diff t5; OUT=$(run_gate)
-is_allow "$OUT"; check "round 5 correctness residue self-terminates (allowed, not escalated)" $?
-grep -q "STOPPED\|ALLOWED with caveat" <<<"$(sysmsg "$OUT")"; check "ceiling allow carries a loud caveat" $?
-! grep -q "ESCALATE TO THE OWNER" <<<"$(reason "$OUT")"; check "non-security residue never escalates at the ceiling" $?
+is_deny "$OUT"; check "round 5 correctness residue still DENIES (ceiling stops the loop, not the blocker)" $?
+grep -q "correctness" <<<"$(reason "$OUT")"; check "the blocking finding is surfaced to the owner" $?
 
 echo "T6: HEAD move selects a fresh state file; old state survives (no delete path)"
 OLD_RF=$(rounds_file)
@@ -360,25 +363,27 @@ OUT=$(run_gate)   # identical retry
 is_allow "$OUT"; check "cap-stopped retry still passes" $?
 grep -q "marginal findings still stand" <<<"$(sysmsg "$OUT")"; check "retry repeats the caveat (never silent)" $?
 
-echo "T15b: retry of a CEILING material-residue allow is described accurately (NOT 'marginal')"
-# A [correctness] finding driven to the ceiling self-terminates (allow-with-caveat).
-# Its cap_stopped marker carries ceiling=K>0, so the identical retry must say
-# "non-security material", never falsely claim the residue was marginal.
+echo "T15b: ADR-028 — a ceiling material residue DENIES, and no new ceiling=K>0 marker is ever written"
+# Pre-ADR-028 this drove a [correctness] finding to the ceiling and asserted an
+# allow-with-caveat whose marker carried ceiling=K>0. ADR-028 reverses that: the
+# ceiling stops the loop but the blocker still denies, so ceiling=K>0 markers can
+# no longer be PRODUCED. (Their READ path is still exercised by T15c below, for
+# markers written by a pre-ADR-028 hook still sitting in a cache dir.)
 new_head
 printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"   # [correctness] = non-security material
-for i in 1 2 3 4 5; do bump_diff "t15b-$i"; OUT=$(run_gate); done   # round 5 = ceiling → allow
-is_allow "$OUT"; check "ceiling [correctness] residue self-terminates (allow)" $?
-OUT=$(run_gate)   # identical retry hits the cached marker
-is_allow "$OUT"; check "ceiling retry passes" $?
-grep -q "non-security material" <<<"$(sysmsg "$OUT")"; check "ceiling retry names non-security material residue (not 'marginal')" $?
-! grep -q "MARGINAL findings open" <<<"$(sysmsg "$OUT")"; check "ceiling retry does NOT mislabel the residue as marginal" $?
-# The marker itself carries ceiling=K>0.
+for i in 1 2 3 4 5; do bump_diff "t15b-$i"; OUT=$(run_gate); done   # round 5 = ceiling
+is_deny "$OUT"; check "ceiling [correctness] residue DENIES (the blocker outlives the ceiling)" $?
+OUT=$(run_gate)   # identical retry
+is_deny "$OUT"; check "identical retry of a ceiling-denied blocker still denies" $?
+# No newly-written marker may claim a material ceiling stop.
 MKC=""
 for _m in "$HOME/.claude/coderlap/codex-reviewed"/*; do
     case "$_m" in */rounds-*|*/ledger-*|*.lock) continue ;; esac
     [[ -f "$_m" ]] && { [[ -z "$MKC" || "$_m" -nt "$MKC" ]] && MKC="$_m"; }
 done
-grep -qE 'cap_stopped .* ceiling=[1-9]' "$MKC"; check "ceiling cap_stopped marker records ceiling=K>0" $?
+[[ -z "$MKC" ]] || ! grep -qE 'cap_stopped .* ceiling=[1-9]' "$MKC"
+check "no ceiling=K>0 marker is written under ADR-028" $?
+
 
 CACHE_DIR="$HOME/.claude/coderlap/codex-reviewed"
 # The most-recently-written cache MARKER (sha256 hex name, not rounds-*/*.lock).
@@ -402,6 +407,29 @@ count_markers() {
     done
     printf '%s' "$n"
 }
+
+echo "T15c: ADR-028 — a LEGACY ceiling=K>0 marker (pre-ADR-028) is still read and described accurately"
+# Backward compatibility: a marker written by an older hook can still be in the
+# cache. Its retry path must survive and must NOT mislabel the residue as
+# marginal — the reader stays even though the writer can no longer emit it.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+bump_diff t15c
+OUT=$(run_gate)   # round 1 deny; publishes a marker for THIS exact diff's hash
+# Overwrite that same marker in place with the legacy ceiling form, then retry
+# the IDENTICAL diff so the cache fast-path reads it. latest_marker() is defined
+# above and picks the marker just written for this hash.
+MKC=$(latest_marker)
+if [[ -n "$MKC" && -f "$MKC" ]]; then
+    # No trailing newline: write_marker uses printf '%s', and the reader's
+    # regexes are $-anchored against the EXACT bytes — a stray \n reads as a
+    # corrupt marker (conservatively an open escalation) instead of a legacy one.
+    printf 'cap_stopped round=5 findings=1 ceiling=1' > "$MKC"   # hand-forged legacy marker
+    OUT=$(run_gate)   # identical diff — no bump_diff, so the hash still matches
+    is_allow "$OUT"; check "legacy ceiling=K>0 marker still passes its identical retry" $?
+    grep -q "non-security material" <<<"$(sysmsg "$OUT")"; check "legacy retry names non-security material residue" $?
+    ! grep -q "MARGINAL findings open" <<<"$(sysmsg "$OUT")"; check "legacy retry does NOT mislabel the residue as marginal" $?
+fi
 
 echo "T16: F1 — a failed rounds APPEND (set -e) leaves ROUND empty (no cap advance, no marker)"
 new_head
@@ -668,26 +696,36 @@ rm -rf "$MONO_DIR"
 # ADR-019 — gate memory + project context + convergence ceiling
 # ===========================================================================
 
-echo "T21: ceiling by ROUND_MAX — non-security material residue self-terminates (allow-with-caveat)"
+echo "T21: ceiling by ROUND_MAX — a material BLOCKER still denies at the ceiling (ADR-028)"
 new_head
 printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
-# CAP=3, ROUND_MAX=5 (defaults). Rounds 1-4 deny (tiers 1-2), round 5 = ceiling.
+# CAP=3, ROUND_MAX=5 (defaults). Rounds 1-4 deny (tiers 1-2). ADR-028: round 5
+# (the ceiling) stops the LOOP but does not override the blocker — still a deny.
 for i in 1 2 3 4; do bump_diff "t21-$i"; OUT=$(run_gate); is_deny "$OUT" || break; done
 is_deny "$OUT"; check "rounds 1-4 (below ceiling) all deny" $?
 bump_diff t21-5; OUT=$(run_gate)   # round 5 = ROUND_MAX
-is_allow "$OUT"; check "round 5 correctness residue -> ceiling self-terminate (ALLOW)" $?
-grep -q "STOPPED" <<<"$(sysmsg "$OUT")"; check "ceiling allow is loud" $?
+is_deny "$OUT"; check "round 5 correctness residue still DENIES at the ceiling" $?
+grep -q "correctness" <<<"$(reason "$OUT")"; check "the blocker is surfaced to the owner" $?
 
-echo "T22: ceiling by DIFF_BUDGET — a tiny budget trips the ceiling AT the cap, non-security allows"
+echo "T22: ceiling by DIFF_BUDGET — a tiny budget trips the ceiling, but a BLOCKER still denies"
 new_head
 printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
 # Budget = 1 byte: every round's transmitted bytes exceed it, so the ceiling is
-# reached as soon as ROUND>=CAP (cap-gating, finding 13). Rounds 1-2 (<CAP) deny;
-# round 3 (==CAP, budget exhausted) => ceiling => non-security allow.
+# reached as soon as ROUND>=CAP (cap-gating, finding 13). Under ADR-028 the
+# budget ceiling stops the loop but a material finding still blocks.
 for i in 1 2; do bump_diff "t22-$i"; OUT=$(CODERV_GATE_DIFF_BUDGET=1 run_gate); done
 is_deny "$OUT"; check "below-CAP rounds deny regardless of exhausted budget" $?
 bump_diff t22-3; OUT=$(CODERV_GATE_DIFF_BUDGET=1 run_gate)   # round 3 == CAP, budget blown
-is_allow "$OUT"; check "at CAP with budget exhausted -> ceiling self-terminate (ALLOW)" $?
+is_deny "$OUT"; check "at CAP with budget exhausted a material finding still DENIES" $?
+
+echo "T22b: ADR-028 — MARGINAL residue at the ceiling still self-terminates (allow-with-caveat)"
+# The ceiling valve is not deleted, only narrowed: DEBT-only residue that the
+# loop could not clear still allows, so a debt trickle can never hold a commit.
+new_head
+printf '%s\n' "$MARGINAL_REVIEW" > "$REVIEW_FILE"
+for i in 1 2 3 4 5; do bump_diff "t22b-$i"; OUT=$(run_gate); done
+is_allow "$OUT"; check "marginal-only residue still allows (round-1 debt path or ceiling)" $?
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
 
 echo "T23: cap-gating is ABSOLUTE — a below-CAP material finding BLOCKS even with the budget blown"
 new_head
@@ -708,12 +746,15 @@ printf '%s\n' '1. [BUG][data-loss] app.sh:1 — corrupts saved records. Fix: X.'
 for i in 1 2 3 4 5; do bump_diff "t24d-$i"; OUT=$(run_gate); done
 is_deny "$OUT"; check "data-loss at the ceiling BLOCKS" $?
 
-echo "T25: at the ceiling, untagged / prose-unparsed / multi-severity-WITHOUT-security all ALLOW"
+echo "T25: ADR-028 — at the ceiling, untagged / prose-unparsed / multi-severity all still DENY"
+# All three classify MATERIAL (the anti-evasion floor: an unclassifiable finding
+# is never assumed harmless). Pre-ADR-028 the ceiling allowed them through
+# because they carried no security tag; now material is material, ceiling or not.
 for rv in "$UNTAGGED_REVIEW" "$PROSE_REVIEW" '1. [BUG][correctness][edge] app.sh:1 — two non-security tags.'; do
     new_head
     printf '%s\n' "$rv" > "$REVIEW_FILE"
     for i in 1 2 3 4 5; do bump_diff "t25-$i"; OUT=$(run_gate); done
-    is_allow "$OUT"; check "ceiling non-security residue allows: ${rv:0:40}..." $?
+    is_deny "$OUT"; check "ceiling material residue still denies: ${rv:0:40}..." $?
 done
 
 echo "T26: multi-severity WITH security ([security][correctness]) BLOCKS at the ceiling (finding 16)"
@@ -870,7 +911,15 @@ printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
 for i in 1 2 3 4; do bump_diff "t32-$i"; OUT=$(CODERV_GATE_ROUND_MAX=abc CODERV_GATE_DIFF_BUDGET=xyz run_gate); done
 is_deny "$OUT"; check "invalid ROUND_MAX/DIFF_BUDGET: rounds 1-4 still deny (defaults, no arith error)" $?
 bump_diff t32-5; OUT=$(CODERV_GATE_ROUND_MAX=abc CODERV_GATE_DIFF_BUDGET=xyz run_gate)
-is_allow "$OUT"; check "invalid ROUND_MAX falls back to 5 -> round 5 self-terminates" $?
+is_deny "$OUT"; check "invalid ROUND_MAX falls back to 5 -> round 5 material still denies (ADR-028)" $?
+# ADR-028: a material finding denies at EVERY round, so the deny above cannot by
+# itself prove the ROUND_MAX default took. Re-prove the fallback with MARGINAL
+# residue, which self-terminates at the ceiling and nowhere else.
+new_head
+printf '%s\n' "$MARGINAL_REVIEW" > "$REVIEW_FILE"
+for i in 1 2 3 4 5; do bump_diff "t32m-$i"; OUT=$(CODERV_GATE_ROUND_MAX=abc CODERV_GATE_DIFF_BUDGET=xyz run_gate); done
+is_allow "$OUT"; check "invalid ROUND_MAX falls back to 5 -> marginal residue self-terminates" $?
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
 # ROUND_MAX <= CAP is clamped up to CAP+2 (so the middle tier is never empty).
 new_head
 for i in 1 2 3 4; do bump_diff "t32c-$i"; OUT=$(CODERV_GATE_ROUND_MAX=1 run_gate); done
@@ -1008,15 +1057,18 @@ echo "T36b: ceiling straddle under concurrency — EXACTLY one review crosses in
 # self-terminates → allow). A stale-read design would let both read the same
 # pre-ceiling total and both deny. We assert EXACTLY one deny + one allow.
 new_head
-printf '%s\n' "$MARGINAL_REVIEW" > "$REVIEW_FILE"
-for i in 1 2 3; do bump_diff "t36b-seed$i"; OUT=$(run_gate); done   # rounds 1-3 (==CAP), marginal → allow
+printf '%s\n' '1. [BUG][hardening] app.sh:1 — exotic parser corner, no reachable impact.' > "$REVIEW_FILE"
+# ADR-028: the whole straddle runs in SECURITY mode. There [hardening] is material
+# (denies below the ceiling) yet non-security (self-terminates AT the ceiling) —
+# the only class that still produces both halves of the straddle. Seeding in
+# default mode would allow in round 1 and never advance the round counter.
+for i in 1 2 3; do bump_diff "t36b-seed$i"; OUT=$(CODERV_GATE_SECURITY=1 run_gate); done   # rounds 1-3 (==CAP)
 RF=$(rounds_file)
-printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
 # A material round's transmitted bytes are stable across the two concurrent runs
 # (same diff). Estimate one slice from a dry material round; its row STAYS in the
 # ledger (it is a real committed round), so the concurrent pair straddle relative
 # to the cumulative AFTER the probe, not after the seed.
-bump_diff t36b-probe; OUT=$(run_gate); PROBE_LINE=$(tail -1 "$RF"); ONEB=$(awk '{print $4}' <<<"$PROBE_LINE")
+bump_diff t36b-probe; OUT=$(CODERV_GATE_SECURITY=1 run_gate); PROBE_LINE=$(tail -1 "$RF"); ONEB=$(awk '{print $4}' <<<"$PROBE_LINE")
 # Baseline the pair reads is the cumulative once the probe row is persisted.
 BASE_CUM=$(awk '/^[0-9]+ [0-9]+ [^[:space:]]+ [0-9]+$/{s+=$4} END{print s+0}' "$RF")
 # Budget lets BASE + the FIRST concurrent slice sit under, but BASE + BOTH slices
@@ -1027,9 +1079,14 @@ BUDGET=$(( BASE_CUM + ONEB + ONEB/2 ))
 # the byte-budget straddle could never show. Lift the round ceiling out of the
 # way so CUM_BYTES >= DIFF_BUDGET is the ONLY thing that can trip the ceiling.
 bump_diff t36b-conc
+# ADR-028: run the straddle in SECURITY mode with [hardening] residue. There,
+# [hardening] is MATERIAL (so it denies below the ceiling, giving the pre-ceiling
+# deny) while remaining non-security (so the ceiling still self-terminates it,
+# giving the ceiling allow). In default mode no single fixture can produce both
+# halves any more: material denies everywhere, marginal allows in round 1.
 export FAKE_DELAY=1
-CODERV_GATE_ROUND_MAX=99 CODERV_GATE_DIFF_BUDGET=$BUDGET run_gate > "$TDIR/t36bA" & PA=$!
-CODERV_GATE_ROUND_MAX=99 CODERV_GATE_DIFF_BUDGET=$BUDGET run_gate > "$TDIR/t36bB" & PB=$!
+CODERV_GATE_SECURITY=1 CODERV_GATE_ROUND_MAX=99 CODERV_GATE_DIFF_BUDGET=$BUDGET run_gate > "$TDIR/t36bA" & PA=$!
+CODERV_GATE_SECURITY=1 CODERV_GATE_ROUND_MAX=99 CODERV_GATE_DIFF_BUDGET=$BUDGET run_gate > "$TDIR/t36bB" & PB=$!
 wait "$PA" "$PB"
 unset FAKE_DELAY
 # The ATOMICITY guarantee (finding 10) is: the two concurrent rounds serialize on
@@ -1047,10 +1104,25 @@ MONO=$(awk '/^[0-9]+ [0-9]+ [^[:space:]]+ [0-9]+$/{cum+=$4; print cum}' "$RF" | 
 # total past BUDGET → ceiling self-terminate → allow. So EXACTLY one deny + one
 # allow, order-independent. A stale-read design (both reading SEED_CUM) would
 # instead produce two denies — which this assertion catches.
+# ADR-028 changed what the straddle can OBSERVE, not what it protects. A blocker
+# now denies on BOTH sides of the ceiling, so "one deny + one allow" is no longer
+# a reachable signal for a material fixture. The invariant this test exists for —
+# the two concurrent rounds serialize on ONE transaction, so exactly one of them
+# CROSSES the ceiling — is asserted directly instead: exactly one review reports
+# ceiling-reached, and the other reports a pre-ceiling round. A stale-read design
+# (both reading the same pre-update total) yields zero crossers, which fails here
+# exactly as it failed the old deny/allow split.
 VA=$(cat "$TDIR/t36bA"); VB=$(cat "$TDIR/t36bB")
-DENIES=0; ALLOWS=0
-for V in "$VA" "$VB"; do if is_deny "$V"; then DENIES=$((DENIES+1)); else ALLOWS=$((ALLOWS+1)); fi; done
-{ (( DENIES == 1 )) && (( ALLOWS == 1 )); }; check "ceiling straddle: exactly one pre-ceiling deny + one ceiling allow under concurrency (deny:$DENIES allow:$ALLOWS)" $?
+CROSSED=0; PRECEIL=0
+for V in "$VA" "$VB"; do
+    if grep -q "CEILING-REACHED" <<<"$(reason "$V")"; then CROSSED=$((CROSSED+1));
+    else PRECEIL=$((PRECEIL+1)); fi
+done
+{ (( CROSSED == 1 )) && (( PRECEIL == 1 )); }; check "ceiling straddle: exactly one review crosses the ceiling under concurrency (crossed:$CROSSED pre-ceiling:$PRECEIL)" $?
+# and the crosser escalated as a BLOCKER stop, not mislabeled as a security stop
+# ([hardening] is material in security mode but is not [security]/[data-loss]).
+grep -qE "CEILING-REACHED BLOCKER STOP" <<<"$(reason "$VA")$(reason "$VB")"
+check "the non-security ceiling blocker escalates as a BLOCKER stop, not a SECURITY stop" $?
 
 echo "T37: message-embedded '; git -C <decoy> commit' cannot hijack the review target (0.13.1 bypass regression)"
 # GITC_RE used to match the RAW command, so a commit MESSAGE containing a
@@ -1556,12 +1628,12 @@ MIXED_MARGINAL_REVIEW='1. [BUG][hardening] app.sh:1 — parser corner, no reacha
 MIXED_MAT_HARD_REVIEW='1. [BUG][correctness] app.sh:1 — wrong result on valid input. Fix: X.
 2. [BUG][hardening] app.sh:2 — exotic parser corner, no reachable impact.'
 
-echo "T65: default mode — [hardening]-only review ALLOWS in ROUND 1 with an Optional Security Review section"
+echo "T65: default mode — [hardening]-only review ALLOWS in ROUND 1 with a Non-blocking debt section"
 new_head
 printf '%s\n' "$HARDENING_REVIEW" > "$REVIEW_FILE"
 bump_diff t65; OUT=$(run_gate)
 is_allow "$OUT"; check "hardening-only allows in round 1 (not deny, not cap-dependent)" $?
-grep -q "Optional Security Review" <<<"$(ctx "$OUT")"; check "context carries the labeled Optional Security Review section" $?
+grep -q "Non-blocking debt" <<<"$(ctx "$OUT")"; check "context carries the labeled Non-blocking debt section" $?
 grep -q "quality gate PASSED" <<<"$(sysmsg "$OUT")"; check "systemMessage names the quality-gate pass" $?
 grep -q "shell-grammar corner" <<<"$(ctx "$OUT")"; check "finding surfaced verbatim, not dropped" $?
 grep -q '"optional_review":true' "$HOME/.claude/coderlap/loop-events.jsonl"; check "optional_review outcome logged" $?
@@ -1577,7 +1649,7 @@ new_head
 printf '%s\n' "$MIXED_MARGINAL_REVIEW" > "$REVIEW_FILE"
 bump_diff t66; OUT=$(run_gate)
 is_allow "$OUT"; check "edge/theoretical join hardening in the round-1 allow" $?
-grep -q "Optional Security Review" <<<"$(ctx "$OUT")"; check "mixed marginal findings listed in the Optional section" $?
+grep -q "Non-blocking debt" <<<"$(ctx "$OUT")"; check "mixed marginal findings listed in the debt section" $?
 
 echo "T67: default mode — a realistic [security] finding still BLOCKS"
 new_head
@@ -1603,10 +1675,10 @@ new_head
 printf '%s\n' "$MIXED_MAT_HARD_REVIEW" > "$REVIEW_FILE"
 bump_diff t70; OUT=$(run_gate)
 is_deny "$OUT"; check "mixed review denies (the correctness finding blocks)" $?
-grep -q "Optional Security Review (non-blocking)" <<<"$(reason "$OUT")"; check "deny reason carries the Optional Security Review section" $?
+grep -q "Non-blocking debt" <<<"$(reason "$OUT")"; check "deny reason carries the Non-blocking debt section" $?
 # the marginal finding must be LISTED VERBATIM inside the section, not merely
 # counted — the owner must never re-parse severity tags to see what blocks.
-sed -n '/Optional Security Review (non-blocking)/,$p' <<<"$(reason "$OUT")" \
+sed -n '/Non-blocking debt/,$p' <<<"$(reason "$OUT")" \
   | grep -q "exotic parser corner"; check "the hardening finding text is re-listed under the Optional section" $?
 grep -q "material" <<<"$(reason "$OUT")"; check "deny reason names the material-only scope of the block" $?
 
@@ -1641,7 +1713,7 @@ bump_diff t71
 CAPD="$TDIR/cap-adr022-default"
 run_gate_capture "$CAPD" >/dev/null
 grep -q "ENGINEERING QUALITY GATE" "$CAPD/prompt"; check "default prompt carries the quality-gate brief" $?
-grep -q "Optional Security Review" "$CAPD/prompt"; check "default prompt routes exotic findings to the Optional section" $?
+grep -q "Non-blocking debt" "$CAPD/prompt"; check "default prompt routes exotic findings to the debt section" $?
 new_head
 bump_diff t71b
 CAPS="$TDIR/cap-adr022-security"
@@ -1729,6 +1801,159 @@ touch -d '2 days ago' "$GATES_OFF_FLAG76" 2>/dev/null && {
     is_deny "$OUT"; check "an expired gates-off flag does NOT pass the fail-closed path" $?
 }
 rm -f "$GATES_OFF_FLAG76" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# ADR-028 — the BLOCKER/DEBT practical-impact contract. The declaration tag is a
+# CROSS-CHECK on the severity tag, never a lever: severity always wins, and
+# every disagreement resolves toward BLOCKING. These tests pin both directions
+# (a real defect cannot be demoted; a nit cannot be smuggled past as debt).
+# ---------------------------------------------------------------------------
+echo "T77: ADR-028 — [debt] on a MATERIAL severity does NOT demote it (blocks, mislabel surfaced)"
+new_head
+printf '%s\n' '1. [BUG][debt][correctness] app.sh:1 — wrong result on valid input. Fix: X.' > "$REVIEW_FILE"
+bump_diff t77; OUT=$(run_gate)
+is_deny "$OUT"; check "[debt][correctness] still denies — a real defect cannot be demoted" $?
+grep -qi "mislabel" <<<"$(reason "$OUT")"; check "the demotion attempt is surfaced to the owner as a mislabel" $?
+
+echo "T78: ADR-028 — a [blocker] naming NO harm category is malformed and still BLOCKS"
+new_head
+printf '%s\n' '1. [BUG][blocker] app.sh:1 — something feels wrong here.' > "$REVIEW_FILE"
+bump_diff t78; OUT=$(run_gate)
+is_deny "$OUT"; check "category-less [blocker] blocks (untagged anti-evasion floor holds)" $?
+grep -qi "no harm category\|malformed" <<<"$(reason "$OUT")"; check "the missing category is named in the deny reason" $?
+
+echo "T79: ADR-028 — [blocker] on a MARGINAL severity blocks on the higher claim"
+new_head
+printf '%s\n' '1. [BUG][blocker][edge] app.sh:1 — bounded misbehavior, but I claim it matters.' > "$REVIEW_FILE"
+bump_diff t79; OUT=$(run_gate)
+is_deny "$OUT"; check "[blocker][edge] blocks — the higher claim wins" $?
+# The contradiction guard: a blocking finding must NEVER also appear in the
+# non-blocking debt list, or the owner is told a blocker needs no fix. The debt
+# list is only emitted when FINDING_COUNT > MATERIAL_COUNT, so a SINGLE finding
+# never reaches it — the fixture must MIX a genuine debt finding with the
+# [blocker]-declared marginal, or the guard is never exercised at all.
+new_head
+printf '%s\n' '1. [BUG][blocker][edge] app.sh:1 — bounded, but I claim it matters.
+2. [BUG][debt][theoretical] app.sh:2 — genuinely unreachable, real debt.' > "$REVIEW_FILE"
+bump_diff t79mix; OUT=$(run_gate)
+is_deny "$OUT"; check "the mixed review denies on the [blocker]-declared finding" $?
+grep -q "Non-blocking debt" <<<"$(reason "$OUT")"; check "the genuine debt finding IS listed as non-blocking" $?
+DEBT_SECTION=$(sed -n '/Non-blocking debt/,$p' <<<"$(reason "$OUT")")
+! grep -q "I claim it matters" <<<"$DEBT_SECTION"
+check "the [blocker]-declared marginal is NOT re-listed as non-blocking debt" $?
+grep -q "genuinely unreachable" <<<"$DEBT_SECTION"
+check "the real debt finding is the one listed" $?
+
+echo "T80: ADR-028 — [debt] on a MARGINAL severity is the normal debt path: allows in round 1"
+new_head
+printf '%s\n' '1. [BUG][debt][edge] app.sh:1 — cosmetic, bounded, no realistic impact.' > "$REVIEW_FILE"
+bump_diff t80; OUT=$(run_gate)
+is_allow "$OUT"; check "[debt][edge] allows immediately (debt never blocks)" $?
+grep -q "Non-blocking debt" <<<"$(ctx "$OUT")"; check "the debt finding is surfaced, not dropped" $?
+
+echo "T81: ADR-028 — the new harm categories are RECOGNIZED tags, not untagged fallbacks"
+for tag in compatibility release-integrity; do
+    new_head
+    printf '1. [BUG][blocker][%s] app.sh:1 — breaks a core contract.\n' "$tag" > "$REVIEW_FILE"
+    bump_diff "t81$tag"; OUT=$(run_gate)
+    is_deny "$OUT"; check "[$tag] is material and denies" $?
+    # Denying is NOT sufficient evidence the tag was recognized: an UNKNOWN tag
+    # falls through sev_label to 'untagged', which also denies. Distinguish them
+    # by a signal only the recognized path can produce — [debt] on a RECOGNIZED
+    # material tag reports a demotion attempt naming that tag; on an untagged
+    # finding it reports the "no harm category" wording instead. (This is the
+    # mutant that survived the first pass: dropping both tags from the sev_label
+    # whitelist left the old assertion fully green.)
+    new_head
+    printf '1. [BUG][debt][%s] app.sh:1 — breaks a core contract.\n' "$tag" > "$REVIEW_FILE"
+    bump_diff "t81d$tag"; OUT=$(run_gate)
+    is_deny "$OUT"; check "[debt][$tag] still denies (cannot be demoted)" $?
+    grep -q "declared on a \[$tag\] finding" <<<"$(reason "$OUT")"
+    check "[$tag] is parsed as a named severity, not an untagged fallback" $?
+done
+
+echo "T82: ADR-028 — security mode still makes [hardening] material even when declared [debt]"
+new_head
+printf '%s\n' '1. [BUG][debt][hardening] app.sh:1 — exotic parser corner.' > "$REVIEW_FILE"
+bump_diff t82
+OUT=$(CODERV_GATE_SECURITY=1 run_gate)
+is_deny "$OUT"; check "[debt][hardening] blocks under the deep-security opt-in" $?
+
+echo "T83: ADR-028 — the prompt states the practical-impact principle and the stopping rule"
+new_head
+printf '%s\n' 'LGTM' > "$REVIEW_FILE"
+bump_diff t83; OUT=$(CODERV_GATE_CAPTURE_DIR="$CAPD" run_gate)
+grep -q "blocker" "$CAPD/prompt"; check "prompt requires a [blocker]/[debt] declaration" $?
+grep -qi "do not keep searching\|STOP" "$CAPD/prompt"; check "prompt carries the stop-when-materially-correct rule" $?
+grep -q "release-integrity" "$CAPD/prompt"; check "prompt defines the release-integrity category" $?
+
+echo "T84: ADR-028 — a CONTRADICTORY [blocker]+[debt] cluster fails CLOSED, not open"
+# decl_label() used to return 'undeclared' whenever the cluster held both tags
+# (n != 1). The marginal arms test for `blocker`, so on an [edge]/[theoretical]
+# severity that silently DROPPED the reviewer's stated blocking claim and the
+# commit ALLOWED in round 1 — a fail-OPEN hole in the exact cross-check ADR-028
+# added. Its sibling sec_in_cluster() already used contains-not-equals for this
+# same multi-tag hazard; decl_label now matches it. Both tag orders are asserted
+# so the fix cannot be a first-tag-wins accident.
+for cluster in '[blocker][debt]' '[debt][blocker]'; do
+  new_head
+  printf '%s\n' "1. [BUG]${cluster}[edge] app.sh:1 — contradictory declaration on a marginal severity." > "$REVIEW_FILE"
+  bump_diff "t84$(tr -d '[]' <<<"$cluster")"; OUT=$(run_gate)
+  is_deny "$OUT"; check "$cluster on [edge] still blocks — the blocking claim survives" $?
+  grep -q "higher claim" <<<"$(reason "$OUT")"
+  check "$cluster is reported as a mislabel, not silently dropped" $?
+done
+# The same contradiction on a MATERIAL severity must stay blocked (it already
+# did — severity alone suffices there); this guards against a fix that somehow
+# inverted the material path. It must ALSO be REPORTED: decl_label resolves the
+# cluster to `blocker`, so the material arm's lone-[debt] note never fires and
+# the attempted demotion would otherwise block silently. decl_contradictory()
+# is what makes it owner-visible on every severity path.
+new_head
+printf '%s\n' '1. [BUG][blocker][debt][correctness] app.sh:1 — contradictory declaration on a material severity.' > "$REVIEW_FILE"
+bump_diff t84mat; OUT=$(run_gate)
+is_deny "$OUT"; check "a contradictory cluster on [correctness] still blocks" $?
+grep -q "contradictory declaration" <<<"$(reason "$OUT")"
+check "the material contradiction is REPORTED, not blocked silently" $?
+# One finding earns ONE mislabel note — the contradiction line must not stack
+# with the generic higher-claim line on a marginal severity.
+new_head
+printf '%s\n' '1. [BUG][blocker][debt][edge] app.sh:1 — contradictory on marginal.' > "$REVIEW_FILE"
+bump_diff t84dup; OUT=$(run_gate)
+[[ $(grep -c "blocking on the higher claim" <<<"$(reason "$OUT")") -eq 1 ]]
+check "the contradiction note does not duplicate the higher-claim note" $?
+# A repeated [debt] with no [blocker] must NOT be promoted to blocking — the
+# fix must only ever resolve toward blocking when [blocker] is actually named.
+new_head
+printf '%s\n' '1. [BUG][debt][debt][edge] app.sh:1 — repeated debt tag, no blocking claim anywhere.' > "$REVIEW_FILE"
+bump_diff t84dd; OUT=$(run_gate)
+is_allow "$OUT"; check "a repeated [debt] on [edge] still allows — debt never blocks" $?
+
+echo "T85: ADR-028 — the OWNER-VISIBLE ceiling systemMessage names the real blocker class"
+# The deny REASON was updated to BLOCKER STOP, but the systemMessage — the ONE
+# line the human actually sees in the transcript — still hardcoded "SECURITY
+# STOP" and $SEC_COUNT. A correctness blocker at the ceiling therefore told the
+# owner "0 security/data-loss finding(s) still open" at the exact moment a real
+# blocker needed their decision. It must track CEIL_KIND.
+new_head
+printf '%s\n' "$MATERIAL_REVIEW" > "$REVIEW_FILE"
+for i in 1 2 3 4 5; do bump_diff "t85-$i"; OUT=$(run_gate); done
+is_deny "$OUT"; check "a [correctness] blocker at the ceiling denies" $?
+MSG=$(sysmsg "$OUT")
+grep -q "BLOCKER STOP" <<<"$MSG"; check "systemMessage says BLOCKER STOP, not SECURITY STOP" $?
+! grep -q "SECURITY STOP" <<<"$MSG"; check "systemMessage does NOT mislabel it as a security stop" $?
+! grep -q "0 security/data-loss finding(s) still open" <<<"$MSG"
+check "systemMessage never reports '0 security/data-loss ... open' on a real blocker" $?
+grep -q "blocker(s) still open" <<<"$MSG"; check "systemMessage states the material blocker count" $?
+# A genuine security blocker at the ceiling must KEEP the security wording.
+new_head
+printf '%s\n' "$SECURITY_REVIEW" > "$REVIEW_FILE"
+for i in 1 2 3 4 5; do bump_diff "t85s-$i"; OUT=$(run_gate); done
+is_deny "$OUT"; check "a [security] blocker at the ceiling denies" $?
+MSGS=$(sysmsg "$OUT")
+grep -q "SECURITY STOP" <<<"$MSGS"; check "security ceiling keeps the SECURITY STOP wording" $?
+grep -q "security/data-loss finding(s) still open" <<<"$MSGS"
+check "security ceiling still counts security/data-loss findings" $?
 
 echo
 echo "$PASS passed, $FAIL failed"
