@@ -33,6 +33,132 @@ What did we decide?
 
 ---
 
+## ADR-027: Green is per-job, never per-run — required CI is declared in-repo and verified by enumeration
+
+**Date:** 2026-08-10
+**Status:** accepted
+**Decider(s):** Hadi (CoderLap author), Claude (with Codex plan review, 1 round → CONVERGED, 3 findings all confirmed and adopted)
+
+### Context
+
+"Green on one platform is not green" existed only as a sentence in a downstream
+handoff (`devkit/docs/SESSIONS.md`). Nothing read it, so nothing enforced it,
+and the same failure happened twice in one week:
+
+- Run `31374769158` on `4e795eb` — `go-verify (windows-latest, stable)` was the
+  **only** failed job of five. The test suite had been run on Linux only and
+  that was treated as sufficient.
+- The preceding session shipped under the same assumption.
+
+Two API behaviours make this trap easy to fall into, both verified against the
+live repository rather than assumed:
+
+1. **The run-level conclusion is not the per-job truth.** `gh run view --json
+   conclusion` reports `success` for a run in which a required job never
+   appeared. Any check keyed on `.conclusion` reproduces the exact bug.
+2. **`gh run watch` lies.** It streams ✓ for the single leg it follows and then
+   exits 1 — a green stream is not a green run.
+
+Two further facts shaped the design, both measured:
+
+3. **A commit can have several runs.** Ten shas in devkit's history carry two
+   runs each (branch push + tag push), and run `30986570121` — recorded in
+   devkit's ADR-006 as a *failure* — reads `success` today because it was
+   re-run in place. "The run for this sha" is not a single well-defined object.
+4. **Job identity alone is ambiguous.** A job exposes only `name`;
+   `workflowName` exists solely at the run level. Two workflows defining the
+   same job name are indistinguishable unless the workflow is declared too.
+
+### Decision
+
+**1. Required jobs are declared by the repository, verified by the toolkit.**
+Each repo carries `.coderv-ci.json` listing required jobs by explicit
+`{workflow, job}` identity. Required jobs are a property of the repository; the
+generic enforcement mechanism is a property of the toolkit. The toolkit never
+infers what "required" means from workflow YAML.
+
+**2. The verdict is derived only from the declared jobs.** For each one:
+consider only runs for HEAD's sha whose `workflowName` matches, select the
+highest `databaseId` containing that job (run ids are monotonic, so this is
+deterministic — `createdAt` was observed out of order against `startedAt` on
+real reruns and is not a safe tiebreak), and let that job's conclusion decide.
+**An unrelated workflow can neither manufacture green nor manufacture red.** A
+nightly job still running does not block a genuinely green required set; a
+nightly job failing does not fail it.
+
+The commit's runs are requested from GitHub **by commit**
+(`gh run list --commit <sha>`), never filtered out of a recent-runs window: a
+window silently stops containing the target commit as history grows, and every
+required job would then read `MISSING` — a false red indistinguishable from a
+real one. The target sha is first resolved through git to one full 40-character
+id (`rev-parse --verify --quiet <sha>^{commit}`); an abbreviation that resolves
+to nothing is `UNVERIFIED`, and runs are matched by equality so a sha *prefix*
+can never pool runs from sibling commits.
+
+**3. Every non-success state stays distinct.** `MISSING`, `FAILED`,
+`CANCELLED`, `SKIPPED`, `RUNNING`, `UNVERIFIED` are reported separately and
+exit non-zero (0 GREEN, 1 NOT GREEN, 2 RUNNING, 3 UNVERIFIED). Collapsing them
+would destroy the distinction between "a leg failed" and "a leg never ran" —
+which is precisely the information the incident needed. GitHub's other terminal
+conclusions (`timed_out`, `action_required`, `stale`, `neutral`) are not success
+and so are not green; each keeps its raw conclusion in the report. A conclusion
+this script does not recognise is `UNVERIFIED` — not assumed bad, not assumed
+good, because a future GitHub state guessed either way is a lie.
+
+**4. Configuration fails closed.** Missing, unreadable, malformed, empty, or
+duplicate-bearing config is `UNVERIFIED`, never a pass. Absence of a
+declaration means "requirements unknown", never "no requirements". Parsing uses
+`jq -e` with explicit type and length checks, never the `?` operator: on valid
+JSON that simply lacks `required_jobs` (or carries it empty), `jq -r
+'.required_jobs[]?'` exits **0** with empty output, so a naive loop iterates
+zero times and reports a vacuous green — the same class of bug this ADR exists
+to prevent. (A malformed file does signal a non-zero `jq` status, but relying on
+that alone would still miss the empty and missing-key cases.)
+
+**5. `UNVERIFIED` is never rounded up.** In `/ship`'s scorecard it scores
+✖-with-reason and stays in the denominator. "We could not check" and "it is
+green" are different facts.
+
+### Alternatives considered
+
+- **Per-job enumeration against a declared list (chosen)** — the only approach
+  that catches a required job which never ran.
+- **Trust the run-level `conclusion` (rejected)** — verified to report `success`
+  while a required job is absent. This *is* the bug.
+- **Infer required jobs from `.github/workflows/*.yml` (rejected)** — the YAML
+  describes what *can* run, not what is *required*; matrix legs expand at
+  runtime and `if:` conditions are not statically resolvable.
+- **Hardcode devkit's five jobs (rejected)** — makes a general mechanism
+  single-repo and puts repo policy in the toolkit.
+- **Match jobs by name only (rejected)** — ambiguous across workflows (fact 4).
+  devkit has one workflow today, so this would work by luck and break silently
+  on the second.
+- **Treat any in-progress run for the sha as RUNNING (rejected, owner
+  correction)** — lets an unrelated workflow block a green required set. The
+  verdict must derive from the declared jobs alone.
+- **A documentation rule (rejected)** — this was already the state of the world,
+  and it failed twice.
+
+### Consequences
+
+- Positive: the historical failure is now caught mechanically. Against the real
+  commit `4e795eb`, the checker returns `NOT GREEN` and names
+  `go-verify (windows-latest, stable)` as the sole failed leg.
+- Positive: partial-matrix success — a `success` run missing a required job —
+  cannot be reported as green.
+- Positive: states remain diagnosable; the output names which leg and why.
+- Trade-off: every repo wanting the gate must add `.coderv-ci.json`, and a repo
+  without one scores ✖ rather than passing. This is deliberate: silence is not
+  consent.
+- Trade-off: the declared list can drift from the workflow if a job is renamed.
+  The failure mode is safe — a renamed job reads `MISSING`, which blocks rather
+  than passes.
+- Revisit if: GitHub exposes workflow identity on the job object (job-name
+  matching would then need no declared workflow), or if repos accumulate enough
+  required jobs that a bare list stops being sufficient.
+
+---
+
 ## ADR-026: Wave-2 adoptions from mattpocock/skills — effort maps without a tracker, grill mode, merge-conflict rule; the reviewer split is rejected on re-analysis
 
 **Date:** 2026-07-28

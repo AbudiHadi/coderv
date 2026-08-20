@@ -474,6 +474,31 @@ The gates (drop only those meaningless for the project — say which and why):
 | 7 | Fresh-context reviewer: no open objections | reviewer's verdict line |
 | 8 | Nothing unrequested in the diff | reviewer + your own check |
 | 9 | No secrets / large binaries staged | check output |
+| 10 | Required CI green for the pushed commit | `ci-green-check.sh` verdict line + per-job states |
+
+**Gate 10 applies only to a commit that is already pushed** — it answers "is
+what's on the remote green?", so on an unpushed commit it scores ✖ with
+"not pushed yet", never ✅. Run it as:
+
+```bash
+# Installed next to this skill, under whichever host home it came from.
+for H in ~/.claude ~/.codex ~/.gemini; do
+  [ -x "$H/hooks/ci-green-check.sh" ] && { "$H/hooks/ci-green-check.sh" --dir "$ROOT"; break; }
+done
+# (in the toolkit repo itself: hooks/ci-green-check.sh --dir "$ROOT")
+```
+
+Exit `0` GREEN · `1` NOT GREEN · `2` RUNNING · `3` UNVERIFIED. **Only exit 0 is
+a pass.** RUNNING and UNVERIFIED are ✖-with-reason, never rounded up and never
+dropped from the denominator — "CI hasn't finished" and "CI is green" are
+different facts. A repo with no `.coderv-ci.json` scores ✖ "required jobs
+undeclared", which is the honest answer, not a free pass.
+
+> **Green on one platform is not green.** Never substitute a local test run, a
+> single-OS result, or `gh run watch` for this gate. `gh run watch` streams ✓
+> for the one leg it follows and then exits 1; the run-level `conclusion` reads
+> `success` even when a required job never ran. Only the per-job enumeration
+> this gate performs distinguishes a full matrix pass from a partial one.
 
 **Default response:**
 
@@ -486,6 +511,7 @@ The gates (drop only those meaningless for the project — say which and why):
 ✅ 2 Spec verified 4/4        → [say "evidence" to see per-item proof]
 ✅ 3 Build                    → "✓ built in 4.2s"
 ✖ 4 Tests                    → no test runner configured in this repo
+✖ 10 Required CI             → RUNNING — windows-latest still in progress
 … (all gates, one line each, pasted evidence or the reason it can't run)
 
 Unverified claims: <0, or list them>

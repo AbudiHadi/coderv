@@ -193,6 +193,40 @@ GATE_ROSTER=(
   "context-gate.sh^Stop^^15^"
 )
 
+# Scripts a SKILL calls directly rather than ones Claude Code fires on an event.
+# They are copied next to the gates so /ship can invoke them by a stable path,
+# but they are deliberately NOT wired into settings.json — nothing triggers them
+# automatically.
+TOOL_ROSTER=(
+  "ci-green-check.sh"
+)
+
+# Install one skill-invoked tool script (copy only, no settings.json wiring).
+# Args: script_name, host_home. Every host that gets /ship must also get the
+# tools /ship invokes — otherwise the skill documents a path that isn't there
+# and its CI gate reports "unavailable" forever.
+install_tool_script() {
+  local script="$1" host_home="$2"
+  if [[ ! -f "$HOOKS_SRC/$script" ]]; then
+    echo -e "    ${YELLOW}skipped${NC} tool (hooks/$script not in toolkit)"
+    return 0
+  fi
+  local dst="$host_home/hooks/$script"
+  mkdir -p "$host_home/hooks"
+  cp "$HOOKS_SRC/$script" "$dst"
+  chmod +x "$dst"
+  echo -e "    ${GREEN}installed${NC} tool → $dst"
+}
+
+# Remove one skill-invoked tool script. No settings.json entry to unwire.
+uninstall_tool_script() {
+  local script="$1" host_home="$2"
+  local dst="$host_home/hooks/$script"
+  [[ -f "$dst" ]] || return 0
+  rm -f "$dst"
+  echo -e "    ${GREEN}removed${NC} tool → $dst"
+}
+
 # Install one gate hook + wire it into settings.json under any event/matcher.
 # Args: script_name, event, matcher ("" = none), timeout_seconds, statusMessage ("" = none)
 install_gate_hook() {
@@ -459,13 +493,22 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
       IFS='^' read -r script event _ _ _ <<<"$row"
       uninstall_gate_hook "$script" "$event"
     done
+    for script in "${TOOL_ROSTER[@]}"; do
+      uninstall_tool_script "$script" "$CLAUDE_HOME"
+    done
     uninstall_codex_rules
   fi
   if [[ "$TARGET_CODEX" -eq 1 ]]; then
     uninstall_skills_for_host "Codex CLI" "$CODEX_HOME/skills"
+    for script in "${TOOL_ROSTER[@]}"; do
+      uninstall_tool_script "$script" "$CODEX_HOME"
+    done
   fi
   if [[ "$TARGET_GEMINI" -eq 1 ]]; then
     uninstall_skills_for_host "Gemini CLI" "$GEMINI_HOME/skills"
+    for script in "${TOOL_ROSTER[@]}"; do
+      uninstall_tool_script "$script" "$GEMINI_HOME"
+    done
   fi
   echo -e "${GREEN}Done.${NC}"
   exit 0
@@ -479,6 +522,9 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
     IFS='^' read -r script event matcher timeout status_msg <<<"$row"
     install_gate_hook "$script" "$event" "$matcher" "$timeout" "$status_msg"
   done
+  for script in "${TOOL_ROSTER[@]}"; do
+    install_tool_script "$script" "$CLAUDE_HOME"
+  done
 
   # Complete the second brain: install the reviewer rules Codex reads. This
   # runs regardless of whether Codex is installed yet — the rules sit ready
@@ -489,10 +535,16 @@ fi
 
 if [[ "$TARGET_CODEX" -eq 1 ]]; then
   install_skills_for_host "Codex CLI" "$CODEX_HOME/skills"
+  for script in "${TOOL_ROSTER[@]}"; do
+    install_tool_script "$script" "$CODEX_HOME"
+  done
 fi
 
 if [[ "$TARGET_GEMINI" -eq 1 ]]; then
   install_skills_for_host "Gemini CLI" "$GEMINI_HOME/skills"
+  for script in "${TOOL_ROSTER[@]}"; do
+    install_tool_script "$script" "$GEMINI_HOME"
+  done
 fi
 
 echo
