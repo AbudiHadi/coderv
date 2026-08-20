@@ -5,6 +5,27 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.17.0] — 2026-08-20
+
+> **Heads-up — everyone must reinstall.** `hooks/codex-review-gate.sh` changed
+> behaviour. Re-run `./install.sh --force` after pulling so `~/.claude/hooks/`
+> gets the new copy — a bare `install.sh` SKIPS files that already exist, so
+> without `--force` you keep the old gate and none of this applies.
+
+### Changed
+- **Practical impact is now the stopping rule, and every finding declares itself (ADR-028).** The reviewer must tag each finding `[blocker]` or `[debt]`, and a `[blocker]` must name its harm category — users, data, security/privacy, correctness, compatibility, or release integrity. Only BLOCKERs deny: a debt-only review allows in round one and says so, with the debt surfaced under a **"Non-blocking debt"** section (renamed from "Optional Security Review") and no bookkeeping file written at commit time. The owner's wording is carried into the reviewer prompt verbatim as the governing principle: ignore atomic, theoretical, defensive, or extremely low-impact findings that do not materially affect the user; once the implementation is materially correct and verified, stop.
+- **The declaration is a cross-check, never a lever — severity always wins.** `[debt]` on a material severity does not demote it; a `[blocker]` naming no category is malformed and still blocks; `[blocker]` on a marginal severity blocks on the higher claim; a contradictory `[blocker][debt]` cluster fails closed and blocks. Every disagreement is reported to the owner as a mislabel rather than silently resolved. The anti-evasion floor is untouched: untagged findings, prose-unparsed replies, and preamble text still count material and still block.
+- **The round ceiling stops the loop; it no longer overrides a blocker.** ADR-019 auto-allowed any non-security material residue at the hard ceiling, so a real correctness or compatibility defect could ship purely because a counter ran out. Material residue now DENIES and escalates durably (`escalated=1`, surviving identical-diff retries) so the owner decides; only debt residue self-terminates with a caveat. This does not revive the round-8/9 trickle (KI-004): exotic, defensive, and cosmetic findings must now be classified `[debt]`, and debt can never keep the loop alive. The documented per-diff `./hooks/codex-review-gate.sh --approve` (ADR-023) remains the owner's escape.
+
+### Added
+- **Two new severity tags, `[compatibility]` and `[release-integrity]`**, both material — so a compatibility break or a release-integrity defect can be named honestly instead of being forced into `[correctness]` or left untagged.
+- **`decl_contradictory()`** — reports a finding declared both `[blocker]` and `[debt]` on every severity path, so an attempted demotion is never resolved silently.
+
+### Fixed
+- **A contradictory `[blocker][debt]` cluster could ALLOW a commit that should have blocked.** `decl_label()` returned `undeclared` whenever the leading cluster held both tags; the marginal severity arms test for `blocker`, so the reviewer's stated blocking claim was silently dropped on an `[edge]`/`[theoretical]` finding — precisely the evasion the declaration cross-check exists to catch. Its sibling `sec_in_cluster()` already handled the same multi-tag hazard with contains-not-equals; `decl_label()` had diverged and now matches it. A repeated `[debt]` is still never promoted to blocking.
+- **A non-security blocker at the ceiling was reported to the owner as a security stop.** The deny reason correctly said `BLOCKER STOP`, but the owner-visible `systemMessage` — the one line a human actually reads in the transcript — still hardcoded `CEILING SECURITY STOP` and `$SEC_COUNT`, so a correctness blocker announced "0 security/data-loss finding(s) still open" at the exact moment a decision was needed. It now tracks `CEIL_KIND` and reports the material count; a genuine security ceiling keeps its original wording.
+- **`CAP_ESCALATED` was security-only.** A non-security blocker at the ceiling denied once with `escalated=0`, so the identical retry re-passed and the blocker shipped on the second attempt. Any material finding now escalates durably.
+
 ## [0.16.1] — 2026-07-29
 
 > **Heads-up — Windows users must reinstall.** The grounding gate's and the
