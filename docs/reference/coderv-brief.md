@@ -1,5 +1,13 @@
 # CoderLap — Honest Technical Brief
 
+> **2026-09-07 (ADR-029): partially historical.** This brief describes the
+> toolkit @ v0.11.0, the two-brain era. Since v0.18.0 the Codex machinery it
+> praises (the `codex-review-gate`, "a second model reading every diff", the
+> six-hooks/four-gates count) is REMOVED — commit review is Claude-native via
+> `/ship`'s fresh-context reviewer, and the toolkit is 5 hooks / 3 gates.
+> Everything else (the design philosophy, the anti-dumb-zone gates, the
+> mechanism-over-advice thesis) still holds.
+
 > Written for an expert reviewer weighing whether to support the project.
 > Sourced from the repository (`claude-docs-toolkit` @ v0.11.0), not the marketing site.
 > Claims trace to `skills/*/SKILL.md` and `hooks/*.sh`; limitations trace to the

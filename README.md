@@ -24,11 +24,11 @@
 
 ## What it does
 
-Seven slash commands + four always-on gates that help devs keep extremely clear docs and honest agents — without getting tired or trying to remember.
+Seven slash commands + three always-on gates that help devs keep extremely clear docs and honest agents — without getting tired or trying to remember.
 
 > **The problem:** Claude without structure drifts. Re-asks settled questions. Re-introduces fixed bugs. Skips docs. Scope-creeps. The next session starts from zero. Docs rot within a week.
 >
-> **The answer:** seven commands. One is the front door that drives the rest. One generates real docs from your code. Four keep them fresh. One audits them for lies. Plus four always-on gates (Claude Code) that make "read the docs first", "no commit lands unreviewed", and "never work in the dumb zone" physics instead of advice. Markdown + bash only. No framework. No dependency.
+> **The answer:** seven commands. One is the front door that drives the rest. One generates real docs from your code. Four keep them fresh. One audits them for lies. Plus three always-on gates (Claude Code) that make "read the docs first", "don't trust a degraded session's memory", and "never work in the dumb zone" physics instead of advice — and a `/ship` flow where every commit diff is audited by a fresh-context reviewer against the plan you approved. Markdown + bash only. No framework. No dependency.
 
 ---
 
@@ -36,7 +36,7 @@ Seven slash commands + four always-on gates that help devs keep extremely clear 
 
 | Command | The tired moment it fixes |
 |---|---|
-| **`/coderv <request>`** | *"I don't want to remember which command comes next."* — The front door. Say what you want in your own words; it classifies the request, checks project state, assembles the pipeline (`/lint` if docs are stale → `/before` → work → `/ship`), and drives it on one yes. You're only stopped to approve the plan and the 100% scorecard. <br>**🏛 Architecture / system audit shape** *(say "audit the system", "check all integrations", "is anything left running")* — a read-only scout, then a parallel fan-out over 7 dimensions (layering, coupling/cohesion, duplication, boundaries, dead code, **integration wiring**, **service liveness — "a server left alone"**), each finding **adversarially verified by Codex** before it reaches a scored P0–P3 report **and a draw.io-style interactive system map** — a pan/zoom canvas with 🟢 live / 🌐 external / ⏸ parked node markers and 🔴 P0–P1 / 🟡 P2–P3 gap markers, where clicking a node traces its gap and spotlights the matching finding. Advises, never auto-fixes; findings are woven into every other command so a problem found once stays in view until it's fixed. Still 7 commands — it's a shape, not an eighth. |
+| **`/coderv <request>`** | *"I don't want to remember which command comes next."* — The front door. Say what you want in your own words; it classifies the request, checks project state, assembles the pipeline (`/lint` if docs are stale → `/before` → work → `/ship`), and drives it on one yes. You're only stopped to approve the plan and the 100% scorecard. <br>**🏛 Architecture / system audit shape** *(say "audit the system", "check all integrations", "is anything left running")* — a read-only scout, then a parallel fan-out over 7 dimensions (layering, coupling/cohesion, duplication, boundaries, dead code, **integration wiring**, **service liveness — "a server left alone"**), each finding **adversarially verified by a fresh-context reviewer** before it reaches a scored P0–P3 report **and a draw.io-style interactive system map** — a pan/zoom canvas with 🟢 live / 🌐 external / ⏸ parked node markers and 🔴 P0–P1 / 🟡 P2–P3 gap markers, where clicking a node traces its gap and spotlights the matching finding. Advises, never auto-fixes; findings are woven into every other command so a problem found once stays in view until it's fixed. Still 7 commands — it's a shape, not an eighth. |
 | **`/docify`** | *"I need real docs but I don't want to write them."* — Scans your code, generates `CLAUDE.md` + 6 professional docs (architecture, api, components, database, integrations, overview) with source citations. Run once per project. |
 | **`/before <task>`** | *"What should I even read first?"* — Claude reads the relevant docs, greps prior art, checks past decisions, states a plan, waits for your OK. Auto-skips tiny tasks. |
 | **`/decision <title>`** | *"Write down why, so I never have to explain it again."* — Logs an ADR in 30 seconds while the choice is fresh. |
@@ -70,7 +70,7 @@ Seven slash commands + four always-on gates that help devs keep extremely clear 
 curl -fsSL https://coderv.dev/install.sh | bash
 ```
 
-Skills land in `~/.claude/skills/` and six hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment), `project-context` (every new session starts already knowing where each project left off), and the four anti-dumb-zone gates — `grounding-gate` (the first code edit is blocked until `/before` actually read the docs), `codex-review-gate` (every outgoing commit diff gets an adversarial review from a second model before it lands; needs [Codex CLI](https://github.com/openai/codex), fails loud-but-open without it), `compact-rehydrate` (after compaction, a live git snapshot outranks the summary), `context-gate` (warns and then hard-stops new work at an absolute dumb-zone token budget, ~180k — the dumb zone is an absolute occupancy floor, not a fraction of a huge window). Kill switch: `CODERV_GATES_OFF=1`.
+Skills land in `~/.claude/skills/` and five hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment), `project-context` (every new session starts already knowing where each project left off), and the three anti-dumb-zone gates — `grounding-gate` (the first code edit is blocked until `/before` actually read the docs), `compact-rehydrate` (after compaction, a live git snapshot outranks the summary), `context-gate` (warns and then hard-stops new work at an absolute dumb-zone token budget, ~180k — the dumb zone is an absolute occupancy floor, not a fraction of a huge window). Every commit diff still gets an independent second look — `/ship`'s fresh-context reviewer, a clean-context subagent that audits the diff against the spec before the commit lands. Kill switch: `CODERV_GATES_OFF=1`.
 
 **Manual path:**
 
@@ -90,7 +90,7 @@ The 7 skills also work in [Codex CLI](https://github.com/openai/codex) and [Gemi
 ./install.sh --all              # all three hosts
 ```
 
-All six hooks (`coderv-router`, `project-context`, and the four anti-dumb-zone gates) are Claude-Code-specific — the other CLIs don't have an equivalent hook system. On Codex / Gemini, the toolkit relies on the in-skill TRIGGER blocks alone — auto-suggest works but is less aggressive, and the gates don't apply.
+All five hooks (`coderv-router`, `project-context`, and the three anti-dumb-zone gates) are Claude-Code-specific — the other CLIs don't have an equivalent hook system. On Codex / Gemini, the toolkit relies on the in-skill TRIGGER blocks alone — auto-suggest works but is less aggressive, and the gates don't apply.
 
 **Update:**
 
@@ -141,18 +141,6 @@ Memory can go stale or get skipped; this runs in the harness on every session st
 
 ---
 
-## Watch the two brains work (coderv-loop)
-
-The `codex-review-gate` runs the whole Claude↔Codex exchange in the background — you only see the final deny or LGTM. **coderv-loop** is an optional companion dashboard that makes that exchange visible live.
-
-The gate appends one JSON line per beat to `~/.claude/coderlap/loop-events.jsonl` — the writer's commit attempt, the reviewer starting, its verdict, each finding, and the terminal outcome. It's a pure side-effect: the log never influences the gate's allow/deny decision, never errors the hook, and stays silent when `jq` is absent. Point the log elsewhere with `CODERV_LOOP_LOG`, or turn it off entirely with `CODERV_LOG_OFF=1`.
-
-Every review closes with a terminal `outcome` event — a denied review, a passed one, a cache-hit retry, even a reviewer that timed out (marked `unreviewed:true`) — so a dashboard tailing the stream never hangs waiting for a beat that isn't coming.
-
-coderv-loop is not part of the seven-command toolkit — it's a separate local app you run only if you want to watch. The toolkit works exactly the same without it.
-
----
-
 ## The three living files
 
 Once you run `/before` in a fresh project, it scaffolds these:
@@ -192,7 +180,7 @@ Don't run `/decision`. Every command is optional. The toolkit is lighter than an
 The 7 commands are visible — you invoke them, they do their job visibly, no silent failure. That's the core. The `coderv-router` hook (Claude Code) is a thin layer on top of that: it doesn't *do* the work, it just makes sure Claude *offers* the right command when your phrasing matches. The work itself is still in the visible, markdown-only commands.
 
 **Does the toolkit work with Codex CLI and Gemini CLI?**
-Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. All six hooks (router, project map, and the four gates) are Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive, and the anti-dumb-zone gates don't apply.
+Yes. Both CLIs adopted the same SKILL.md format. Install with `--codex`, `--gemini`, or `--all`. All five hooks (router, project map, and the three gates) are Claude-Code-specific, so on those hosts the toolkit relies on each skill's TRIGGER block — auto-suggest works but is less aggressive, and the anti-dumb-zone gates don't apply.
 
 ---
 

@@ -204,7 +204,7 @@ Every claim cited. If no README exists, write `<!-- TODO: verify -->` for the "w
   (by filename sort — report names are always timestamped) at the top, using the
   **exact basename** so the link can't break:
   *"Latest architecture audit: [&lt;basename&gt;](&lt;basename&gt;)"* —
-  so generated docs point at the live, Codex-verified audit instead of drifting
+  so generated docs point at the live, adversarially-verified audit instead of drifting
   from it.
 
 One sentence per service, with citation.

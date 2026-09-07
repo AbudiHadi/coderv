@@ -33,6 +33,67 @@ What did we decide?
 
 ---
 
+## ADR-029: Retire Codex from the toolkit — reviews are Claude-native (fresh-context subagents), the commit gate is removed
+
+**Date:** 2026-09-07
+**Status:** accepted
+**Decider(s):** owner ("I don't want Codex work in anything — I will count on Claude only"); Claude (mechanism)
+
+### Context
+Since ADR-008 the toolkit ran a two-brain workflow: Claude writes, Codex CLI
+adversarially reviews — a commit-time gate (`codex-review-gate.sh`, PreToolUse
+Bash) plus sanctioned `codex exec` passes inside `/ship` Step 4.5, `/before`
+Step 5.6, and the `/coderv` architecture verify. Keeping the loop bounded
+consumed an entire ADR series (010, 018–024, 028) and two KIs (002, 003):
+the cross-model argument needed a ledger, round counters, caps, ceilings,
+owner-override paths, and a 2,400-line hook with 295 tests to stay livable.
+The owner has now retired the second brain: the maintenance cost of bounding
+the argument outweighed the review value, and Claude-native review had already
+become the primary quality mechanism (`/ship`'s fresh-context subagent audit).
+
+### Decision
+Remove Codex-as-reviewer from the product entirely; keep Codex-as-host
+(`./install.sh --codex` still installs the 7 skills into `~/.codex/skills/`).
+
+- **Deleted:** `hooks/codex-review-gate.sh`, its tests (`tests/gate-cap.sh`,
+  `tests/mint-eid.sh`), and `templates/codex-AGENTS.md` (reviewer rules).
+- **The review function survives, Claude-native.** Every place Codex reviewed,
+  a fresh-context Claude subagent reviews instead: `/ship` Step 4.5 (the
+  pre-commit convergence loop — the subagent audit absorbs the quality-gate
+  brief, BLOCKER/DEBT classification per ADR-028, and `--security` mode),
+  `/before` Step 5.6 (plan review), `/coderv` architecture verify (one clean
+  refuter subagent per finding). The convergence mechanism (three end states,
+  round cap 3, batch-don't-trickle, twice-rejected escalation, snapshot-hash
+  guard) is unchanged — it bounds the Claude reviewer loop now.
+- **Installer retires old installs:** a `RETIRED_GATES` sweep unwires and
+  deletes the gate hook and strips the old `~/.codex/AGENTS.md` reviewer block
+  on every install/uninstall run, so upgraded machines don't keep orphaned
+  machinery.
+
+### Alternatives considered
+- **Remove reviewer, keep the function via fresh-context subagents** (chosen) —
+  independent-judgment review survives (clean context ≠ writer's context) with
+  zero cross-model plumbing; one brief lives in one skill instead of being
+  mirrored between a hook and two skills.
+- **Keep the gate, default it off** — dead code that still costs every future
+  hook/test/release; an off-by-default safety gate is worse than none (implies
+  coverage that isn't running).
+- **Keep Codex in /ship only** — keeps the whole bounding apparatus for one
+  call site; the cost was never the call, it was the argument-bounding.
+
+### Consequences
+- Positive: ~4,400 lines of gate+tests deleted; no cross-model auth/availability
+  failure modes; one review policy, stated once, in `/ship`.
+- Negative / trade-off: the second opinion is no longer a *different* model —
+  a fresh context is independent, but shares Claude's blind spots. The
+  pre-commit loops keep prose-only round caps with no machine gate behind them
+  (KI-003 closed as superseded; residual risk documented there).
+- Revisit if: a cross-model reviewer becomes cheap to bound (e.g. a hosted
+  review API with its own convergence contract), or Claude-only review
+  measurably misses defect classes the two-brain era caught.
+
+---
+
 ## ADR-028: Practical impact is the stopping rule — every finding declares BLOCKER or DEBT, and the ceiling stops the loop without overriding a blocker
 
 **Date:** 2026-08-20

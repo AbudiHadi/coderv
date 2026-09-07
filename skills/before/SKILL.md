@@ -187,17 +187,15 @@ printf '{"mode":"full","task":"<task in a few words>","read":["CLAUDE.md","docs/
 ```
 
 **2. The spec checklist** — the request as 3–5 checkable lines. This file is
-the ground truth for TWO reviewers: the `/ship` fresh-context reviewer AND the
-codex-review-gate's drift-hunter. The diff is audited against *this*, never
-against anyone's memory of the conversation.
+the ground truth for the `/ship` fresh-context reviewer. The diff is audited
+against *this*, never against anyone's memory of the conversation.
 
 **Always OVERWRITE, never append.** One spec = one task. An appended history
 leaves stale baselines behind that a later review could mistake for the current
-plan (a drift-hunter reading two plans hunts against the wrong one). Stamp a
-`Base:` line with the current commit — the gate trusts the spec only when that
-base is an ancestor of HEAD and the file is under 24h old; otherwise it falls
-back to a generic review and says "drift not checked". So the stamp is what
-*arms* the drift-hunter for this task:
+plan (a reviewer reading two plans hunts drift against the wrong one). Stamp a
+`Base:` line with the current commit — it records exactly which code state the
+plan was written against, so a reviewer can tell a fresh spec from a leftover
+of an earlier task:
 
 Compute the stamp values into shell variables first, then write the body with
 a QUOTED heredoc — the task/spec text is filled in by you and may contain `$(`,
@@ -222,38 +220,31 @@ EOF
 Each checklist line must be checkable against a diff ("endpoint X returns Y",
 not "works well"). If the user corrects the plan in Step 6, OVERWRITE the spec
 file to match — the spec always mirrors the *approved* plan, and re-stamping
-(a fresh `Base:` from the current HEAD) keeps the drift-hunter armed.
+(a fresh `Base:` from the current HEAD) keeps it honest.
 
-## Step 5.6 — Two-brain design review (Codex peer-reviews the PLAN)
+## Step 5.6 — Fresh-context design review (a clean reviewer peers at the PLAN)
 
-Before the plan reaches the user, the *other* AI reviews it. The gate already
-does this for diffs; this does it for plans — the same independent judgment,
-one phase earlier, where a wrong approach is cheapest to fix. Run this for any
-task substantial enough to warrant `/before` in the first place; skip it only
-when Codex is the very thing being planned in a way that would recurse.
+Before the plan reaches the user, a reviewer that did NOT write it reviews it —
+the same independent judgment `/ship` applies to diffs, one phase earlier,
+where a wrong approach is cheapest to fix. The session that wrote the plan is
+invested in it; a fresh context is not. Run this for any task substantial
+enough to warrant `/before` in the first place.
 
-**Feed Codex ONE serialized stdin payload — no competing sources** (identical
-channel to `codex-review-gate.sh`; a heredoc is NOT used, so the instructions
-and the plan can never blur together):
+**Spawn ONE reviewer subagent with a clean context.** Give it exactly: the
+spec file's content (`~/.claude/coderlap/specs/$SLUG.md`), the relevant prior
+art you found in Step 2 (file:line pointers, not prose summaries), and this
+brief:
 
-```bash
-OUT=$(mktemp)
-{ printf '%s\n' \
-    "You are reviewing a PLAN written by another AI (Claude), not a diff." \
-    "Findings ONLY — gaps, risks, wrong approaches, missed prior art. 2-3" \
-    "bullets max. Do NOT rewrite the plan. If it is solid, reply exactly: LGTM" \
-    "---PLAN BELOW---"
-  cat ~/.claude/coderlap/specs/$SLUG.md
-} | timeout 480 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
-RC=$?
-REVIEW=$(cat "$OUT"); rm -f "$OUT"
-```
+> "You are reviewing a PLAN, not a diff. Findings ONLY — gaps, risks, wrong
+> approaches, missed prior art. 2-3 bullets max. Do NOT rewrite the plan.
+> If it is solid, reply exactly: LGTM"
 
 **Adjudicate, then decide the end state** (mechanism: `docs/planning/two-brain-convergence.md`):
 
-- **Codex unavailable** — `RC != 0` OR empty `REVIEW`: retry ONCE. Still failing
-  → **REVIEW-UNAVAILABLE**. Tell the user verbatim: *"Codex unavailable — plan
-  not peer-reviewed."* A timeout is **never** an LGTM. Stop the loop here.
+- **Reviewer unavailable** — the subagent fails or returns empty: retry ONCE.
+  Still failing → **REVIEW-UNAVAILABLE**. Tell the user verbatim: *"Reviewer
+  unavailable — plan not peer-reviewed."* A failure is **never** an LGTM.
+  Stop the loop here.
 - Otherwise adjudicate every finding: fix the real ones (re-write the spec, it
   stays the source of truth), reject the wrong ones **with a reason**. A finding
   is "material" if unaddressed it could cause a wrong result, a security/data
@@ -261,17 +252,18 @@ REVIEW=$(cat "$OUT"); rm -f "$OUT"
 - **A fix leaves the unresolved-material set only when VERIFIED.** In the plan
   phase a fix is usually a plan edit you can confirm on the spot. If a fix can't
   be verified until code exists, mark it UNVERIFIED-CARRIED — it stays in the
-  unresolved set and rides to the diff-review (gate) phase, where the drift-
-  hunter can check it. A claimed-but-unverified fix never counts toward
-  CONVERGED (same rule the `/ship` scorecard enforces; convergence doc §"FIXED
-  requires verification").
-- **Approach changed** by a fix → re-send the updated plan (new round).
-- **Converge — one of exactly three end states** (same set as the gate and the
+  unresolved set and rides to the `/ship` diff review, where the fresh-context
+  reviewer can check it against real code. A claimed-but-unverified fix never
+  counts toward CONVERGED (same rule the `/ship` scorecard enforces;
+  convergence doc §"FIXED requires verification").
+- **Approach changed** by a fix → re-send the updated plan to a FRESH reviewer
+  (new round, new subagent — a reviewer that saw the old plan is anchored).
+- **Converge — one of exactly three end states** (same set as `/ship` and the
   convergence doc; a conscious rejection is not a fourth state — it resolves
   into these two by whether the *material* set is left empty):
-  - **CONVERGED** — the unresolved-material set is empty: Codex replied `LGTM`,
-    OR every remaining finding was adjudicated non-material (or fixed). The only
-    state that means "100% reviewed".
+  - **CONVERGED** — the unresolved-material set is empty: the reviewer replied
+    `LGTM`, OR every remaining finding was adjudicated non-material (or fixed).
+    The only state that means "100% reviewed".
   - **CAP-STOPPED** — 3 rounds reached with ≥1 unresolved *material* finding
     (rejected, deferred, or unfixed).
   - **REVIEW-UNAVAILABLE** — see the unavailable case above.

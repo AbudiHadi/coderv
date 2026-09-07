@@ -27,7 +27,7 @@ These four are read and written by the skills (`/session`, `/decision`, `/before
 
 | Folder | What it holds |
 |---|---|
-| [`planning/`](planning/) | Design docs for the two-brain (Claude writer + Codex reviewer) workflow — the [convergence mechanism](planning/two-brain-convergence.md) and the [workflow plan](planning/two-brain-workflow-plan.md). |
+| [`planning/`](planning/) | Design docs for the review-convergence workflow — the [convergence mechanism](planning/two-brain-convergence.md) and the [workflow plan](planning/two-brain-workflow-plan.md). (Written for the retired two-brain Claude+Codex era, ADR-029; the convergence mechanism — end states, round caps, batch-don't-trickle — still governs `/ship` and `/before` with the Claude fresh-context reviewer.) |
 
 ---
 

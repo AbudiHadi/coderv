@@ -5,7 +5,7 @@
 
 ## What this is
 
-The **CoderLap Docs Toolkit** — 7 slash commands + 6 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
+The **CoderLap Docs Toolkit** — 7 slash commands + 5 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
 
 Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) repo.
 
@@ -21,7 +21,7 @@ Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) r
 | `/session` | End-of-session handoff with verbatim state evidence. `/session last` reads the previous one. <!-- src: skills/session/SKILL.md --> |
 | `/lint` | Docs health check — contradictions, stale claims, dead references, rot. v0.7.0, ADR-005. <!-- src: skills/lint/SKILL.md --> |
 
-Plus 6 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-context` (SessionStart), the three v0.8.0 anti-dumb-zone gates — `grounding-gate` (PreToolUse), `compact-rehydrate` (SessionStart/compact), `context-gate` (Stop) — and the 4th gate `codex-review-gate` (PreToolUse/Bash, adversarial Codex review before every commit). See [`skills.md`](./skills.md). <!-- src: install.sh -->
+Plus 5 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-context` (SessionStart), and the three v0.8.0 anti-dumb-zone gates — `grounding-gate` (PreToolUse), `compact-rehydrate` (SessionStart/compact), `context-gate` (Stop). The former 4th gate, `codex-review-gate`, was removed in v0.18.0 (ADR-029) — commit review is Claude-native via `/ship`. See [`skills.md`](./skills.md). <!-- src: install.sh -->
 
 ## Repo layout
 
@@ -40,7 +40,7 @@ Plus 6 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-co
 │   ├── lint/SKILL.md
 │   ├── session/SKILL.md
 │   └── ship/SKILL.md
-├── hooks/               ← 6 Claude Code hooks (router, project map, 4 gates)
+├── hooks/               ← 5 Claude Code hooks (router, project map, 3 gates) + the ci-green-check tool
 ├── templates/           ← scaffolds /docify copies into fresh projects
 │   ├── CLAUDE.md
 │   ├── DECISIONS.md
@@ -57,10 +57,10 @@ Plus 6 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-co
 `install.sh` does three things: <!-- src: install.sh:1-100 -->
 
 1. Detects its own repo path via `SCRIPT_DIR`.
-2. Copies every folder from `skills/` into `~/.claude/skills/` (or `./.claude/skills/` with `--project`).
+2. Copies every folder from `skills/` into the selected host homes (`~/.claude/skills/` by default; `~/.codex/skills/` and `~/.gemini/skills/` with `--codex`/`--gemini`/`--all`), wires the 5 hooks into `~/.claude/settings.json` (Claude target only), and retires machinery removed since (the `RETIRED_GATES` sweep).
 3. Appends the marker `<!-- claude-docs-toolkit -->` to each copied `SKILL.md`. This marker is what `--uninstall` looks for — so our skills can be removed cleanly without touching unrelated skills with the same name.
 
-Flags: `--force` (overwrite), `--uninstall` (remove our skills), `--project` (install into CWD, not home).
+Flags: `--claude` / `--codex` / `--gemini` / `--all` (hosts), `--force` (overwrite), `--uninstall` (remove our skills + unwire hooks).
 
 ## Versioning
 

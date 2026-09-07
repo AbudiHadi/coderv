@@ -3,8 +3,9 @@
 
 > Driven by `/coderv` when the request is the **🏛 Architecture / system audit**
 > shape (see `SKILL.md` Step 1). This file is the *how*; `/coderv` stays the
-> router (SR). The output is a scored, Codex-verified report — **advice, never
-> an auto-fix.** Findings hand back into the normal fix pipeline on one yes.
+> router (SR). The output is a scored, adversarially-verified report —
+> **advice, never an auto-fix.** Findings hand back into the normal fix
+> pipeline on one yes.
 
 The audit answers three questions a diff-level reviewer never can:
 
@@ -17,7 +18,7 @@ The audit answers three questions a diff-level reviewer never can:
 
 Questions 2–3 are why this is an *integration + system* audit, not a linter.
 
-## The pipeline (fan-out → dedup → Codex verify → report)
+## The pipeline (fan-out → dedup → adversarial verify → report)
 
 ```mermaid
 flowchart TD
@@ -44,7 +45,7 @@ flowchart TD
     end
 
     E --> F["Step 2 · DEDUP<br/>merge by file:line + principle<br/>(plain code, not an agent)"]
-    F --> G["Step 3 · CODEX VERIFY<br/>each finding sent adversarially<br/>same stdin channel as codex-review-gate.sh<br/>refuted → dropped"]
+    F --> G["Step 3 · ADVERSARIAL VERIFY<br/>each finding sent to a fresh-context<br/>reviewer subagent to refute<br/>refuted → dropped"]
     G --> H["Step 4 · REPORT<br/>docs/ARCH-REVIEW-&lt;date&gt;.md<br/>scored P0–P3, file:line, principle, fix<br/>+ system map (topology + open findings)"]
     H --> I{"Findings to act on?"}
     I -->|yes, one yes| J["hand off to fix pipeline<br/>/before → work → verify → /ship"]
@@ -91,7 +92,7 @@ step reads, so the fan-out agents don't each re-walk the tree:
     material into the scout map, carry only operational fields (ports,
     process names, domains, upstreams) and strip anything
     credential-shaped — values of key/token/password/secret/DSN fields.
-    (The Codex-payload redaction in Step 3 is the second line of defence,
+    (The verify-payload redaction in Step 3 is the second line of defence,
     not the first.)
   - `registry-only` — a `SERVER-MAP.md` exists but the runtime commands
     aren't runnable here. A static registry can say what *should* be wired
@@ -177,37 +178,30 @@ nearby-but-distinct findings stay distinct. Two agents flagging the same
 god-file at the same location for coupling and low cohesion collapse into one
 finding carrying **all** principles, evidence, and fix suggestions — merging
 concatenates, it never discards material (the never-silently-vanish rule
-starts here, not at the report). This runs before Codex so the reviewer isn't
-paying to verify duplicates.
+starts here, not at the report). This runs before verification so the
+reviewer isn't paying to verify duplicates.
 
-## Step 3 — Codex adversarial verify
+## Step 3 — Adversarial verify (fresh-context reviewer)
 
-Every deduped finding is sent to Codex to **refute**, one payload per finding,
-through the **exact channel `codex-review-gate.sh` uses** — no new invocation
-style (DRY with the established two-brain seam):
+Every deduped finding is sent to a **fresh-context reviewer subagent** to
+**refute** — one payload per finding, one clean subagent per finding, so the
+verifier shares no context with the dimension agent that raised it (the whole
+point is independent judgment: an agent invested in a finding cannot be
+trusted to grade it).
 
-```bash
-# PAYLOAD = the finding + the cited code slice + the dimension agent's
-# supporting evidence. Relational claims (no importers, dependency cycle,
-# duplicate of X, dead route) MUST include the proof that lives elsewhere in
-# the repo — the grep/import-scan output, the second copy's slice — because
-# Codex sees only this payload, never the whole tree.
-# REDACT BEFORE SENDING: unlike the diff gate (which sees only tracked code),
-# this payload can carry runtime config outside git — nginx -T output, env
-# values, connection strings. Strip every secret value before the payload
-# leaves the machine (API_KEY=****, password/token/key values, credential
-# parts of URLs, auth_basic lines). The finding needs the SHAPE of the
-# config, never the secret itself.
-# PROMPT below; identical flags to the gate.
-OUT=$(mktemp)
-printf '%s' "$PAYLOAD" | timeout 180 codex exec --skip-git-repo-check \
-    -s read-only -o "$OUT" "$PROMPT" >/dev/null 2>&1
-RC=$?; REVIEW=$(cat "$OUT" 2>/dev/null); rm -f "$OUT"
-```
+The payload = the finding + the cited code slice + the dimension agent's
+supporting evidence. Relational claims (no importers, dependency cycle,
+duplicate of X, dead route) MUST include the proof that lives elsewhere in
+the repo — the grep/import-scan output, the second copy's slice — because
+the verifier judges only this payload, never re-explores the tree (that
+would make it a second finder, not a referee). Redact secret VALUES from any
+runtime config in the payload (API_KEY=****, password/token/key values,
+credential parts of URLs, auth_basic lines) — the finding needs the SHAPE of
+the config, never the secret itself.
 
-Prompt (adversarial, findings-only — mirrors the gate's reviewer voice):
+The reviewer's brief (adversarial, findings-only):
 
-> "Reviewing an architecture finding raised by another AI (Claude). Try to
+> "Reviewing an architecture finding raised by another agent. Try to
 > **refute** it against the code slice + evidence below — is it real, or a
 > false positive? Judge conventions, not taste. If it stands, reply
 > `CONFIRMED` + one-line why. If the evidence contradicts it, reply
@@ -216,12 +210,12 @@ Prompt (adversarial, findings-only — mirrors the gate's reviewer voice):
 > missing — do NOT refute a claim you merely couldn't check."
 
 Adjudication (same bounded-convergence discipline as ADR-010): `REFUTED`
-findings are **dropped from the report**, but listed in a "Codex refuted (N)"
-footnote so nothing is silently discarded (never-delete-history spirit).
+findings are **dropped from the report**, but listed in a "Reviewer refuted
+(N)" footnote so nothing is silently discarded (never-delete-history spirit).
 `UNVERIFIABLE` findings ship marked `⚠ unverified (evidence gap: <what>)` —
 a check that couldn't run is never counted as a refutation.
-Codex unavailable / auth lapsed → every finding ships marked
-`⚠ unverified (Codex unavailable)` — never a silent skip, never a block.
+Reviewer unavailable → every finding ships marked
+`⚠ unverified (reviewer unavailable)` — never a silent skip, never a block.
 
 ## Step 4 — The report
 
@@ -253,11 +247,11 @@ never silently vanishes between reports. Structure:
 
 ````markdown
 # Architecture & integration audit — <YYYY-MM-DD>
-> Codex-verified. Advice only — no code was changed.
+> Adversarially verified (fresh-context reviewer). Advice only — no code was changed.
 > Base commit: <git rev-parse HEAD — full SHA (short hashes go ambiguous as history grows; abbreviate only for display); what this audit reviewed. Prefer auditing a CLEAN tree so the stamp truly describes the audited code; if dirty, append `+dirty:` + each changed file with its `git hash-object` blob SHA (deleted files as `path (deleted)` — there is no blob to hash) — those exact contents are what the audit saw; a later edit changes the hash, so staleness checks compare content, not filenames>
 > Liveness context: <live (ss+pm2+nginx observed, registry cross-checked) | partial (per source: ss ✓ · pm2 ✗ <why> · nginx ✓) | registry-only (wiring vs SERVER-MAP.md; liveness NOT observed) | none (code-only)>
 
-## Score:  P0 <n> · P1 <n> · P2 <n> · P3 <n>   ( <n> refuted by Codex )
+## Score:  P0 <n> · P1 <n> · P2 <n> · P3 <n>   ( <n> refuted by the reviewer )
 
 ## System map
 <!-- Map: drawn <YYYY-MM-DD>   ← stamp this line ONLY when the interactive Artifact
@@ -282,7 +276,7 @@ flowchart LR
 
 ## P0 — must fix (breaks or endangers production)
 - **<title>** — `path:line` · principle: <name> · Status: **open**
-  <evidence>. **Fix:** <concrete step>.  ✓ Codex CONFIRMED
+  <evidence>. **Fix:** <concrete step>.  ✓ reviewer CONFIRMED
   map: <source_node> —<relationship>→ <target_node>   <!-- topology findings only (dims 1/6/7); this line is what the system map draws — a carried row keeps it verbatim, or the gap silently vanishes from the next map -->
 
 ## P1 — high
@@ -294,8 +288,8 @@ flowchart LR
 ## P3 — low
   <same row format>
 
-## Codex refuted (<n>) — recorded, not acted on
-- <title> — `path:line` — Codex: <why>
+## Reviewer refuted (<n>) — recorded, not acted on
+- <title> — `path:line` — reviewer: <why>
 
 ## Next
 👉 <the single highest-value fix>. Act on it? (hands into /before → work → verify → /ship)
@@ -311,7 +305,7 @@ flowchart LR
   assembling after the carry-forward merge is what keeps a gap from a prior
   audit visible on the map). Only findings carrying
   `source_node`/`target_node`/`relationship` are drawn: P0/P1 as red dashed
-  edges (or red orphan nodes), P2/P3 amber. Codex-refuted findings are never
+  edges (or red orphan nodes), P2/P3 amber. Reviewer-refuted findings are never
   drawn; `⚠ unverified` findings are drawn with the ⚠ marker in their label.
   Healthy edges are drawn plain.
 - **Mermaid usability:** node IDs are deterministic slugs (lowercase,

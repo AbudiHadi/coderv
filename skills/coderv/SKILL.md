@@ -99,7 +99,7 @@ The 🏛 shape is driven by the `architecture-review.md` run-book beside this
 file: a read-only scout, then a **parallel fan-out** over seven dimensions
 (layering, coupling/cohesion, duplication, module boundaries, dead code,
 **integration wiring**, **service liveness**), deduped, then **each finding is
-adversarially verified by Codex** (same channel as the commit gate) before it
+adversarially verified by a fresh-context reviewer subagent** before it
 reaches a scored P0–P3 report. It **advises, never auto-fixes** — on one yes the
 top finding hands into the normal fix pipeline above. The report is wired into
 every other command (see the run-book's "the weave" table), so a finding stays

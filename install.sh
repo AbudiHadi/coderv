@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # Claude Docs Toolkit installer
-# Copies skills to one or more host CLI skill directories, installs the
-# Claude-Code hooks/gates, and completes the two-brain workflow: it detects
-# whether the Codex CLI is installed + authed, installs the reviewer rules
-# Codex reads (~/.codex/AGENTS.md, never clobbering an existing file), and
-# reports honestly which mode the machine ended up in (two-brain ON, Codex
-# found-but-not-authed, or single-brain with a one-line enable path).
+# Copies skills to one or more host CLI skill directories and installs the
+# Claude-Code hooks/gates. Reviews are Claude-native (the /ship fresh-context
+# reviewer); the retired Codex machinery (gate + ~/.codex/AGENTS.md reviewer
+# block, ≤ v0.17.0) is actively cleaned off upgraded machines — see ADR-029.
 #
 # Hosts:
 #   --claude  (default)  ~/.claude/skills/
@@ -76,8 +74,8 @@ Usage: ./install.sh [TARGET...] [--force] [--uninstall]
 
 Targets (default: --claude):
   --claude     Install to ~/.claude/skills/  (also installs hooks + gates, and
-               completes the two-brain setup: reviewer rules to ~/.codex/AGENTS.md
-               + an honest report of whether Codex is installed/authed)
+               retires machinery removed since — old gates are unwired, the
+               retired ~/.codex/AGENTS.md reviewer block is stripped)
   --codex      Install to ~/.codex/skills/   (skills only — no hook system)
   --gemini     Install to ~/.gemini/skills/  (skills only — no hook system)
   --all        Install to all three
@@ -188,9 +186,16 @@ GATE_ROSTER=(
   "coderv-router.sh^UserPromptSubmit^^10^"
   "project-context.sh^SessionStart^^15^Loading project map..."
   "grounding-gate.sh^PreToolUse^Edit|Write|MultiEdit|NotebookEdit^10^"
-  "codex-review-gate.sh^PreToolUse^Bash^240^Codex adversarial review..."
   "compact-rehydrate.sh^SessionStart^compact^10^"
   "context-gate.sh^Stop^^15^"
+)
+
+# Gates the toolkit USED to ship, removed since. Both the install and
+# uninstall paths sweep this list so an upgrade actively retires the old
+# hook file + settings.json wiring instead of leaving it orphaned.
+#   script ^ event   (matcher/timeout not needed for removal)
+RETIRED_GATES=(
+  "codex-review-gate.sh^PreToolUse"   # removed in v0.18.0 (ADR-029)
 )
 
 # Scripts a SKILL calls directly rather than ones Claude Code fires on an event.
@@ -345,77 +350,16 @@ PY
   fi
 }
 
-# Detect the Codex CLI's state, so setup can complete the two-brain workflow
-# or tell the user exactly how to enable it. Echoes one of:
-#   absent | installed | authed
-codex_state() {
-  command -v codex >/dev/null 2>&1 || { echo "absent"; return; }
-  if codex login status >/dev/null 2>&1; then echo "authed"; else echo "installed"; fi
-}
-
-# Install the portable reviewer rules to ~/.codex/AGENTS.md so Codex knows its
-# role in the two-brain workflow. NEVER overwrites a user's existing file:
-# if the file exists we append our rules inside a marked block (idempotent —
-# skipped when the marker is already present); if absent we create it from the
-# template. The marker lets --uninstall remove exactly our block and nothing
-# else. Args: none. Uses AGENTS_TEMPLATE + CODEX_HOME.
-AGENTS_TEMPLATE="$SCRIPT_DIR/templates/codex-AGENTS.md"
+# Markers of the RETIRED (≤ v0.17.0) reviewer-rules block in ~/.codex/AGENTS.md.
+# The install machinery that wrote the block is gone (ADR-029); the markers are
+# kept so upgrades and --uninstall can still remove a block a previous version
+# installed, without ever touching the user's own content.
 AGENTS_START="<!-- claude-docs-toolkit:agents START -->"
 AGENTS_END="<!-- claude-docs-toolkit:agents END -->"
-# Written as the FIRST line only when the installer CREATED the whole file (no
-# pre-existing file). It is what lets --uninstall tell "a file we made" from "a
-# pre-existing (possibly empty) file we appended a block to" — the two are
-# otherwise byte-identical. Absent on the append path.
+# Written as the FIRST line only when the old installer CREATED the whole file.
+# It is what lets removal tell "a file we made" from "a pre-existing (possibly
+# empty) file we appended a block to" — the two are otherwise byte-identical.
 AGENTS_OWNED="<!-- claude-docs-toolkit:agents OWNS-FILE -->"
-
-# Emit the reviewer rules wrapped in our START/END marked block, to stdout.
-# ALWAYS marker-wrapped — for both create and append — so ownership is proven
-# by the marker, never by a byte-compare heuristic. Args: none.
-emit_codex_block() {
-  printf '%s\n' "$AGENTS_START"
-  printf '%s\n' "<!-- Managed by claude-docs-toolkit. Edit above/below, not inside; --uninstall removes this block. -->"
-  cat "$AGENTS_TEMPLATE"
-  printf '%s\n' "$AGENTS_END"
-}
-
-# Set to 1 by install_codex_rules when the reviewer rules are in place, so the
-# closing status line never claims rules exist when the template was missing.
-CODEX_RULES_INSTALLED=0
-
-install_codex_rules() {
-  if [[ ! -f "$AGENTS_TEMPLATE" ]]; then
-    echo -e "    ${YELLOW}skipped${NC} reviewer rules (templates/codex-AGENTS.md not in toolkit)"
-    return 0
-  fi
-  CODEX_RULES_INSTALLED=1
-  local dst="$CODEX_HOME/AGENTS.md"
-  mkdir -p "$CODEX_HOME"
-
-  if [[ ! -f "$dst" ]]; then
-    # We are creating the whole file: stamp the OWNS-FILE sentinel first so
-    # uninstall knows it may remove the file entirely (a pre-existing empty
-    # file we merely appended to must NOT be deleted — hence the sentinel).
-    { printf '%s\n' "$AGENTS_OWNED"; emit_codex_block; } > "$dst"
-    echo -e "    ${GREEN}installed${NC} reviewer rules → $dst"
-    return 0
-  fi
-
-  # File exists — never clobber it. Append our rules as a marked block, once.
-  # Exact-line match so user prose mentioning the marker text isn't misread.
-  if grep -qxF "$AGENTS_START" "$dst" 2>/dev/null; then
-    echo -e "    ${YELLOW}exists${NC}  reviewer rules already present in $dst (marked block)"
-    return 0
-  fi
-  # Ensure the file ends in a newline so the START marker lands on its own line.
-  # Uninstall removes the START..END lines (block) but preserves every other
-  # line — including anything the user adds later, above or below the block —
-  # so the removal is line-exact, not byte-exact. (A rare CRLF file is
-  # normalised to LF and a missing final newline is added; see ADR-011 — that
-  # trade-off is accepted in favour of never destroying user edits.)
-  [[ -s "$dst" && -n "$(tail -c1 "$dst")" ]] && printf '\n' >> "$dst"
-  emit_codex_block >> "$dst"
-  echo -e "    ${GREEN}appended${NC} reviewer rules (marked block) → $dst"
-}
 
 # Remove ONLY our marked block from ~/.codex/AGENTS.md, leaving the user's own
 # content intact. If we originally created the whole file (it is exactly our
@@ -493,6 +437,10 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
       IFS='^' read -r script event _ _ _ <<<"$row"
       uninstall_gate_hook "$script" "$event"
     done
+    for row in "${RETIRED_GATES[@]}"; do
+      IFS='^' read -r script event <<<"$row"
+      uninstall_gate_hook "$script" "$event"
+    done
     for script in "${TOOL_ROSTER[@]}"; do
       uninstall_tool_script "$script" "$CLAUDE_HOME"
     done
@@ -526,11 +474,14 @@ if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
     install_tool_script "$script" "$CLAUDE_HOME"
   done
 
-  # Complete the second brain: install the reviewer rules Codex reads. This
-  # runs regardless of whether Codex is installed yet — the rules sit ready
-  # for when it is, and the honest status line below says which mode you got.
-  echo -e "${BLUE}→ Codex reviewer rules${NC} (the second brain)"
-  install_codex_rules
+  # Retire machinery older versions installed: unwire + delete removed gates
+  # and strip the old Codex reviewer-rules block. Idempotent — a machine that
+  # never had them prints nothing scary and moves on.
+  for row in "${RETIRED_GATES[@]}"; do
+    IFS='^' read -r script event <<<"$row"
+    uninstall_gate_hook "$script" "$event"
+  done
+  uninstall_codex_rules
 fi
 
 if [[ "$TARGET_CODEX" -eq 1 ]]; then
@@ -550,38 +501,6 @@ fi
 echo
 echo -e "${GREEN}Done.${NC}"
 
-# Two-brain status — honest about which mode this machine got. Only meaningful
-# when the Claude target installed the gate + reviewer rules.
-if [[ "$TARGET_CLAUDE" -eq 1 ]]; then
-  echo
-  case "$(codex_state)" in
-    authed)
-      echo -e "${GREEN}Two-brain workflow: ON.${NC} Codex is installed and authed — the"
-      echo "codex-review-gate will review every commit adversarially."
-      ;;
-    installed)
-      echo -e "${YELLOW}Two-brain workflow: Codex found but not signed in.${NC}"
-      echo "Run  codex login  to turn on adversarial review. Until then commits"
-      echo "pass through single-brain (the gate fails open with a warning)."
-      ;;
-    absent)
-      echo -e "${YELLOW}Two-brain workflow: second brain OFF.${NC} Codex CLI isn't installed,"
-      echo "so commits run single-brain now (the gate fails open harmlessly)."
-      echo "To enable adversarial review:"
-      echo -e "    ${BLUE}npm i -g @openai/codex && codex login${NC}"
-      ;;
-  esac
-  # Reviewer-rules status applies to EVERY Codex state — the reviewer needs its
-  # rules whether or not Codex is authed. Never claim they are installed when
-  # the template was missing (CODEX_RULES_INSTALLED stays 0 in that case).
-  if [[ "$CODEX_RULES_INSTALLED" -eq 1 ]]; then
-    echo "Reviewer rules: in place at ~/.codex/AGENTS.md."
-  else
-    echo -e "${RED}Reviewer rules: NOT installed${NC} — templates/codex-AGENTS.md was"
-    echo "missing from the toolkit; re-run from a complete checkout, or Codex will"
-    echo "review without the two-brain rules."
-  fi
-fi
 echo
 echo "Seven commands (you only need to remember the first):"
 echo "  /coderv <request> — The front door: classifies your request and drives the pipeline"
@@ -592,8 +511,7 @@ echo "  /ship             — Before commit: reviewer + verification scorecard (
 echo "  /session          — End-of-session handoff (state as pasted evidence)"
 echo "  /lint             — Every ~5 sessions: audit docs for rot + contradictions"
 echo
-echo "Four always-on gates (Claude Code): grounding-gate (docs before code),"
-echo "codex-review-gate (Codex adversarial review before commit),"
+echo "Three always-on gates (Claude Code): grounding-gate (docs before code),"
 echo "compact-rehydrate (truth snapshot after compaction), context-gate (dumb-zone guard)."
 echo "Kill switch: CODERV_GATES_OFF=1"
 echo

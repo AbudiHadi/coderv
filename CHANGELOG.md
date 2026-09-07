@@ -5,6 +5,22 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.18.0] — 2026-09-07
+
+> **Heads-up — everyone must reinstall.** This release REMOVES the
+> `codex-review-gate`. Re-run `./install.sh` after pulling: the installer now
+> actively retires the old machinery (unwires + deletes the deployed gate hook
+> and strips the toolkit's reviewer-rules block from `~/.codex/AGENTS.md`).
+
+### Changed
+- **Codex is retired from the workflow — reviews are Claude-native (ADR-029).** The two-brain era (ADR-008 → ADR-028) ends at the owner's decision: the maintenance cost of bounding the cross-model argument (ledger, round counters, caps, ceilings, override paths — a 2,400-line hook with 295 tests) outweighed the review value. Every place Codex reviewed, a **fresh-context Claude subagent** reviews instead: `/ship` Step 4.5's pre-commit convergence loop (the subagent audit absorbs the quality-gate brief, ADR-028's BLOCKER/DEBT classification, and `--security` mode), `/before` Step 5.6's plan review, and the `/coderv` architecture verify (one clean refuter subagent per finding). The convergence mechanism — three end states, round cap 3, batch-don't-trickle, twice-rejected escalation, the snapshot-hash guard — is unchanged and now bounds the Claude reviewer loop.
+- **The toolkit is 7 commands + 5 hooks (three gates).** `grounding-gate`, `compact-rehydrate`, and `context-gate` are unchanged; `coderv-router` and `project-context` are unchanged. Installing for Codex CLI as a *host* (`./install.sh --codex`) still works — only Codex-as-reviewer is gone.
+- **KI-003 closed as superseded; KI-002 moot.** The residual risk is documented in KI-003: the pre-commit convergence loops keep prose-only round caps with no machine gate behind them.
+
+### Removed
+- **`hooks/codex-review-gate.sh`** (the commit-time adversarial review gate, ADR-008/018/019/022/023/024/028) with its tests `tests/gate-cap.sh` and `tests/mint-eid.sh`, and **`templates/codex-AGENTS.md`** (the reviewer rules the installer wrote to `~/.codex/AGENTS.md`). The installer's `RETIRED_GATES` sweep removes the deployed copies on the next install or uninstall run. The `CODERV_GATE_SECURITY` / `CODEX_REVIEW_OFF` / `CODERV_GATE_ROUND_CAP` gate env vars no longer drive a hook (`/ship --security` and the round cap live in the skill now); `CODERV_GATES_OFF=1` still disables the three remaining gates.
+- The README section "Watch the two brains work (coderv-loop)" — the gate that emitted the `loop-events.jsonl` beat stream no longer exists.
+
 ## [0.17.0] — 2026-08-20
 
 > **Heads-up — everyone must reinstall.** `hooks/codex-review-gate.sh` changed

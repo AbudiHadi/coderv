@@ -1,6 +1,19 @@
 # Convergence mechanism — FINAL (Codex rounds 1-3 all folded in)
 
-## THE ONE RULE THAT MAKES THE CAP REAL (read first)
+> **2026-09-07 (ADR-029):** Codex and the `codex-review-gate` are retired; the
+> reviewer in every loop is now a **fresh-context Claude subagent** spawned by
+> `/ship` Step 4.5, `/before` Step 5.6, or the `/coderv` architecture verify.
+> The mechanism below — the end states, the round cap, batch-don't-trickle,
+> FIXED-requires-verification — still governs those loops verbatim; read
+> "Codex" as "the reviewer". **Historical sections** (they describe machinery
+> that no longer exists): the ONE RULE section, every mention of a commit-time
+> gate backstop ("the gate still reviews at commit time" is NO LONGER TRUE —
+> /ship's fail-open is now a real coverage hole, see KI-003), the trust-marker
+> rule, and the whole "Commit-phase enforcement" + ledger sections. The
+> surviving lesson of all of them: a cap only binds when rounds are actually
+> counted — count them in the transcript.
+
+## THE ONE RULE THAT MAKES THE CAP REAL (read first — historical, see banner)
 The whole anti-loop guarantee below — ledger memory, project context, round
 counter, cap — lives inside `codex-review-gate.sh`. It only counts and caps
 rounds that go THROUGH the gate. A manual `codex exec` (or any hand-driven Codex

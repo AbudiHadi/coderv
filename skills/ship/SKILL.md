@@ -16,12 +16,11 @@ Goal: docs stay fresh + honest, with minimum friction.
 
 ## Flags — `--security` (ADR-022)
 
-`/ship --security` runs the whole flow in **DEEP SECURITY REVIEW** mode: export
-`CODERV_GATE_SECURITY=1` for every review command in this run — the Step 4.5
-pre-commit Codex loop AND the final `git commit` (so the commit-time
-codex-review-gate also runs the full adversarial brief and `[hardening]`
-findings block). This is the explicit opt-in for adversarial, fuzzing, and
-parser-hardening review; use it when the owner asks for a security pass.
+`/ship --security` runs the whole flow in **DEEP SECURITY REVIEW** mode: the
+Step 4.5 fresh-context reviewer gets the full adversarial brief (fuzzing,
+parser hardening, adversarially-crafted input) and `[hardening]` findings
+block. This is the explicit opt-in for a security pass; use it when the owner
+asks for one.
 
 **Default (no flag) = engineering QUALITY GATE mode.** Realistic
 correctness / regression / data-loss / reachable-security defects block as
@@ -219,28 +218,42 @@ Offer to draft the entry yourself from the diff.
 
 - [ ] Update `CLAUDE.md` status section if the project tracks phases there.
 
-## Step 4.5 — Converge with Codex BEFORE the commit (the pre-commit loop)
+## Step 4.5 — Converge with the reviewer BEFORE the commit (the pre-commit loop)
 
-This is where the two brains reach agreement **before** anything is committed —
-so the commit lands clean on the first try. Historically the Claude↔Codex
-argument happened *reactively*, after the codex-review-gate denied a commit
-(Step 7). That path re-reviews a **cold diff every recommit**, so a thorough
+This is where writer and reviewer reach agreement **before** anything is
+committed — so the commit lands clean on the first try. Reviewing reactively,
+after a commit, re-reviews a **cold diff every recommit**, so a thorough
 reviewer trickles new findings one commit at a time and the loop can run for
-hours (ADR-018). Moving the argument **here**, on a stable diff, before the
+hours (ADR-018). Running the argument **here**, on a stable diff, before the
 commit, is what ends that — the reviewer dumps **every** finding at once, you
 fix the whole batch without committing, and only a converged diff proceeds.
 
 This step runs a **loop**. Each round: (a) assemble the diff snapshot, (b) run
-the fresh-context subagent audit below, (c) run one Codex pass, (d) adjudicate
-the whole batch and fix/rebut **without committing**, then re-arm and repeat.
-The loop reuses the loop-control already written in **Step 7** (batch-don't-
-trickle + the twice-rejected-identical escalation, ADR-010) and the three end-
-states in `docs/planning/two-brain-convergence.md` — it does not re-invent them.
+the fresh-context subagent audit below, (c) adjudicate the whole batch and fix
+**without committing**, then re-arm and repeat. Loop control (ADR-010, bounded
+so it terminates):
 
-**The diff snapshot — assemble it EXACTLY as `codex-review-gate.sh` does**, so
-Codex here hashes the same bytes the gate will hash at commit time (a bare
+- **Batch, don't trickle.** Adjudicate ALL of a round's findings before
+  touching the code, then fix the real ones as one batch. Fixing one finding
+  per round burns the cap on trivia.
+- **A finding is only rejected with parsed, machine-verified proof** — the
+  actual line quoted, the actual command output — never a hunch or a lazy
+  `grep` that matched the wrong thing (that once dismissed a *real* lockfile
+  finding). No proof → not rejected: fix it or surface it to the owner.
+- **Escalate — stop and surface to the owner — when the SAME unresolved
+  finding has been rejected twice on substantially the same rationale** (same
+  claim, same cited evidence, no materially new code or facts since the last
+  rejection). Two bounces means you are looping, not converging; the owner is
+  the arbiter, never an excuse to keep hammering.
+- **Transparency:** every finding — fixed, rejected, or open — is surfaced to
+  the owner with your reasoning. Never silently dropped.
+
+The three end-states come from `docs/planning/two-brain-convergence.md` — this
+step does not re-invent them.
+
+**The diff snapshot — assemble the COMPLETE outgoing diff** (a bare
 `git diff HEAD` misses untracked files and would let /ship converge on an
-incomplete diff — the gate would then find the rest cold):
+incomplete diff):
 
 ```bash
 DIR=$(pwd)   # or the repo you are committing in
@@ -254,54 +267,20 @@ done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
 SNAP_HASH=$(printf '%s' "$DIFF" | sha256sum | cut -d' ' -f1)   # the reviewed snapshot
 ```
 
-**The Codex pass — same serialized-stdin channel the gate uses**, with the
-reviewer told to be exhaustive in ONE pass (this is what stops the trickle):
+**The review itself is the fresh-context subagent audit below** — one clean
+reviewer per round, told to be exhaustive in ONE pass (this is what stops the
+trickle). Its brief carries the quality-gate policy verbatim (see the audit
+section); a fresh round gets a FRESH subagent — a reviewer that saw the old
+snapshot is anchored to it.
 
-```bash
-OUT=$(mktemp)
-SPEC=~/.claude/coderlap/specs/$(ROOT=$(pwd); while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ]; do ROOT=$(dirname "$ROOT"); done; [ -f "$ROOT/CLAUDE.md" ] || ROOT=$(pwd); printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':').md
-{ printf '%s\n' \
-    "You are the ENGINEERING QUALITY GATE in a two-model workflow." \
-    "Review this outgoing git diff for correctness, edge cases, security, data" \
-    "integrity, and (if a plan is included) drift from it. Style nits do not count." \
-    "Prioritize correctness bugs, regressions, data loss, broken logic, and other" \
-    "high-confidence defects a user would actually hit; report realistic security" \
-    "issues (a credible attacker can reach the path, high impact). Do NOT" \
-    "recursively harden against exotic or adversarially-crafted input — tag such" \
-    "deep-hardening findings [hardening]: they are NON-BLOCKING debt, not grounds" \
-    "for another round." \
-    "Declare EVERY finding [blocker] or [debt]. A [blocker] must name a material" \
-    "harm to users, data, security/privacy, correctness, compatibility, or release" \
-    "integrity; if you cannot name one, it is [debt] by construction. Ignore" \
-    "atomic, theoretical, defensive, cosmetic, or negligible-impact issues. Once" \
-    "the change is materially correct and verified, STOP — a review reporting only" \
-    "debt is COMPLETE, not unfinished." \
-    "Do ONE EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe" \
-    "first — holding one back for a later round is a FAILURE (it wastes a converged" \
-    "retry and lets real bugs hide behind cosmetic ones). file:line + the concrete" \
-    "failure + the fix, per finding. If nothing significant, reply exactly: LGTM"
-  [ -f "$SPEC" ] && { printf -- '--- APPROVED PLAN ---\n'; cat "$SPEC"; printf -- '--- END PLAN ---\n'; }
-  printf 'Diff below:\n%s' "$DIFF"; } | timeout 180 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
-RC=$?
-REVIEW=$(cat "$OUT"); rm -f "$OUT"
-```
-
-**With `--security`**, swap the first line for *"You are the independent
-adversarial reviewer in a two-model workflow, running an explicit DEEP SECURITY
-REVIEW."* and replace the do-NOT-harden instruction with *"Hunt exhaustively
-with an adversarial mindset: fuzzing, parser hardening, exotic shell grammar,
-adversarially-crafted input. Deep-hardening findings block in this mode."* —
-mirroring `codex-review-gate.sh`'s two briefs so /ship and the gate always
-argue under the same policy.
-
-**Codex unavailable → FAIL OPEN, never block** (RC ≠ 0 or empty `REVIEW` after
-ONE retry): surface *"Codex unavailable — diff not peer-reviewed before commit"*
-verbatim, score the reviewer gate ✖ in the scorecard, and **proceed to the
-approval moment** — the owner decides. Never label this CONVERGED. This is not
-a coverage hole: the codex-review-gate still runs its own review at commit time.
+**Reviewer unavailable → FAIL OPEN, never block** (the subagent fails or
+returns empty after ONE retry): surface *"Reviewer unavailable — diff not
+peer-reviewed before commit"* verbatim, score the reviewer gate ✖ in the
+scorecard, and **proceed to the approval moment** — the owner decides. Never
+label this CONVERGED.
 
 **The end of the loop — one of exactly three states** (same set as the plan
-phase and the gate; `docs/planning/two-brain-convergence.md`):
+phase; `docs/planning/two-brain-convergence.md`):
 
 - **CONVERGED — requires BOTH** (a) the unresolved-**material** set is empty
   (ADR-022: in default mode `[hardening]`/`[edge]`/`[theoretical]` findings are
@@ -310,11 +289,11 @@ phase and the gate; `docs/planning/two-brain-convergence.md`):
   **DEBT-only** round IS convergence — do not spend another round trying to
   turn debt into something blocking)
   **AND** (b) the snapshot you just reviewed is the snapshot you are about to
-  commit: `SNAP_HASH` (the diff Codex saw) **equals** a freshly re-assembled
-  diff hash. A round can resolve every finding yet **change the bytes** (the fix
-  itself is an edit), and that new diff is UNREVIEWED — so an empty finding set
-  alone is **not** convergence. Re-assemble and re-review until the hash holds
-  steady with an empty material set.
+  commit: `SNAP_HASH` (the diff the reviewer saw) **equals** a freshly
+  re-assembled diff hash. A round can resolve every finding yet **change the
+  bytes** (the fix itself is an edit), and that new diff is UNREVIEWED — so an
+  empty finding set alone is **not** convergence. Re-assemble and re-review
+  until the hash holds steady with an empty material set.
 - **CAP-STOPPED** — the round cap is reached (default **3**, honouring
   `CODERV_GATE_ROUND_CAP`) and the current snapshot still cannot be certified —
   either ≥1 unresolved material finding remains, **or** the cap prevents
@@ -323,16 +302,6 @@ phase and the gate; `docs/planning/two-brain-convergence.md`):
   Surface every open finding to the owner verbatim; they decide (fix / accept /
   park). Do **not** spend another round on your own judgment.
 - **REVIEW-UNAVAILABLE** — the fail-open case above.
-
-**The gate is still the backstop — and /ship must NOT try to shortcut it.** The
-codex-review-gate runs its **own** independent review when you commit; a
-converged diff just makes that a fast LGTM instead of a fresh argument. Never
-write the gate's cache marker (`~/.claude/coderlap/codex-reviewed/$HASH`) from
-/ship to skip that review: a marker /ship writes is indistinguishable from a
-gate-written one, so any /ship failure would silently disarm the backstop, and a
-plain write can race the gate's own `denied` marker (ADR-018, ADR-016). The gate
-is the sole author of its trust marker. The redundant second review **is** the
-safety property, not waste.
 
 ---
 
@@ -352,6 +321,23 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   pass/fail with the diff lines proving it, quoted verbatim with file:line.
   Run the build and tests if the project has them; paste raw output. Flag
   anything in the diff the spec never asked for."**
+- the **quality-gate policy**, pasted into the brief verbatim (this is what
+  makes one pass exhaustive and the loop terminate): *"Review for correctness,
+  edge cases, security, data integrity, and drift from the spec. Style nits do
+  not count. Prioritize correctness bugs, regressions, data loss, and broken
+  logic a user would actually hit; report realistic security issues (a credible
+  attacker can reach the path, high impact). Do NOT recursively harden against
+  exotic or adversarially-crafted input — tag such deep-hardening findings
+  `[hardening]`: non-blocking debt, not grounds for another round. Declare
+  EVERY finding `[blocker]` or `[debt]` — a `[blocker]` must name a material
+  harm to users, data, security/privacy, correctness, compatibility, or release
+  integrity; if you cannot name one, it is `[debt]` by construction. Do ONE
+  EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe first —
+  holding one back for a later round is a failure. If nothing significant,
+  reply exactly: LGTM."* **With `--security`**, replace the do-NOT-harden
+  instruction with *"Hunt exhaustively with an adversarial mindset: fuzzing,
+  parser hardening, exotic shell grammar, adversarially-crafted input.
+  Deep-hardening findings block in this mode."*
 - the **smell baseline** below, pasted into the brief in full (the subagent has
   no other access to it): *"Also match the diff against these smells (Fowler,
   Refactoring ch.3). Each hit is a labelled judgement call — 'possible Feature
@@ -377,8 +363,8 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   scorecard gates — the scorecard measures the spec, the baseline improves the
   code. (The baseline is adopted from mattpocock/skills' code-review; the
   skill around it was rejected — see ADR-025 in the toolkit's
-  docs/DECISIONS.md — because an ungated second review loop is exactly what
-  the codex-review-gate bounds.)
+  docs/DECISIONS.md — because an unbounded second review loop is exactly what
+  Step 4.5's round cap exists to prevent.)
 
 When the reviewer returns, **machine-verify its quotes before believing it**:
 each quoted line must literally exist at its cited location —
@@ -430,9 +416,8 @@ its own docs-only follow-up. Never delete the row — same pattern as marking a
 tracked gap shipped. This is how a
 structural problem found once gets caught again at every commit that touches
 it at every `/ship` — not left to memory. (This lives in the `/ship`
-checklist, not in `codex-review-gate.sh` — a commit made without `/ship`
-skips it, which is one more reason the repo rule "never commit without
-`/ship`" exists.)
+checklist and nowhere else — a commit made without `/ship` skips it, which is
+one more reason the repo rule "never commit without `/ship`" exists.)
 
 **Close the round — the snapshot-hash guard.** The audit just ran builds and
 tests, which can touch tracked or generated files, and any fix you applied
@@ -448,13 +433,13 @@ done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
 NOW_HASH=$(printf '%s' "$DIFF2" | sha256sum | cut -d' ' -f1)
 ```
 
-If `NOW_HASH` ≠ `SNAP_HASH`, the bytes moved since Codex saw them — the current
-diff is **unreviewed**. Re-arm: start a **new round** (re-run this whole Step
-4.5 loop on the new snapshot), unless the round cap is reached — then CAP-STOP
-and surface to the owner (never approve an unreviewed diff). Declare CONVERGED
-**only** when `NOW_HASH == SNAP_HASH` **and** the unresolved-material set is
-empty — so the scorecard, the CONVERGED verdict, and the diff the gate will
-review at commit time are all the identical bytes.
+If `NOW_HASH` ≠ `SNAP_HASH`, the bytes moved since the reviewer saw them — the
+current diff is **unreviewed**. Re-arm: start a **new round** (re-run this
+whole Step 4.5 loop on the new snapshot), unless the round cap is reached —
+then CAP-STOP and surface to the owner (never approve an unreviewed diff).
+Declare CONVERGED **only** when `NOW_HASH == SNAP_HASH` **and** the
+unresolved-material set is empty — so the scorecard, the CONVERGED verdict,
+and the diff you are about to commit are all the identical bytes.
 
 ## Step 5 — Draft the commit message
 
@@ -560,7 +545,7 @@ Judgment items for you: <none, or one line each>
 <2-3 sentences on WHY>
 ```
 
-**On "approve" I run:** `git add <files> && git commit -m "<message>"` — the codex-review-gate reviews the outgoing diff before it lands. (With `--security`, prefix the commit with `CODERV_GATE_SECURITY=1 ` so the gate reviews in deep-security mode too.)
+**On "approve" I run:** `git add <files> && git commit -m "<message>"` — committing exactly the CONVERGED snapshot Step 4.5 certified.
 
 👉 **My recommendation: <approve — 100% | fix gate N first | ship at <P>% because <reason>>.**
 ````
@@ -587,74 +572,10 @@ should never have to ask "why not 100?".
 ```
 
 **Never commit without the user's explicit approval.** Show the command and
-wait for "approve". Then run the commit yourself via the Bash tool — that
-routes the diff through the codex-review-gate (the machine reviewer). A
-commit the user runs in their own terminal would silently bypass that gate.
-
-**If the gate denies — it opens a discussion, not a verdict.** Codex is a
-peer reviewer, not a boss; Claude holds final authority and can push back.
-(With Step 4.5's pre-commit convergence done, a converged diff should reach the
-gate as a fast LGTM — a deny here means the gate's independent review, its
-proper backstop role, caught something Step 4.5's pass missed. Adjudicate it
-the same way, in one batch; it is a rare single event now, not the loop.)
-
-> **Converge in ONE retry — never loop.** A recommit is a *fresh* diff, so it
-> earns a *fresh* review; fixing findings one-at-a-time and recommitting after
-> each produces a new review every time and can deny indefinitely (this is a
-> real incident, not a hypothetical — see ADR-010). So: **fix ALL real findings
-> first, then retry with a single commit.** Batch, don't trickle. This is the
-> commit-path twin of the design-phase round cap in
-> `docs/planning/two-brain-convergence.md` — both bound the loop so it
-> terminates.
->
-> **Escalate — stop and surface to the owner — when the SAME unresolved finding
-> has been rejected twice on substantially the same rationale.** "Substantially
-> the same rationale" is narrow: the **same underlying claim**, resting on the
-> **same cited evidence**, with **no materially new code or facts** bearing on
-> that finding since the last rejection. If any of those three has changed (the
-> claim shifted, new evidence, or the diff/facts moved), it is a *fresh*
-> finding — keep going, escalation does not trip. But the same claim on the same
-> evidence bouncing back twice means you are looping, not converging: stop,
-> hand the owner every unresolved finding with your reasoning, and let them
-> decide. The owner is the arbiter above both models; an unresolved gate is
-> their call, never an excuse to keep hammering the commit.
-
-1. Adjudicate **all** findings before committing anything. Fix every finding
-   that is genuinely real, then commit the whole batch **once** — that single
-   retry earns one fresh review, instead of one review per finding.
-   **A finding is only rejected with parsed, machine-verified proof** — the
-   actual line quoted, the actual command output — never a hunch or a lazy
-   `grep` that matched the wrong thing (that once dismissed a *real* lockfile
-   finding). No proof → not rejected: fix it or escalate it.
-2. For a finding you believe is wrong, you may **rebut to Codex ONCE** —
-   re-run the review with your counter-argument appended, same stdin channel.
-   Include the approved plan when it exists, so a `[DRIFT]` finding can be
-   reconsidered against the same ground truth the gate measured it against:
-   ```bash
-   OUT=$(mktemp)
-   SPEC=~/.claude/coderlap/specs/$(printf '%s' "$(cygpath -w "$ROOT" 2>/dev/null || printf '%s' "$ROOT")" | tr '/\\' '--' | tr -d ':').md
-   { printf '%s\n' "You flagged: <finding>." \
-       "Rebuttal: <why it is not a real issue — cite the code/convention>." \
-       "Reconsider. If you still disagree, say so and why."
-     [ -f "$SPEC" ] && { printf -- '--- APPROVED PLAN ---\n'; cat "$SPEC"; printf -- '--- END PLAN ---\n'; }
-     # Same diff assembly as the gate + Step 4.5 (untracked included) — a bare
-     # `git diff HEAD` would review different bytes than the gate hashes.
-     D=$(git -C "$DIR" diff HEAD 2>/dev/null); [ -z "$D" ] && D=$(git -C "$DIR" diff --cached 2>/dev/null)
-     while IFS= read -r f; do [ -z "$f" ] && continue
-       U=$(git -C "$DIR" diff --no-index -- /dev/null "$f" 2>/dev/null); [ -n "$U" ] && D+=$'\n'"$U"
-     done < <(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null)
-     printf 'Diff below:\n%s' "$D"; } \
-     | timeout 180 codex exec --skip-git-repo-check -s read-only -o "$OUT" -
-   VERDICT=$(cat "$OUT"); rm -f "$OUT"
-   ```
-   Read `$VERDICT` — Codex either concedes or holds. One rebuttal round only:
-   this is a strong hand, not an argument to win. Either way, **Claude's call
-   is final**.
-3. Surface the outcome to the user: every finding, whether fixed / rejected /
-   rebutted-and-held, with your reasoning. A rejection that survived a rebuttal
-   is still surfaced — never silently dropped (transparency rule). The user is
-   the final authority above both models.
-4. Then retry the commit.
+wait for "approve". Then run the commit yourself via the Bash tool, and commit
+**exactly the snapshot Step 4.5 certified** — if the bytes moved since (the
+hash check is cheap, re-run it), that is a new, unreviewed diff: go back to
+Step 4.5, never commit it on the strength of the old verdict.
 
 ## Step 8 — Suggest follow-ups
 

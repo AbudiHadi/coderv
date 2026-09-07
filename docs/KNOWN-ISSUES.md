@@ -128,7 +128,12 @@ before spending a round.
 
 **First seen:** 2026-07-22
 **Last seen:** 2026-07-22
-**Status:** open — real fix needs its own /before (a design change, not a drive-by)
+**Status:** closed 2026-09-07 as superseded by ADR-029 — the gate and its machine
+state are removed, so "wire the skills to the gate's counters" is no longer a
+possible fix. The residual risk is REAL and now unbackstopped: the `/ship` Step
+4.5 and `/before` Step 5.6 loops (now Claude fresh-context reviewers) still have
+prose-only round caps, and there is no commit-time machine gate behind them.
+Mitigation unchanged: count rounds explicitly in the transcript, stop at 3.
 
 ### Symptom
 ADR-019 claims `/ship` Step 4.5 and `/before` Step 5.6 "inherit" the gate's
@@ -165,7 +170,8 @@ cap alone.
 
 **First seen:** 2026-07-22
 **Last seen:** 2026-07-22
-**Status:** fixed by ADR-021 (rule + Codex self-refusal); machine-lock deferred
+**Status:** fixed by ADR-021 (rule + Codex self-refusal); machine-lock deferred.
+Moot since 2026-09-07 — ADR-029 removed Codex from the workflow entirely.
 
 ### Symptom
 On alrafiq's career-floor regex, the Claude↔Codex review looped past the round
