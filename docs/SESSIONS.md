@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-09-07 — v0.18.0: Codex RETIRED from the product (ADR-029) — committed `b07458f`, deployed locally, NOT pushed/released
+
+**Owner order (two steps, same day):** first "stop the two gates permanently"
+(grounding-gate + context-gate unwired from this server's
+`~/.claude/settings.json` — a LOCAL config choice, the product still ships
+them), then "I don't want Codex work in anything — strip it from the toolkit
+too" (a PRODUCT change, this commit).
+
+**What shipped in `b07458f`** (21 files, +317/−5183):
+- DELETED: `hooks/codex-review-gate.sh`, `tests/gate-cap.sh`,
+  `tests/mint-eid.sh`, `templates/codex-AGENTS.md`.
+- Review seats are Claude-native fresh-context subagents: `/ship` Step 4.5
+  (absorbs the quality-gate brief + ADR-028 BLOCKER/DEBT + `--security`),
+  `/before` Step 5.6, `/coderv` architecture verify (one refuter per finding).
+  Convergence mechanism unchanged (3 end states, cap 3, snapshot-hash guard).
+- `install.sh`: gate out of `GATE_ROSTER`; new `RETIRED_GATES` sweep unwires +
+  deletes the old gate and strips the old `~/.codex/AGENTS.md` block on BOTH
+  install and uninstall. Codex-as-HOST (`--codex` skills target) kept.
+- Docs: ADR-029; CHANGELOG 0.18.0 + VERSION; KI-003 closed as superseded
+  (residual: the pre-commit loops are prose-capped with NO machine backstop),
+  KI-002 moot; counts 6→5 hooks / 4→3 gates across README, overview, skills.md,
+  CLAUDE.md; ADR-029 banners on two-brain-convergence.md + coderv-brief.md.
+- Pre-commit review: dogfooded the NEW flow — one fresh-context subagent audit;
+  its 2 blockers (README "four gates" headline, overview tree "4 gates") + 3
+  debt findings all fixed before the commit. `bash -n install.sh` ✓,
+  `tests/ci-green-check.sh` 71/71 ✓, `release.sh` checks read-verified clean.
+
+**Deployed on this machine (by hand — NOT via `install.sh --force`, which would
+re-wire the owner-disabled grounding/context gates):** updated skill dirs copied
+to `~/.claude/skills/` with the marker; deployed gate hook + both `.bak`s
+deleted; the installed-only `release-review` skill's codex mentions patched
+in place (it has NO source in this repo — pre-existing oddity, unresolved).
+Server settings now: env `CODEX_REVIEW_OFF=1` (harmless belt), hooks = router +
+project-context + compact-rehydrate only (owner's local choice).
+
+**Owner owes (his call, per release-scope gate):** `git push`, `./release.sh`
+(tag + gh release + website `site.ts` → 0.18.0), Windows machine pull +
+`install.sh` (its sweep will retire the old gate there).
+
+**Raw state at close:**
+```
+$ git log --oneline -2
+<this docs commit>
+b07458f Retire Codex from the toolkit — reviews are Claude-native (ADR-029)
+$ cat VERSION
+0.18.0
+$ git status --porcelain   (before this docs commit)
+ M docs/SESSIONS.md
+```
+
+---
+
 ## 2026-08-20 11:53 — ADR-028 SHIPPED end-to-end: committed `b76166d`, installed, verified live, pushed; `main` == `origin/main`
 
 > Supersedes the "BUILT + VERIFIED (not committed)" entry below — that state is
