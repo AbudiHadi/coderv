@@ -4,6 +4,8 @@
 
 ---
 
+## 2026-09-18 — v0.18.0 RELEASED: pushed b07458f + e886d39, `./release.sh` tagged v0.18.0 + synced/rebuilt/committed the website, `gh release create v0.18.0` → https://github.com/AbudiHadi/coderv/releases/tag/v0.18.0. Nothing owed; owner installs on the PC via `curl -fsSL https://coderv.dev/install.sh | bash`.
+
 ## 2026-09-07 — v0.18.0: Codex RETIRED from the product (ADR-029) — committed `b07458f`, deployed locally, NOT pushed/released
 
 **Owner order (two steps, same day):** first "stop the two gates permanently"
