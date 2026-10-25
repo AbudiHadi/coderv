@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-10-25 (later) — v0.19.1 RELEASED: KI-006 fixed
+
+Owner: "go ahead and fix KI-006 as v0.19.1". All six wording gaps fixed in
+`0624572` (verify old-bug clause adds "nor newly reaches" and routes the bug to
+the /ship scorecard's debt line; early stop shows attempts; `[pre-existing]`
+cited as `HEAD:<file>:<line>` and line-checked in the base; missing/unsound
+reason = introduced; added-lines grep skips `+++ b/` / `+++ /dev/null`;
+docs/skills.md names the rule). Two fresh-context review rounds, both
+debt-only. `release.sh` clean: tag pushed, website rebuilt at 0.19.1.
+Deployed here by hand (coderv + ship; other skills already in sync).
+
+**Non-blocking debt from round 2 (not logged as a KI — owner may decide):**
+(1) the header filter assumes git's default `b/` prefix — with
+`diff.mnemonicPrefix`/`diff.noprefix` a quote matching the file path errs
+toward blocking (safe direction; fix: `git diff --src-prefix=a/
+--dst-prefix=b/`); (2) `[hardening]` an added line starting with `++ b/`
+slips the filter; (3) verify's old bug lands in the debt list untagged, and
+whether an old security bug found by verify blocks under `--security` is
+unstated; (4) CHANGELOG/KI-006 notes omit the `HEAD:<file>:<line>` citation
+form and the missing-reason rule.
+
+**Owner owes:** GitHub release pages for v0.19.0 and v0.19.1 (`gh release
+create` is blocked by the permission classifier); Windows PC: pull +
+`install.sh --force`.
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -3
+0624572 Fix KI-006: close the wording gaps left by the v0.19.0 review cap
+5c5a486 docs: session handoff — v0.19.0 released; release page and KI-006 owed
+6fa26f3 Log KI-006: the v0.19.0 wording gaps left by the review round cap
+$ cat VERSION
+0.19.1
+```
+
+---
+
 ## 2026-10-25 — v0.19.0 RELEASED: hostile-case verify + 2-retry cap, introduced-only blockers, /ship split, read-only handoff rule, skill.coderv.dev
 
 **Why:** owner asked to review `/home/toolkit-upgrade-plan.md` (written after
