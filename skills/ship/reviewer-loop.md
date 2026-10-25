@@ -70,8 +70,10 @@ phase; `docs/planning/two-brain-convergence.md`):
   NOT material — list them for the owner under "Non-blocking debt" and
   converge; with `--security`, `[hardening]` counts as material. ADR-028: a
   **DEBT-only** round IS convergence — do not spend another round trying to
-  turn debt into something blocking. ADR-030: a *proven* `[pre-existing]`
-  finding (see the quote check below) is not material for this commit — list
+  turn debt into something blocking. ADR-030: a `[pre-existing]` finding that
+  passes the quote check below (it proves the line is old) and carries the
+  reviewer's reason why this diff does not newly reach it is not material for
+  this commit — list
   it first under "Non-blocking debt" (security/data-loss ones at the very top)
   and offer each one for `docs/KNOWN-ISSUES.md`; with `--security`,
   `[pre-existing][security]`/`[data-loss]` findings stay material)
@@ -125,7 +127,8 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   it is a security or data-loss risk, still report it, tagged
   `[debt][pre-existing][security]` or `[debt][pre-existing][data-loss]`. For
   every `[pre-existing]` finding, quote the defective line as it stands in the
-  base code and say in one line why this diff does not newly reach it. Do ONE
+  base code, cite it as `HEAD:<file>:<line>` (the base line number), and say
+  in one line why this diff does not newly reach it. Do ONE
   EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe first —
   holding one back for a later round is a failure. If nothing significant,
   reply exactly: LGTM."* **With `--security`**, replace the do-NOT-harden
@@ -167,6 +170,9 @@ each quoted line must literally exist at its cited location —
 sed -n '<line>p' <file>   # must contain the quoted text
 ```
 
+For a `[pre-existing]` finding the line number is from the base code, so
+check it there instead: `git show HEAD:<file> | sed -n '<line>p'`.
+
 A quote that fails the string match = fabricated evidence → drop that finding,
 note it, and re-ask the reviewer for that item.
 
@@ -175,14 +181,17 @@ base and must not be one this diff adds:
 
 ```bash
 git show HEAD:<file> | grep -F '<quoted text>'                 # must match (in the base)
-git diff HEAD -- <file> | grep '^+' | grep -F '<quoted text>'  # must NOT match (not added by this diff)
+git diff HEAD -- <file> | grep '^+' | grep -v -e '^+++ b/' -e '^+++ /dev/null' | grep -F '<quoted text>'  # must NOT match (not added by this diff)
 ```
 
 (Run both in one call, on the real files — never on a shell variable from an
 earlier call, which is empty by now. A brand-new file fails the first check,
 so it always counts as introduced.)
 
-Either check fails → the defect is this diff's: treat it as introduced and
+These checks prove the line is old — not that the diff leaves it
+unreached; that part rests on the reviewer's one-line reason, so read it.
+Either check fails, or the reason is missing or does not hold up → the
+defect is this diff's: treat it as introduced and
 judge it as a normal finding. Reviewer findings that survive
 become scorecard gates (Step 7, `scorecard.md`).
 

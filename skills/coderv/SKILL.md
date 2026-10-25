@@ -193,12 +193,15 @@ On yes, invoke each skill in order via the Skill tool. Rules of the road:
   outcome (when the spec is silent, pick the safe one and say it was your
   pick) and runs for real with the output pasted; no output → not passed. Any
   failing case is a failed verify — unless the failure sits in code this
-  change neither touched nor was meant to fix: then it is an old bug, reported
-  as pre-existing, never retried.
+  change neither touched, nor was meant to fix, nor newly reaches (e.g. a new
+  call into an old function that crashes on empty input is this change's
+  bug): then it is an old bug — never retry it, carry on with the chain, and
+  list it in the `/ship` scorecard's "Non-blocking debt" line, where it is
+  offered for `docs/KNOWN-ISSUES.md`.
   **A failed verify gets at most 2 retries:** fix the root cause, re-run the
   whole verify (normal flow + every hostile case), and say
-  `🔁 retry 1/2 — <what changed>`. Stop early — no retry — and ask the user
-  when the same fix would repeat, when the "fix" would weaken the check itself
+  `🔁 retry 1/2 — <what changed>`. Stop early — no retry — show the attempts
+  so far and ask the user when the same fix would repeat, when the "fix" would weaken the check itself
   (loosen an assertion, drop a case, stub out the thing being checked), or
   when the cause is outside the change (a service down, a missing secret).
   (This cap is for verify only: the `/ship` reviewer keeps its own round cap,

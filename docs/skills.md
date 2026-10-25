@@ -81,7 +81,7 @@ When user is only asking about git status without intent to commit.
 
 ### What it does
 
-Reads `git diff`, categorises changes (routes / components / schema / etc.), offers to update the relevant doc itself (not just ask), re-validates every `<!-- src: -->` citation, spawns a fresh-context reviewer that audits the diff against the spec checklist `/before` wrote (quotes machine-verified by string match), drafts a why-focused commit message, and prints the **verification scorecard** — gates passed/total with real command output per gate; the user approves at 100%. Suggests follow-ups (`/decision` if design choice, KNOWN-ISSUES entry if non-obvious bug). (Reviewer + scorecard added in v0.8.0, ADR-006.)
+Reads `git diff`, categorises changes (routes / components / schema / etc.), offers to update the relevant doc itself (not just ask), re-validates every `<!-- src: -->` citation, spawns a fresh-context reviewer that audits the diff against the spec checklist `/before` wrote (quotes machine-verified by string match; only defects the diff caused or newly exposes block — old ones are reported as `[pre-existing]` and offered for KNOWN-ISSUES, ADR-030), drafts a why-focused commit message, and prints the **verification scorecard** — gates passed/total with real command output per gate; the user approves at 100%. Suggests follow-ups (`/decision` if design choice, KNOWN-ISSUES entry if non-obvious bug). (Reviewer + scorecard added in v0.8.0, ADR-006.)
 
 ## /session
 

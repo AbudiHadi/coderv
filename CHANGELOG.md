@@ -5,6 +5,14 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.19.1] — 2026-10-25
+
+> **Reinstall to pick it up:** `./install.sh --force` (a bare install skips
+> skills that already exist).
+
+### Fixed
+- **KI-006 — six wording gaps left by the v0.19.0 review cap (ADR-030).** `/coderv` verify's "old bug" exemption now also requires that the change does not newly reach the failing code, and offers it for KNOWN-ISSUES; the verify early stop shows the attempts so far; `/ship`'s `[pre-existing]` quote check is described as proving the line is old (the reviewer's reason covers "not newly reached"), checks line numbers against the base, and no longer matches the `+++` file header; `docs/skills.md` names the introduced-only rule.
+
 ## [0.19.0] — 2026-10-25
 
 > **Reinstall to pick it up:** `./install.sh --force` (a bare install skips

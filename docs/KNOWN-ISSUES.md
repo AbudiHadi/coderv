@@ -36,7 +36,7 @@ Rule / test / check that would catch this next time.
 
 **First seen:** 2026-10-25
 **Last seen:** 2026-10-25
-**Status:** open — fix in v0.19.1 (owner: toolkit maintainer)
+**Status:** fixed in v0.19.1 (2026-10-25)
 
 ### Symptom
 The third and final fresh-context review of v0.19.0 found only `[debt]`; the
@@ -61,8 +61,13 @@ round cap stopped further edits so the reviewed bytes are what shipped. Gaps:
 Fixes landed in rounds 1–2 introduced new edges; round 3 is the cap.
 
 ### Fix
-Pending — all six are one-line wording edits; ship them together with one
-review round.
+v0.19.1, wording only: (1) the verify "old bug" clause adds "nor newly
+reaches", the KNOWN-ISSUES offer and "carry on"; (2) the quote check is said
+to prove the line is old, with "not newly reached" resting on the reviewer's
+reason; (3) `[pre-existing]` line numbers are checked with
+`git show HEAD:<file> | sed -n`; (4) the added-lines grep drops `+++` headers;
+(5) the early stop shows the attempts so far; (6) docs/skills.md's `/ship`
+summary names the rule.
 
 ### Prevention
 Run the real-world verify test (scratch project, planted bugs) on the final
