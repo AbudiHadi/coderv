@@ -25,8 +25,8 @@ whether an old security bug found by verify blocks under `--security` is
 unstated; (4) CHANGELOG/KI-006 notes omit the `HEAD:<file>:<line>` citation
 form and the missing-reason rule.
 
-**Owner owes:** GitHub release pages for v0.19.0 and v0.19.1 (`gh release
-create` is blocked by the permission classifier); Windows PC: pull +
+**Owner owes:** (release pages DONE same day after owner approval —
+both created); Windows PC: pull +
 `install.sh --force`.
 
 **State evidence (verbatim):**
