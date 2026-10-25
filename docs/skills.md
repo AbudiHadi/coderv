@@ -67,7 +67,7 @@ Finds the highest ADR number, walks user through 5 questions (Context, Decision,
 
 ## /ship
 
-**File:** `skills/ship/SKILL.md` <!-- src: skills/ship/SKILL.md -->
+**File:** `skills/ship/SKILL.md` <!-- src: skills/ship/SKILL.md --> + run-books `reviewer-loop.md` (Step 4.5) <!-- src: skills/ship/reviewer-loop.md --> and `scorecard.md` (Step 7) <!-- src: skills/ship/scorecard.md -->
 **One-line:** Pre-commit checklist — auto-updates docs + validates citations + drafts commit.
 **When to use:** before every commit that touches multiple files.
 
@@ -103,7 +103,7 @@ In the middle of active work with no break in sight.
 
 ### What it does
 
-Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md` — including a mandatory "State evidence (verbatim)" block of pasted command output (v0.8.0: state claims are pasted, never prose). When the file passes ~20 entries, rotates all but the newest 10 to `docs/SESSIONS-ARCHIVE.md` (append-only — never deleted).
+Pulls recent `git log`, asks user to fill in 4 fields (what shipped / in flight / gotchas / next), prepends entry to `docs/SESSIONS.md` — including a mandatory "State evidence (verbatim)" block of pasted command output (v0.8.0: state claims are pasted, never prose). When the file passes ~20 entries, rotates all but the newest 10 to `docs/SESSIONS-ARCHIVE.md` (append-only — never deleted). If a read-only agent (scout, planner, reviewer) ran this session, its findings are saved verbatim to `~/.claude/coderlap/recon/<project>-<date>-<topic>.md` and named in the handoff — a read-only agent can't save its own work (v0.19.0; the context gate's block message says the same). <!-- src: skills/session/SKILL.md -->
 
 ## /lint
 
@@ -139,7 +139,7 @@ A specific skill was invoked explicitly, a pure question with no work intent, or
 
 ### What it does
 
-Classifies the request (feature / bug / question / wrap-up / docs-health / **architecture-system-audit**), checks project state from facts (lint freshness stamp in `~/.claude/coderlap/state/`, dirty git, newest handoff), assembles the pipeline — `/lint` when docs are stale (>14 days) → `/before` → work → `/ship` — shows it once, and drives the chain on a single yes. Pauses only at plan approval and scorecard approval; a failing step stops the chain.
+Classifies the request (feature / bug / question / wrap-up / docs-health / **architecture-system-audit**), checks project state from facts (lint freshness stamp in `~/.claude/coderlap/state/`, dirty git, newest handoff), assembles the pipeline — `/lint` when docs are stale (>14 days) → `/before` → work → `/ship` — shows it once, and drives the chain on a single yes. Pauses only at plan approval and scorecard approval; a failing step stops the chain. Code changes are verified before `/ship`: drive the changed flow, then 3–5 hostile cases aimed at the diff, each run with pasted output; a failed verify gets at most 2 root-cause retries and never a weakened check, then stops with the attempt log (v0.19.0, ADR-030). Besides the two approvals, the chain also stops when a failed check needs the user's call. <!-- src: skills/coderv/SKILL.md -->
 
 ### The 🏛 architecture / system audit shape (v0.11.0 ADR-014; draw.io-style system map added v0.12.0)
 

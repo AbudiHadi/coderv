@@ -82,6 +82,14 @@ git status
 git diff --stat
 ```
 
+**Did a read-only agent run this session** (an Explore scout, a Plan agent,
+a reviewer, any subagent with no write tools)? It cannot save its own findings,
+so they exist only as chat text and die with this context. You save them now,
+before the handoff: write each agent's findings verbatim to
+`~/.claude/coderlap/recon/<project>-<YYYY-MM-DD>-<topic>.md` and name those
+paths in the handoff entry. A read-only agent is never the last hand to touch
+its own findings.
+
 Then ask the user — terse, one prompt:
 
 ```markdown
@@ -121,6 +129,10 @@ $ git status --short
 **Open architecture findings (if any):**
 - <paste open P0/P1 rows from the newest `docs/ARCH-REVIEW-*.md`, or "none">
   <!-- so a structural problem found by an audit doesn't rot between sessions -->
+
+**Saved agent findings (if any):**
+- <path of each `~/.claude/coderlap/recon/…` file written above — a read-only
+  agent's findings, saved because it could not save them itself. Or omit the section.>
 
 **Active effort map (if any):**
 - <for the active map (`grep -l '^Status: active' docs/PLAN-*.md`; several → list each):

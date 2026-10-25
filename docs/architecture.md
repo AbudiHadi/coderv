@@ -17,7 +17,7 @@ Everything else (README, VERSION, CHANGELOG, LICENCE) is metadata around these t
 
 ## Skills
 
-Each skill is a folder: `skills/<name>/SKILL.md`.
+Each skill is a folder: `skills/<name>/SKILL.md`, plus optional run-book `.md` files beside it that the skill reads when needed (`coderv/`, `ship/`).
 
 A `SKILL.md` has:
 
@@ -61,14 +61,14 @@ The `--uninstall` safety net: after copy, every `SKILL.md` gets this trailing li
 
 ## The web installer
 
-`curl -fsSL https://coderv.dev/install.sh | bash` hits a separate wrapper hosted on the website. That wrapper clones this repo to a tmp dir and runs the real `install.sh` from inside. One-liner UX without giving users a raw bash payload to trust blindly — they can read the wrapper at <https://coderv.dev/install.sh> and the actual installer in this repo.
+`curl -fsSL https://skill.coderv.dev/install.sh | bash` hits a separate wrapper hosted on the website. That wrapper clones this repo to a tmp dir and runs the real `install.sh` from inside. One-liner UX without giving users a raw bash payload to trust blindly — they can read the wrapper at <https://skill.coderv.dev/install.sh> and the actual installer in this repo.
 
 ## How changes propagate to users
 
 1. Edit a `SKILL.md` here.
 2. Bump `VERSION` + add `CHANGELOG` entry.
 3. Commit, tag, push, create GitHub release.
-4. User re-runs `curl -fsSL https://coderv.dev/install.sh | bash -s -- --force` or `cd coderv && git pull && ./install.sh --force`.
+4. User re-runs `curl -fsSL https://skill.coderv.dev/install.sh | bash -s -- --force` or `cd coderv && git pull && ./install.sh --force`.
 
 There is no auto-update — this is intentional. Skills shouldn't change silently under users.
 

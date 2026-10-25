@@ -54,7 +54,7 @@ If **any of the 4 are missing** (and this is the first time `/before` runs in th
 
 If yes: create the missing files using these minimal templates:
 
-- `CLAUDE.md` — standard template (see https://coderv.dev/docs for content).
+- `CLAUDE.md` — standard template (see https://skill.coderv.dev/docs for content).
 - `docs/DECISIONS.md` — single header line + "newest at top" note.
 - `docs/KNOWN-ISSUES.md` — header + format template.
 - `docs/SESSIONS.md` — header + newest-at-top note.

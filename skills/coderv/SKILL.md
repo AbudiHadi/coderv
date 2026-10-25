@@ -165,10 +165,10 @@ Decide the pipeline steps from facts:
 1. /lint    — docs last checked <N> days ago → refresh the anchors   (~x min)
 2. /before  — read docs, plan, write spec — **you approve the plan**
 3. build    — hooks guard grounding + context silently
-4. verify   — drive the changed flow, observe it actually works
+4. verify   — drive the changed flow, then try to break it (3–5 hostile cases)
 5. /ship    — reviewer + scorecard — **you approve at 100%**
 
-Proceed? (one yes runs the chain; you'll only be stopped at the two bold points)
+Proceed? (one yes runs the chain; you'll only be stopped at the two bold points, or if a failed check needs your call)
 ```
 
 Adapt the list to what Step 2 actually found — never show steps that will be
@@ -185,8 +185,27 @@ On yes, invoke each skill in order via the Skill tool. Rules of the road:
   the diff → fix and re-review before showing the scorecard.
 - **Always verify code before shipping.** After the build step, if the diff
   touched runnable code, verify it inline — exercise the affected flow and
-  observe the behaviour — before `/ship`. A failed verify stops the chain —
-  fix, then re-verify. **Skip only for a pure docs/prose diff** (nothing to
+  observe the behaviour — before `/ship`. **Then try to break it:** 3–5
+  hostile cases aimed at what the diff changed (empty or missing input, a
+  boundary value, malformed input, a failing dependency, called twice, the old
+  behaviour it must keep) — pick only the kinds that apply; if fewer than 3
+  apply, run fewer and say why, never pad. Each case names its exact expected
+  outcome (when the spec is silent, pick the safe one and say it was your
+  pick) and runs for real with the output pasted; no output → not passed. Any
+  failing case is a failed verify — unless the failure sits in code this
+  change neither touched nor was meant to fix: then it is an old bug, reported
+  as pre-existing, never retried.
+  **A failed verify gets at most 2 retries:** fix the root cause, re-run the
+  whole verify (normal flow + every hostile case), and say
+  `🔁 retry 1/2 — <what changed>`. Stop early — no retry — and ask the user
+  when the same fix would repeat, when the "fix" would weaken the check itself
+  (loosen an assertion, drop a case, stub out the thing being checked), or
+  when the cause is outside the change (a service down, a missing secret).
+  (This cap is for verify only: the `/ship` reviewer keeps its own round cap,
+  and `/lint` failures and the two approvals are never retried.)
+  After 2 retries, stop and
+  show each attempt (failure → what was changed) plus the likely cause, and ask
+  how to proceed. **Skip only for a pure docs/prose diff** (nothing to
   run) — say so: "docs-only change → nothing to exercise, straight to /ship".
   **Config is NOT automatically exempt:** hook settings, manifests, CI, and
   deploy config usually have a validation path (a lint, a schema check, a dry

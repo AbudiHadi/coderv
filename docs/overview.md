@@ -5,9 +5,9 @@
 
 ## What this is
 
-The **CoderLap Docs Toolkit** — 7 slash commands + 5 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
+The **CoderLap Docs Toolkit** — 7 slash commands + 5 hooks for Claude Code that help devs keep clear docs and honest agents without getting tired. This repo is what users `git clone`; a one-liner installer (`curl -fsSL https://skill.coderv.dev/install.sh | bash`) copies the skills into `~/.claude/skills/` where Claude Code discovers them, and wires the hooks into `~/.claude/settings.json`. <!-- src: install.sh -->
 
-Marketing site + docs live in the separate [`coderv-docs`](https://coderv.dev) repo.
+Marketing site + docs live in the separate [`coderv-docs`](https://skill.coderv.dev) repo.
 
 ## The 7 commands
 
@@ -34,12 +34,12 @@ Plus 5 hooks (Claude Code only): `coderv-router` (UserPromptSubmit), `project-co
 ├── install.sh           ← idempotent installer, adds marker for --uninstall
 ├── skills/              ← the 7 skills (each in its own folder)
 │   ├── before/SKILL.md
-│   ├── coderv/SKILL.md
+│   ├── coderv/SKILL.md      (+ run-books: architecture-review, bug-diagnosis, effort-map)
 │   ├── decision/SKILL.md
 │   ├── docify/SKILL.md
 │   ├── lint/SKILL.md
 │   ├── session/SKILL.md
-│   └── ship/SKILL.md
+│   └── ship/SKILL.md        (+ run-books: reviewer-loop, scorecard)
 ├── hooks/               ← 5 Claude Code hooks (router, project map, 3 gates) + the ci-green-check tool
 ├── templates/           ← scaffolds /docify copies into fresh projects
 │   ├── CLAUDE.md

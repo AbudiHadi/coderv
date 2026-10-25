@@ -58,6 +58,13 @@ demote it, and a `[blocker]` that names no category still blocks as malformed �
 so the classification cannot be used to smuggle a bug past the gate, in either
 direction.
 
+**Only what this diff caused blocks (ADR-030).** A defect the base code
+already had, which this diff neither changes nor newly makes reachable, is
+`[debt][pre-existing]` — real, reported, offered for `docs/KNOWN-ISSUES.md`,
+but not this commit's to fix. That is a question of cause, not a softer label,
+and it needs proof (see `reviewer-loop.md`). With `--security`, old
+security/data-loss findings still block.
+
 ## Step 1 — Look at the diff
 
 ```bash

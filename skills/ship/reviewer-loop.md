@@ -1,4 +1,7 @@
+<!-- coderlap:runbook:reviewer-loop -->
 # /ship — Step 4.5 — Converge with the reviewer BEFORE the commit (the pre-commit loop)
+
+> Driven by `/ship` Step 4.5 (see `SKILL.md`) — the pre-commit review loop.
 
 This is where writer and reviewer reach agreement **before** anything is
 committed — so the commit lands clean on the first try. Reviewing reactively,
@@ -67,7 +70,11 @@ phase; `docs/planning/two-brain-convergence.md`):
   NOT material — list them for the owner under "Non-blocking debt" and
   converge; with `--security`, `[hardening]` counts as material. ADR-028: a
   **DEBT-only** round IS convergence — do not spend another round trying to
-  turn debt into something blocking)
+  turn debt into something blocking. ADR-030: a *proven* `[pre-existing]`
+  finding (see the quote check below) is not material for this commit — list
+  it first under "Non-blocking debt" (security/data-loss ones at the very top)
+  and offer each one for `docs/KNOWN-ISSUES.md`; with `--security`,
+  `[pre-existing][security]`/`[data-loss]` findings stay material)
   **AND** (b) the snapshot you just reviewed is the snapshot you are about to
   commit: `SNAP_HASH` (the diff the reviewer saw) **equals** a freshly
   re-assembled diff hash. A round can resolve every finding yet **change the
@@ -111,7 +118,14 @@ context drifts. Spawn ONE reviewer subagent with a clean context. Give it:
   `[hardening]`: non-blocking debt, not grounds for another round. Declare
   EVERY finding `[blocker]` or `[debt]` — a `[blocker]` must name a material
   harm to users, data, security/privacy, correctness, compatibility, or release
-  integrity; if you cannot name one, it is `[debt]` by construction. Do ONE
+  integrity; if you cannot name one, it is `[debt]` by construction. A
+  `[blocker]` must also be caused by THIS diff — introduced by it, or an old
+  path it newly makes reachable. A defect the base code already had, which
+  this diff neither changes nor newly exposes, is `[debt][pre-existing]`; if
+  it is a security or data-loss risk, still report it, tagged
+  `[debt][pre-existing][security]` or `[debt][pre-existing][data-loss]`. For
+  every `[pre-existing]` finding, quote the defective line as it stands in the
+  base code and say in one line why this diff does not newly reach it. Do ONE
   EXHAUSTIVE pass: list EVERY real finding you can see NOW, most severe first —
   holding one back for a later round is a failure. If nothing significant,
   reply exactly: LGTM."* **With `--security`**, replace the do-NOT-harden
@@ -154,8 +168,23 @@ sed -n '<line>p' <file>   # must contain the quoted text
 ```
 
 A quote that fails the string match = fabricated evidence → drop that finding,
-note it, and re-ask the reviewer for that item. Reviewer findings that survive
-become scorecard gates below.
+note it, and re-ask the reviewer for that item.
+
+A `[pre-existing]` tag needs proof too — the quoted line must exist in the
+base and must not be one this diff adds:
+
+```bash
+git show HEAD:<file> | grep -F '<quoted text>'                 # must match (in the base)
+git diff HEAD -- <file> | grep '^+' | grep -F '<quoted text>'  # must NOT match (not added by this diff)
+```
+
+(Run both in one call, on the real files — never on a shell variable from an
+earlier call, which is empty by now. A brand-new file fails the first check,
+so it always counts as introduced.)
+
+Either check fails → the defect is this diff's: treat it as introduced and
+judge it as a normal finding. Reviewer findings that survive
+become scorecard gates (Step 7, `scorecard.md`).
 
 No spec file exists (work done without /before)? Say so — the "spec verified"
 gate scores ✖ and the scorecard caps below 100%.

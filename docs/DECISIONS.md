@@ -33,6 +33,65 @@ What did we decide?
 
 ---
 
+## ADR-030: Verify tries to break the change, retries at most twice, and the reviewer blocks only on what the diff caused
+
+**Date:** 2026-10-25
+**Status:** accepted
+**Decider(s):** owner ("i need everything to be simple"; approved a trimmed upgrade plan, written on the owner's server after a comparison with rlaope/oh-my-hermes); Claude (wording)
+
+### Context
+A comparison with oh-my-hermes (a 140-skill package for a different agent)
+found three ideas worth borrowing and nothing worth installing. (1) `/coderv`'s
+verify step drove the changed flow on the happy path only — nothing tried to
+break it (their `ulw-qa`). (2) "A failed verify stops the chain — fix, then
+re-verify" had no limit, so a stubborn failure could loop, and nothing forbade
+"fixing" it by loosening the test (their `ulw-loop`: the loop may not edit its
+own scoring). (3) `/ship`'s reviewer could mark a bug that was already in the
+base code as a `[blocker]`, stalling a commit that did not cause it — the same
+kind of stalling KI-004 described (their `finding-validation`: confirm the
+diff introduced or newly exposed the defect).
+
+### Decision
+- **Hostile cases.** After the happy-path verify, 3–5 hostile cases aimed at
+  what the diff changed (empty/missing, boundary, malformed, failing
+  dependency, called twice, preserved old behaviour) — only the kinds that
+  apply, each with a named expected outcome and pasted output. A failing case
+  is a failed verify. Inline in `/coderv` Step 4; no new run-book.
+- **Retry cap = 2, verify only.** Each retry fixes the root cause and re-runs
+  the whole verify. Stop early and ask when the fix would repeat, would weaken
+  the check (including stubbing out the thing being checked), or the cause is
+  outside the change (a service down, a missing secret); after 2 retries stop
+  with the attempt log. Reviewer failures keep
+  `/ship`'s own round cap of 3 — one number per loop, never two.
+- **Introduced-only blockers.** In the reviewer's quality-gate policy, a
+  `[blocker]` must be introduced by the diff or an old path it newly makes
+  reachable. Untouched old defects are `[debt][pre-existing]`, not material
+  for this commit, listed first under "Non-blocking debt" and offered for
+  KNOWN-ISSUES. Old security/data-loss risks are still reported, at the top,
+  and still block under `/ship --security`. The tag needs proof: the quoted
+  line must exist in the base and not be added by the diff — otherwise the
+  defect counts as introduced. A hostile verify case that fails in old code
+  the change neither touched nor was meant to fix is reported the same way,
+  never retried.
+
+### Dropped
+- **Evidence labels on every narrator line** (`planned`/`ran`/`verified`):
+  ceremony on every line for what the `/ship` scorecard already enforces once
+  ("no pasted output → no claim").
+- **Retrying reviewer failures inside `/coderv`**: would put a second cap on
+  the loop `/ship` already caps.
+
+### Consequences
+- Verify costs a few more tool calls on code changes; docs-only diffs skip it
+  as before.
+- 2 is a judgment number. Revisit if real runs show most fixable failures
+  need a third attempt, or that two attempts already waste the user's time.
+- A pre-existing bug the reviewer finds is never lost — it is surfaced and
+  offered for KNOWN-ISSUES — but it no longer holds an unrelated commit
+  hostage.
+
+---
+
 ## ADR-029: Retire Codex from the toolkit — reviews are Claude-native (fresh-context subagents), the commit gate is removed
 
 **Date:** 2026-09-07

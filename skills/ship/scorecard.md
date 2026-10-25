@@ -1,4 +1,7 @@
+<!-- coderlap:runbook:scorecard -->
 # /ship — Step 7 — The Verification Scorecard (the approval moment)
+
+> Driven by `/ship` Step 7 (see `SKILL.md`) — the approval moment.
 
 The score is **computed, never felt**: gates passed / gates total, each gate a
 pass/fail check with its real output shown. The model's job is to run checks
@@ -67,6 +70,7 @@ undeclared", which is the honest answer, not a free pass.
 
 Unverified claims: <0, or list them>
 Judgment items for you: <none, or one line each>
+Non-blocking debt: <none, or one line each — `[pre-existing]` first; add to KNOWN-ISSUES? (y/N)>
 
 **Suggested commit message:**
 ```
