@@ -32,6 +32,47 @@ Rule / test / check that would catch this next time.
 
 ---
 
+## KI-006: v0.19.0 wording gaps left after the last review round (ADR-030)
+
+**First seen:** 2026-10-25
+**Last seen:** 2026-10-25
+**Status:** open — fix in v0.19.1 (owner: toolkit maintainer)
+
+### Symptom
+The third and final fresh-context review of v0.19.0 found only `[debt]`; the
+round cap stopped further edits so the reviewed bytes are what shipped. Gaps:
+
+1. `/coderv` verify's "old bug → pre-existing, never retried" clause
+   (`skills/coderv/SKILL.md`) lacks "and this change does not newly reach it"
+   and the KNOWN-ISSUES offer — `/ship` defines the same idea with both. A new
+   caller into an old crashing function could be waved through at verify
+   (the `/ship` reviewer should still block it).
+2. The `[pre-existing]` quote check (`skills/ship/reviewer-loop.md`) proves a
+   line is old, not that the diff leaves it unreached — "proven" overstates it;
+   "not newly reached" rests on the reviewer's one-line reason.
+3. The working-tree `sed -n '<line>p'` quote check can reject a correct
+   base-code citation when the diff shifted lines; `[pre-existing]` quotes
+   should be checked with `git show HEAD:<file> | sed -n '<line>p'`.
+4. `grep '^+'` also matches the `+++ b/<file>` header (errs toward blocking).
+5. The verify early stop says "ask the user" but not "show the attempt log".
+6. `docs/skills.md`'s `/ship` summary doesn't mention the introduced-only rule.
+
+### Root cause
+Fixes landed in rounds 1–2 introduced new edges; round 3 is the cap.
+
+### Fix
+Pending — all six are one-line wording edits; ship them together with one
+review round.
+
+### Prevention
+Run the real-world verify test (scratch project, planted bugs) on the final
+wording, not only the first draft.
+
+### Related
+- ADR-030
+
+---
+
 ## KI-005: grounding gate spun forever on Windows for files outside the home drive — froze the whole CLI
 
 **First seen:** 2026-07-29
