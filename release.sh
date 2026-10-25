@@ -9,7 +9,7 @@
 #   ./release.sh              # verify + tag + push + site sync
 #   ./release.sh --check      # verify only, change nothing (CI-friendly)
 #
-# Website sync: set CODERV_SITE_DIR to the coderv.dev repo (default
+# Website sync: set CODERV_SITE_DIR to the skill.coderv.dev website repo (default
 # /home/appuser/apps/coderv-docs). Skipped with a warning if absent.
 
 set -euo pipefail
@@ -45,7 +45,7 @@ ok "CHANGELOG entry dated"
 ok "working tree clean"
 
 # 4. Tag must not already exist.
-if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+if git rev-parse --verify -q "refs/tags/v$VERSION" >/dev/null; then
   fail "tag v$VERSION already exists — bump VERSION or delete the tag deliberately"
 fi
 ok "tag v$VERSION is free"

@@ -5,6 +5,23 @@ All notable changes to the CoderLap Docs Toolkit.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/).
 
+## [0.19.0] — 2026-10-25
+
+> **Reinstall to pick it up:** `./install.sh --force` (a bare install skips
+> skills that already exist). Changes are in `/coderv`, `/ship`, `/session`,
+> `/before` and the context gate.
+
+### Added
+- **`/coderv` verify now tries to break the change (ADR-030).** After the happy-path check, 3–5 hostile cases aimed at what the diff changed, each run with pasted output; a failing case is a failed verify.
+- **A failed verify gets at most 2 retries (ADR-030).** Each retry fixes the root cause and re-runs the whole verify; it stops early and asks when the fix would repeat, would weaken the check, or the cause is outside the change (a service down, a missing secret), and after 2 retries shows the attempt log and asks. A hostile case failing in old code the change neither touched nor meant to fix is reported as pre-existing, never retried. Reviewer failures keep `/ship`'s own cap of 3.
+- **Read-only agent findings are saved before the handoff.** `/session` now checks whether a read-only agent (scout, planner, reviewer) ran and saves its findings verbatim to `~/.claude/coderlap/recon/<project>-<date>-<topic>.md`; the context gate's block message says the same. Queued since 2026-07-23 (`36ca01e`).
+
+### Changed
+- **`/ship`'s reviewer blocks only on what the diff caused (ADR-030).** A `[blocker]` must be introduced by the diff or an old path it newly exposes; untouched old defects are `[debt][pre-existing]`, listed first and offered for `docs/KNOWN-ISSUES.md`. The tag needs proof (the quoted line exists in the base and is not added by the diff). Old security/data-loss risks are still reported, at the top, and still block under `--security`.
+- **`/ship` split into `SKILL.md` + two run-books.** The Step 4.5 reviewer loop moved verbatim to `skills/ship/reviewer-loop.md` and the Step 7 scorecard to `skills/ship/scorecard.md` (587 → 274 lines). Step headings and numbers are unchanged.
+- **`release.sh` checks for an existing tag only, not any ref.** A local branch named like the version (e.g. `v0.19.0`) made it report a false "tag already exists".
+- **The website moved to https://skill.coderv.dev.** README, installer banner, docs and `/before` now point there; the old `coderv.dev` paths still 301 to it. The LICENCE text is unchanged.
+
 ## [0.18.0] — 2026-09-07
 
 > **Heads-up — everyone must reinstall.** This release REMOVES the

@@ -515,4 +515,4 @@ echo "Three always-on gates (Claude Code): grounding-gate (docs before code),"
 echo "compact-rehydrate (truth snapshot after compaction), context-gate (dumb-zone guard)."
 echo "Kill switch: CODERV_GATES_OFF=1"
 echo
-echo "Docs: https://coderv.dev"
+echo "Docs: https://skill.coderv.dev"

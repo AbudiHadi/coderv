@@ -4,11 +4,11 @@
 [![GitHub stars](https://img.shields.io/github/stars/AbudiHadi/coderv?style=social)](https://github.com/AbudiHadi/coderv/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/AbudiHadi/coderv?style=social)](https://github.com/AbudiHadi/coderv/network/members)
 [![License](https://img.shields.io/badge/license-CoderLap%20SA-8b5cf6)](./LICENCE)
-[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-8b5cf6)](https://coderv.dev)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-8b5cf6)](https://skill.coderv.dev)
 
 **A context-aware toolkit for Claude Code.** It watches how you naturally talk and suggests the right tool at the right moment — turning your real workflow into clean, honest docs.
 
-🌐 **[coderv.dev](https://coderv.dev)** · ⭐ [Star on GitHub](https://github.com/AbudiHadi/coderv) · ✉️ [support@coderv.com](mailto:support@coderv.com)
+🌐 **[skill.coderv.dev](https://skill.coderv.dev)** · ⭐ [Star on GitHub](https://github.com/AbudiHadi/coderv) · ✉️ [support@coderv.com](mailto:support@coderv.com)
 
 ---
 
@@ -67,7 +67,7 @@ Seven slash commands + three always-on gates that help devs keep extremely clear
 **One command (Claude Code, default):**
 
 ```bash
-curl -fsSL https://coderv.dev/install.sh | bash
+curl -fsSL https://skill.coderv.dev/install.sh | bash
 ```
 
 Skills land in `~/.claude/skills/` and five hooks are wired into `~/.claude/settings.json`: `coderv-router` (surfaces the right command at the right moment), `project-context` (every new session starts already knowing where each project left off), and the three anti-dumb-zone gates — `grounding-gate` (the first code edit is blocked until `/before` actually read the docs), `compact-rehydrate` (after compaction, a live git snapshot outranks the summary), `context-gate` (warns and then hard-stops new work at an absolute dumb-zone token budget, ~180k — the dumb zone is an absolute occupancy floor, not a fraction of a huge window). Every commit diff still gets an independent second look — `/ship`'s fresh-context reviewer, a clean-context subagent that audits the diff against the spec before the commit lands. Kill switch: `CODERV_GATES_OFF=1`.
@@ -95,7 +95,7 @@ All five hooks (`coderv-router`, `project-context`, and the three anti-dumb-zone
 **Update:**
 
 ```bash
-curl -fsSL https://coderv.dev/install.sh | bash -s -- --force
+curl -fsSL https://skill.coderv.dev/install.sh | bash -s -- --force
 ```
 
 The hooks are **copied** into `~/.claude/hooks/` at install time, so a `git pull`
@@ -196,4 +196,4 @@ CoderLap Source-Available Licence v1.0 — see [LICENCE](./LICENCE).
 
 Free to read. Free for personal evaluation. **All other use — commercial, redistribution, hosting, incorporation, modification-then-sharing — requires written permission from Abdullah Hadi (support@coderv.com).**
 
-Full licence: https://coderv.dev/licence
+Full licence: https://skill.coderv.dev/licence
