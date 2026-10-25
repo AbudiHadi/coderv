@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-10-25 — v0.19.0 RELEASED: hostile-case verify + 2-retry cap, introduced-only blockers, /ship split, read-only handoff rule, skill.coderv.dev
+
+**Why:** owner asked to review `/home/toolkit-upgrade-plan.md` (written after
+comparing the toolkit with rlaope/oh-my-hermes) with "i need everything to be
+simple". Verdict: don't adopt oh-my-hermes (a 140-skill package for Hermes
+Agent); borrow three ideas. Trimmed plan approved ("ok go ahead and fix other
+u mention"); evidence labels dropped, reviewer retries left to /ship's cap.
+
+**Shipped (ADR-030):** `/coderv` verify adds 3–5 hostile cases + max 2
+root-cause retries (never weaken the check; stop and ask when the cause is
+outside the change); `/ship` reviewer blocks only on what the diff caused
+(`[debt][pre-existing]` with a base-quote proof; `--security` still blocks
+old security/data-loss); `/ship` split into SKILL.md + `reviewer-loop.md` +
+`scorecard.md` (pure move, line-checked); `/session` + context-gate save
+read-only agent findings to `~/.claude/coderlap/recon/` (the 36ca01e rule —
+now DONE); URLs → skill.coderv.dev (LICENCE untouched — must match website
+copy); release.sh tag check scoped to `refs/tags/`.
+
+**Verified:** real-world verify test (subagent, planted bugs: fixable →
+retry 1/2 → pass; dead dependency → stopped, no retry, asked); three
+fresh-context review rounds, all debt-only; round-3 debt logged as **KI-006**
+(six one-line wording gaps → v0.19.1). `release.sh` ran clean: tag pushed,
+website rebuilt + committed (`e3668a5`), serving 0.19.0.
+
+**Deployed here by hand** (NOT `install.sh --force`, which would re-wire the
+owner-disabled gates): coderv/ship/session/before skill dirs + marker,
+`~/.claude/hooks/context-gate.sh` (still unwired in settings.json).
+
+**Owner owes:** `gh release create v0.19.0` (the release page — blocked by
+the permission classifier this session):
+`gh release create v0.19.0 --title "v0.19.0" --notes-file <(awk '/^## \[0.19.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)`
+Windows PC: pull + `install.sh --force`.
+
+**Next session should probably:** fix KI-006 as v0.19.1 (one review round).
+Parked: release-review stays installed-only (slot-8 decision; not at risk —
+uninstall iterates repo skill dirs only).
+
+**State evidence (verbatim):**
+```
+$ git log --oneline -5
+6fa26f3 Log KI-006: the v0.19.0 wording gaps left by the review round cap
+4bf547d Point the toolkit at skill.coderv.dev and fix the release tag check
+73920bc Verify tries to break the change; the reviewer blocks only on what the diff caused (ADR-030)
+4903ce3 Split /ship into SKILL.md plus two run-books
+7e98e3b docs: v0.18.0 released — tag, GitHub release, website synced
+$ cat VERSION
+0.19.0
+```
+
+---
+
 ## 2026-09-18 — v0.18.0 RELEASED: pushed b07458f + e886d39, `./release.sh` tagged v0.18.0 + synced/rebuilt/committed the website, `gh release create v0.18.0` → https://github.com/AbudiHadi/coderv/releases/tag/v0.18.0. Nothing owed; owner installs on the PC via `curl -fsSL https://coderv.dev/install.sh | bash`.
 
 ## 2026-09-07 — v0.18.0: Codex RETIRED from the product (ADR-029) — committed `b07458f`, deployed locally, NOT pushed/released
